@@ -117,13 +117,17 @@ export async function createUser(
 
     try {
       // Get the site URL for redirect
+      // IMPORTANT: Supabase invitation links should redirect to Site URL (root), not callback route
+      // Supabase will add a code parameter, and our middleware will intercept it
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 
         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
       
       const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
         email,
         {
-          redirectTo: `${siteUrl}/auth/callback?type=invite&redirect=/auth/reset-password`,
+          // Redirect to Site URL root - Supabase will add code parameter
+          // Middleware will intercept and redirect to callback route with code
+          redirectTo: siteUrl,
           data: {
             full_name: fullName,
             role,

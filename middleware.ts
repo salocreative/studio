@@ -52,6 +52,10 @@ export async function middleware(request: NextRequest) {
         callbackUrl.searchParams.set('code', code)
         if (type) {
           callbackUrl.searchParams.set('type', type)
+        } else {
+          // If no type parameter, assume it might be an invitation
+          // The callback route will detect invitations based on user creation time
+          callbackUrl.searchParams.set('type', 'invite')
         }
         callbackUrl.searchParams.set('redirect', '/auth/reset-password')
         return NextResponse.redirect(callbackUrl)
