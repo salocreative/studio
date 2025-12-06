@@ -13,6 +13,7 @@ export async function getUsers() {
     return { error: 'Not authenticated' }
   }
 
+  // Check if user is admin using regular client (checks own profile)
   const { data: userProfile } = await supabase
     .from('users')
     .select('role')
@@ -23,8 +24,14 @@ export async function getUsers() {
     return { error: 'Unauthorized: Admin access required' }
   }
 
+  // Use admin client to bypass RLS and fetch all users
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminClient
       .from('users')
       .select('*')
       .order('created_at', { ascending: false })
@@ -214,9 +221,15 @@ export async function updateUserRole(
     return { error: 'Unauthorized: Admin access required' }
   }
 
+  // Use admin client to check admin count and update role (bypasses RLS)
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
   // Prevent removing the last admin
   if (role !== 'admin') {
-    const { data: admins } = await supabase
+    const { data: admins } = await adminClient
       .from('users')
       .select('id')
       .eq('role', 'admin')
@@ -227,7 +240,7 @@ export async function updateUserRole(
   }
 
   try {
-    const { error } = await supabase
+    const { error } = await adminClient
       .from('users')
       .update({ role })
       .eq('id', userId)
@@ -267,8 +280,14 @@ export async function deleteUser(userId: string) {
     return { error: 'Cannot delete your own account' }
   }
 
+  // Use admin client to check admin count and delete user (bypasses RLS)
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
   // Prevent deleting the last admin
-  const { data: admins } = await supabase
+  const { data: admins } = await adminClient
     .from('users')
     .select('id')
     .eq('role', 'admin')
@@ -278,20 +297,17 @@ export async function deleteUser(userId: string) {
   }
 
   try {
-    // Delete user profile (auth user will be deleted via cascade or manually)
-    const { error } = await supabase.from('users').delete().eq('id', userId)
+    // Delete user profile using admin client (bypasses RLS)
+    const { error } = await adminClient.from('users').delete().eq('id', userId)
 
     if (error) throw error
 
-    // Delete auth user via admin API (requires service role key)
-    const adminClient = await createAdminClient()
-    if (adminClient) {
-      try {
-        await adminClient.auth.admin.deleteUser(userId)
-      } catch (deleteError) {
-        console.error('Error deleting auth user:', deleteError)
-        // Continue even if auth deletion fails - profile is already deleted
-      }
+    // Delete auth user via admin API
+    try {
+      await adminClient.auth.admin.deleteUser(userId)
+    } catch (deleteError) {
+      console.error('Error deleting auth user:', deleteError)
+      // Continue even if auth deletion fails - profile is already deleted
     }
 
     return { success: true }
