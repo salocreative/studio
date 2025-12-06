@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { startOfMonth, endOfMonth, eachDayOfInterval, getDay, format } from 'date-fns'
 
 interface TeamMemberUtilization {
@@ -39,13 +39,19 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
     return { error: 'Unauthorized: Admin or Designer access required' }
   }
 
+  // Use admin client to bypass RLS and fetch all users
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
   try {
     // Default to current month if no dates provided
     const periodStart = startDate ? new Date(startDate) : startOfMonth(new Date())
     const periodEnd = endDate ? new Date(endDate) : endOfMonth(new Date())
 
-    // Get all users
-    const { data: users, error: usersError } = await supabase
+    // Get all users using admin client (bypasses RLS)
+    const { data: users, error: usersError } = await adminClient
       .from('users')
       .select('*')
       .order('full_name', { ascending: true, nullsFirst: false })
