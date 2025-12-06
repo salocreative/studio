@@ -31,7 +31,11 @@ export default async function DashboardLayout({
   } = await supabase.auth.getUser()
 
   if (authError || !user) {
-    console.error('Auth error in layout:', authError)
+    // Don't log AuthSessionMissingError - it's expected when users aren't authenticated
+    // This happens when unauthenticated users try to access protected routes
+    if (authError && !(authError as any)?.__isAuthError) {
+      console.error('Auth error in layout:', authError)
+    }
     redirect('/auth/login')
   }
 
