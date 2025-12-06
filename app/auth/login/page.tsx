@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, Suspense } from 'react'
+import { useState, Suspense, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,11 +14,91 @@ function LoginForm() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [processingInvitation, setProcessingInvitation] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirect = searchParams.get('redirect') || '/time-tracking'
 
   const supabase = createClient()
+
+  // Handle invitation tokens in URL hash
+  useEffect(() => {
+    const handleInvitationToken = async () => {
+      if (typeof window === 'undefined') return
+
+      // Check for tokens in URL hash (Supabase puts them there)
+      const hash = window.location.hash
+      if (!hash) return
+
+      const hashParams = new URLSearchParams(hash.substring(1))
+      const accessToken = hashParams.get('access_token')
+      const refreshToken = hashParams.get('refresh_token')
+      const type = hashParams.get('type')
+      const errorParam = hashParams.get('error')
+      const errorDescription = hashParams.get('error_description')
+
+      // Handle errors
+      if (errorParam) {
+        setError(
+          errorDescription
+            ? decodeURIComponent(errorDescription.replace(/\+/g, ' '))
+            : 'Authentication failed. Please try again.'
+        )
+        // Clean up URL
+        window.history.replaceState({}, '', '/auth/login')
+        return
+      }
+
+      // If we have an access token and it's an invitation, establish session
+      if (accessToken && type === 'invite') {
+        setProcessingInvitation(true)
+
+        try {
+          // Set the session using the tokens from the hash
+          const { data, error: sessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken || '',
+          })
+
+          if (sessionError) {
+            throw sessionError
+          }
+
+          if (data.session) {
+            // Clean up URL hash
+            window.history.replaceState({}, '', '/auth/reset-password?type=invite')
+            // Redirect to password setup page
+            router.push('/auth/reset-password?type=invite')
+            router.refresh()
+          }
+        } catch (error: any) {
+          console.error('Error setting session from invitation token:', error)
+          setError(error.message || 'Failed to authenticate. Please contact your administrator.')
+          setProcessingInvitation(false)
+          // Clean up URL
+          window.history.replaceState({}, '', '/auth/login')
+        }
+      } else if (accessToken) {
+        // Not an invitation, just set the session and redirect
+        try {
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken || '',
+          })
+          // Clean up URL
+          window.history.replaceState({}, '', redirect)
+          router.push(redirect)
+          router.refresh()
+        } catch (error: any) {
+          console.error('Error setting session:', error)
+          setError('Failed to authenticate. Please try again.')
+          window.history.replaceState({}, '', '/auth/login')
+        }
+      }
+    }
+
+    handleInvitationToken()
+  }, [supabase, router, redirect])
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -61,6 +141,20 @@ function LoginForm() {
       setError(error.message || 'An error occurred during SSO login')
       setLoading(false)
     }
+  }
+
+  // Show loading state while processing invitation
+  if (processingInvitation) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-2xl font-bold">Studio</CardTitle>
+            <CardDescription>Setting up your account...</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    )
   }
 
   return (
