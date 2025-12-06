@@ -23,12 +23,25 @@ function LoginForm() {
 
   // Handle invitation tokens in URL hash
   useEffect(() => {
+    let mounted = true
+    const timeoutId = setTimeout(() => {
+      if (mounted && processingInvitation) {
+        console.error('Timeout processing invitation - redirecting to login')
+        setProcessingInvitation(false)
+        setError('Processing took too long. Please try again or contact your administrator.')
+        window.history.replaceState({}, '', '/auth/login')
+      }
+    }, 10000) // 10 second timeout
+
     const handleInvitationToken = async () => {
       if (typeof window === 'undefined') return
 
       // Check for tokens in URL hash (Supabase puts them there)
       const hash = window.location.hash
-      if (!hash) return
+      if (!hash) {
+        clearTimeout(timeoutId)
+        return
+      }
 
       const hashParams = new URLSearchParams(hash.substring(1))
       const accessToken = hashParams.get('access_token')
@@ -39,6 +52,9 @@ function LoginForm() {
 
       // Handle errors
       if (errorParam) {
+        clearTimeout(timeoutId)
+        if (!mounted) return
+        
         setError(
           errorDescription
             ? decodeURIComponent(errorDescription.replace(/\+/g, ' '))
@@ -51,27 +67,39 @@ function LoginForm() {
 
       // If we have an access token and it's an invitation, establish session
       if (accessToken && type === 'invite') {
+        if (!mounted) return
         setProcessingInvitation(true)
 
         try {
+          console.log('Processing invitation tokens on login page')
+          
           // Set the session using the tokens from the hash
           const { data, error: sessionError } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken || '',
           })
 
+          if (!mounted) return
+
           if (sessionError) {
             throw sessionError
           }
 
           if (data.session) {
+            clearTimeout(timeoutId)
+            console.log('Session established, redirecting to password setup')
             // Clean up URL hash
             window.history.replaceState({}, '', '/auth/reset-password?type=invite')
             // Redirect to password setup page
             router.push('/auth/reset-password?type=invite')
             router.refresh()
+          } else {
+            throw new Error('No session data returned')
           }
         } catch (error: any) {
+          clearTimeout(timeoutId)
+          if (!mounted) return
+          
           console.error('Error setting session from invitation token:', error)
           setError(error.message || 'Failed to authenticate. Please contact your administrator.')
           setProcessingInvitation(false)
@@ -85,19 +113,32 @@ function LoginForm() {
             access_token: accessToken,
             refresh_token: refreshToken || '',
           })
+          clearTimeout(timeoutId)
+          if (!mounted) return
+          
           // Clean up URL
           window.history.replaceState({}, '', redirect)
           router.push(redirect)
           router.refresh()
         } catch (error: any) {
+          clearTimeout(timeoutId)
+          if (!mounted) return
+          
           console.error('Error setting session:', error)
           setError('Failed to authenticate. Please try again.')
           window.history.replaceState({}, '', '/auth/login')
         }
+      } else {
+        clearTimeout(timeoutId)
       }
     }
 
     handleInvitationToken()
+
+    return () => {
+      mounted = false
+      clearTimeout(timeoutId)
+    }
   }, [supabase, router, redirect])
 
   const handleEmailLogin = async (e: React.FormEvent) => {

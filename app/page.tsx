@@ -1,10 +1,9 @@
-import { redirect } from 'next/navigation'
+import { HomePageHandler } from '@/components/home-page-handler'
 
 export const dynamic = 'force-dynamic'
 
 export default async function Home() {
-  // Always redirect to time-tracking
-  // The dashboard layout will handle authentication
-  // Invitation codes are handled in middleware to redirect to callback route
-  redirect('/time-tracking')
+  // Use client component to handle invitation tokens in URL hash
+  // Server-side redirects can't access hash fragments
+  return <HomePageHandler />
 }
