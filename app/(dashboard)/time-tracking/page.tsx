@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Trash2 } from 'lucide-react'
-import { format, addDays, startOfDay, isSameDay, getDay, nextMonday, isWeekend } from 'date-fns'
+import { format, addDays, startOfDay, isSameDay, getDay, nextMonday, isWeekend, startOfMonth, endOfMonth, eachDayOfInterval, getDaysInMonth, addMonths, subMonths } from 'date-fns'
 import { getProjectsWithTasks, getTimeEntries, deleteTimeEntry } from '@/app/actions/time-tracking'
 import { ProjectTaskSelector } from './components/project-task-selector'
 import { TimeEntryForm } from './components/time-entry-form'
@@ -44,10 +44,11 @@ export default function TimeTrackingPage() {
   const [loading, setLoading] = useState(true)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [boardType, setBoardType] = useState<'main' | 'flexi-design'>('main')
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [boardType])
 
   useEffect(() => {
     loadTimeEntries()
@@ -56,7 +57,7 @@ export default function TimeTrackingPage() {
   async function loadData() {
     setLoading(true)
     try {
-      const result = await getProjectsWithTasks()
+      const result = await getProjectsWithTasks(boardType)
       if (result.error) {
         console.error('Error loading projects:', result.error)
       } else if (result.projects) {
@@ -166,6 +167,7 @@ export default function TimeTrackingPage() {
             <p className="text-sm text-muted-foreground">Track your time against projects</p>
           </div>
           <div className="flex items-center gap-2">
+            {/* View Switcher */}
             <Button
               variant={view === 'daily' ? 'default' : 'outline'}
               size="sm"
@@ -199,9 +201,15 @@ export default function TimeTrackingPage() {
             onSelectTask={handleSelectTask}
             onDeleteEntry={handleDeleteEntry}
             loading={loading}
+            boardType={boardType}
+            onBoardTypeChange={setBoardType}
           />
         ) : (
-          <CalendarView getHoursRemaining={getHoursRemaining} />
+          <CalendarView
+            selectedDate={selectedDate}
+            onDateSelect={setSelectedDate}
+            onDeleteEntry={handleDeleteEntry}
+          />
         )}
       </div>
 
@@ -232,6 +240,8 @@ function DailyView({
   onSelectTask,
   onDeleteEntry,
   loading,
+  boardType,
+  onBoardTypeChange,
 }: {
   selectedDate: Date
   onDateChange: (days: number) => void
@@ -243,6 +253,8 @@ function DailyView({
   onSelectTask: (task: Task, project: Project) => void
   onDeleteEntry: (entryId: string) => void
   loading: boolean
+  boardType: 'main' | 'flexi-design'
+  onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
 }) {
   return (
     <div className="space-y-6">
@@ -363,6 +375,8 @@ function DailyView({
         <ProjectTaskSelector
           projects={projects}
           onSelectTask={onSelectTask}
+          boardType={boardType}
+          onBoardTypeChange={onBoardTypeChange}
         />
       )}
     </div>
@@ -370,36 +384,320 @@ function DailyView({
 }
 
 function CalendarView({
-  getHoursRemaining,
+  selectedDate,
+  onDateSelect,
+  onDeleteEntry,
 }: {
-  getHoursRemaining: (date: Date) => number
+  selectedDate: Date
+  onDateSelect: (date: Date) => void
+  onDeleteEntry: (entryId: string) => void
 }) {
   const [selectedMonth, setSelectedMonth] = useState(new Date())
+  const [monthTimeEntries, setMonthTimeEntries] = useState<Record<string, number>>({})
+  const [allTimeEntries, setAllTimeEntries] = useState<TimeEntry[]>([])
+  const [selectedDateEntries, setSelectedDateEntries] = useState<TimeEntry[]>([])
+  const [loading, setLoading] = useState(false)
+  const [reloadTrigger, setReloadTrigger] = useState(0)
+
+  const handleDeleteEntry = async (entryId: string) => {
+    await onDeleteEntry(entryId)
+    // Trigger reload of month entries after deletion
+    setReloadTrigger(prev => prev + 1)
+  }
+
+  // Fetch time entries for the entire month
+  useEffect(() => {
+    async function loadMonthTimeEntries() {
+      setLoading(true)
+      try {
+        const monthStart = startOfMonth(selectedMonth)
+        const monthEnd = endOfMonth(selectedMonth)
+        const startDateStr = format(monthStart, 'yyyy-MM-dd')
+        const endDateStr = format(monthEnd, 'yyyy-MM-dd')
+        
+        const result = await getTimeEntries(startDateStr, endDateStr)
+        if (result.error) {
+          console.error('Error loading month time entries:', result.error)
+          setMonthTimeEntries({})
+          setAllTimeEntries([])
+        } else if (result.entries) {
+          const entries = result.entries as TimeEntry[]
+          setAllTimeEntries(entries)
+          
+          // Aggregate hours by date
+          const hoursByDate: Record<string, number> = {}
+          entries.forEach((entry: TimeEntry) => {
+            const dateKey = entry.date
+            hoursByDate[dateKey] = (hoursByDate[dateKey] || 0) + entry.hours
+          })
+          setMonthTimeEntries(hoursByDate)
+        }
+      } catch (error) {
+        console.error('Error loading month time entries:', error)
+        setMonthTimeEntries({})
+        setAllTimeEntries([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadMonthTimeEntries()
+  }, [selectedMonth, reloadTrigger])
+
+  // Load time entries for selected date
+  useEffect(() => {
+    const dateKey = format(selectedDate, 'yyyy-MM-dd')
+    const entriesForDate = allTimeEntries.filter(entry => entry.date === dateKey)
+    setSelectedDateEntries(entriesForDate)
+  }, [selectedDate, allTimeEntries])
+
+  const handleMonthChange = (direction: 'prev' | 'next') => {
+    setSelectedMonth((prev) => {
+      return direction === 'next' ? addMonths(prev, 1) : subMonths(prev, 1)
+    })
+  }
+
+  const monthStart = startOfMonth(selectedMonth)
+  const monthEnd = endOfMonth(selectedMonth)
+  const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd })
+  
+  // Filter out weekends and group by week
+  const weekdays = allDays.filter(day => !isWeekend(day))
+  const weeks: Date[][] = []
+  let currentWeek: Date[] = []
+  
+  weekdays.forEach((day, index) => {
+    const dayOfWeek = getDay(day) // 0 = Sunday, 1 = Monday, etc.
+    
+    // Start a new week on Monday
+    if (dayOfWeek === 1 && currentWeek.length > 0) {
+      weeks.push(currentWeek)
+      currentWeek = [day]
+    } else {
+      currentWeek.push(day)
+    }
+    
+    // Push the last week at the end
+    if (index === weekdays.length - 1) {
+      weeks.push(currentWeek)
+    }
+  })
+
+  const getHoursForDate = (date: Date): number => {
+    const dateKey = format(date, 'yyyy-MM-dd')
+    return monthTimeEntries[dateKey] || 0
+  }
+
+  const isToday = (date: Date): boolean => {
+    return isSameDay(date, new Date())
+  }
+
+  const isSelected = (date: Date): boolean => {
+    return isSameDay(date, selectedDate)
+  }
+
+  const selectedDateHours = getHoursForDate(selectedDate)
 
   return (
-    <div className="w-full">
-      <Card>
-        <CardHeader>
-          <CardTitle>Calendar View</CardTitle>
-          <CardDescription>View hours remaining for each day</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Calendar
-            mode="single"
-            month={selectedMonth}
-            onMonthChange={setSelectedMonth}
-            className="rounded-md border"
-          />
-          <div className="mt-4 space-y-2">
-            <p className="text-sm text-muted-foreground">
-              Hours remaining for selected month:
-            </p>
-            <div className="text-xs text-muted-foreground">
-              Calendar view with hours remaining coming soon
+    <div className="w-full max-w-[1400px] mx-auto">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Calendar - Left Column */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>{format(selectedMonth, 'MMMM yyyy')}</CardTitle>
+                <CardDescription>Click a day to view tasks</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => handleMonthChange('prev')}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const today = startOfDay(new Date())
+                    setSelectedMonth(today)
+                    if (!isWeekend(today)) {
+                      onDateSelect(today)
+                    }
+                  }}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => handleMonthChange('next')}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center text-muted-foreground">
+                  Loading calendar...
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Weekday headers */}
+                <div className="grid grid-cols-5 gap-3">
+                  {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((day) => (
+                    <div key={day} className="text-center text-sm font-medium text-muted-foreground py-2">
+                      {day.slice(0, 3)}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Calendar grid */}
+                <div className="space-y-3">
+                  {weeks.map((week, weekIndex) => (
+                    <div key={weekIndex} className="grid grid-cols-5 gap-3">
+                      {week.map((day) => {
+                        const hours = getHoursForDate(day)
+                        const daySelected = isSelected(day)
+                        const dayToday = isToday(day)
+                        
+                        return (
+                          <button
+                            key={day.toISOString()}
+                            onClick={() => onDateSelect(day)}
+                            className={cn(
+                              "relative p-4 border rounded-lg text-left transition-all hover:border-primary hover:shadow-sm min-h-[100px]",
+                              daySelected && "border-primary ring-2 ring-primary/20 bg-primary/5",
+                              dayToday && !daySelected && "border-primary/50 bg-primary/5",
+                              hours === 0 && "bg-muted/30 border-dashed"
+                            )}
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <div className="font-semibold text-sm">
+                                {format(day, 'd')}
+                              </div>
+                              {dayToday && (
+                                <div className="w-2 h-2 bg-primary rounded-full" />
+                              )}
+                            </div>
+                            <div className={cn(
+                              "text-2xl font-bold",
+                              hours === 0 ? "text-muted-foreground" : "text-foreground"
+                            )}>
+                              {hours > 0 ? hours.toFixed(1) : '0'}h
+                            </div>
+                            {hours === 0 && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                No time logged
+                              </div>
+                            )}
+                          </button>
+                        )
+                      })}
+                      {/* Pad with empty cells if week has fewer than 5 days */}
+                      {Array.from({ length: 5 - week.length }).map((_, i) => (
+                        <div key={`empty-${i}`} className="min-h-[100px]" />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Legend */}
+                <div className="flex items-center justify-center gap-6 pt-4 border-t text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border rounded border-dashed bg-muted/30" />
+                    <span>No time logged</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border rounded border-primary bg-primary/5" />
+                    <span>Today</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 rounded border-primary ring-2 ring-primary/20 bg-primary/5" />
+                    <span>Selected</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Task List - Right Column */}
+        <Card>
+          <CardHeader>
+            <CardTitle>{format(selectedDate, 'EEEE, MMMM d, yyyy')}</CardTitle>
+            <CardDescription>
+              {selectedDateHours > 0 
+                ? `${selectedDateHours.toFixed(1)} hours logged • ${Math.max(0, 6 - selectedDateHours).toFixed(1)} hours remaining`
+                : 'No time logged for this date'
+              }
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {selectedDateEntries.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No time entries for this date</p>
+                <p className="text-sm mt-2">Switch to Daily view to log time</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                {selectedDateEntries.map((entry) => {
+                  const isLocked = entry.project.status === 'locked'
+                  return (
+                    <div
+                      key={entry.id}
+                      className={cn(
+                        "flex items-center justify-between p-4 border rounded-lg",
+                        isLocked && "opacity-75 bg-muted/30"
+                      )}
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="font-medium">{entry.task.name}</div>
+                          {isLocked && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                              Locked
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {entry.project.name}
+                          {entry.project.client_name && ` • ${entry.project.client_name}`}
+                        </div>
+                        {entry.notes && (
+                          <div className="text-sm text-muted-foreground mt-1">
+                            {entry.notes}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="font-medium">{entry.hours}h</div>
+                        </div>
+                        {!isLocked && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteEntry(entry.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

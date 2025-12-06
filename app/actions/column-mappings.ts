@@ -150,7 +150,10 @@ export async function getMondayBoardsAndColumns(workspaceId?: string) {
 
       try {
         const boardsData = await mondayRequest<{ boards: Board[] }>(mondayApiToken, boardsQuery, { workspaceId })
-        boards = boardsData.boards || []
+        // Filter out "Subitems of" boards - these are sub-boards we don't need
+        boards = (boardsData.boards || []).filter((board: Board) => 
+          !board.name.toLowerCase().startsWith('subitems of')
+        )
         
         if (boards.length === 0) {
         }
@@ -172,7 +175,7 @@ export async function getMondayBoardsAndColumns(workspaceId?: string) {
         `
         const allBoardsData = await mondayRequest<{ boards: Array<Board & { workspace_id?: string }> }>(mondayApiToken, fallbackQuery)
         boards = (allBoardsData.boards || [])
-          .filter((b: any) => b.workspace_id === workspaceId)
+          .filter((b: any) => b.workspace_id === workspaceId && !b.name.toLowerCase().startsWith('subitems of'))
           .map(({ workspace_id, ...board }) => board) // Remove workspace_id from result
       }
     } else {
@@ -192,7 +195,10 @@ export async function getMondayBoardsAndColumns(workspaceId?: string) {
       `
 
       const boardsData = await mondayRequest<{ boards: Board[] }>(mondayApiToken, boardsQuery)
-      boards = boardsData.boards || []
+      // Filter out "Subitems of" boards - these are sub-boards we don't need
+      boards = (boardsData.boards || []).filter((board: Board) => 
+        !board.name.toLowerCase().startsWith('subitems of')
+      )
     }
 
     // For each board, get a sample item to check parent vs subtask columns
@@ -528,6 +534,99 @@ export async function deleteColumnMappings(boardId?: string) {
   } catch (error) {
     console.error('Error deleting column mappings:', error)
     return { error: error instanceof Error ? error.message : 'Failed to delete mappings' }
+  }
+}
+
+/**
+ * Get all boards with their column mappings grouped by type (Main Projects vs Flexi-Design)
+ */
+export async function getAllBoardsWithMappings() {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const mondayApiToken = process.env.MONDAY_API_TOKEN
+  if (!mondayApiToken) {
+    return { error: 'Monday.com API token not configured' }
+  }
+
+  try {
+    // Get all column mappings
+    const { data: mappings } = await supabase
+      .from('monday_column_mappings')
+      .select('*')
+      .not('board_id', 'is', null)
+      .order('created_at', { ascending: false })
+
+    if (!mappings || mappings.length === 0) {
+      return { success: true, boards: [] }
+    }
+
+    // Get unique board IDs from mappings
+    const boardIds = Array.from(new Set(mappings.map((m: any) => m.board_id).filter(Boolean)))
+    
+    // Fetch board names from Monday.com API
+    const MONDAY_API_URL = 'https://api.monday.com/v2'
+    const query = `
+      query($boardIds: [ID!]) {
+        boards(ids: $boardIds) {
+          id
+          name
+        }
+      }
+    `
+
+    const response = await fetch(MONDAY_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: mondayApiToken,
+      },
+      body: JSON.stringify({ query, variables: { boardIds } }),
+    })
+
+    if (!response.ok) {
+      return { error: 'Failed to fetch boards from Monday.com' }
+    }
+
+    const result = await response.json()
+    if (result.errors) {
+      return { error: result.errors.map((e: any) => e.message).join(', ') }
+    }
+
+    // Group mappings by board
+    const boardsWithMappings = (result.data?.boards || []).map((board: { id: string; name: string }) => {
+      const boardMappings = mappings.filter((m: any) => m.board_id === board.id)
+      const mappingObj: Record<string, string> = {}
+      boardMappings.forEach((m: any) => {
+        mappingObj[m.column_type] = m.monday_column_id
+      })
+
+      return {
+        id: board.id,
+        name: board.name,
+        mappings: mappingObj,
+        isFlexiDesign: board.name.toLowerCase().includes('flexi'),
+      }
+    })
+
+    return { success: true, boards: boardsWithMappings }
+  } catch (error) {
+    console.error('Error fetching boards with mappings:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to fetch boards' }
   }
 }
 

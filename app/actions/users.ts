@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 
 /**
  * Get all users
@@ -77,13 +77,46 @@ export async function createUser(
     }
 
     // Create new user via Supabase Admin API
-    // Note: This requires service role key, which should be in server-only code
-    // For server-side admin operations, you may need to use a separate admin client
-    // with the service role key (SUPABASE_SERVICE_ROLE_KEY)
+    // This requires the service role key (SUPABASE_SERVICE_ROLE_KEY)
+    const adminClient = await createAdminClient()
     
-    // Try to use admin API if available (requires service role in server environment)
+    if (!adminClient) {
+      // Log diagnostic information for debugging (server-side only)
+      const hasUrl = !!process.env.NEXT_PUBLIC_SUPABASE_URL
+      const hasServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY
+      const urlLength = process.env.NEXT_PUBLIC_SUPABASE_URL?.length || 0
+      const keyLength = process.env.SUPABASE_SERVICE_ROLE_KEY?.length || 0
+      const envKeys = Object.keys(process.env).filter(k => k.includes('SUPABASE'))
+      
+      console.error('createAdminClient failed:', {
+        hasUrl,
+        hasServiceKey,
+        urlLength,
+        keyLength,
+        envKeys,
+        // Don't log actual values for security
+      })
+      
+      // Provide more helpful error message based on what's missing
+      if (!hasUrl) {
+        return {
+          error: 'Missing NEXT_PUBLIC_SUPABASE_URL environment variable. Please configure it in Vercel Settings → Environment Variables.',
+        }
+      }
+      
+      if (!hasServiceKey) {
+        return {
+          error: 'Missing SUPABASE_SERVICE_ROLE_KEY environment variable. Please add it in Vercel Settings → Environment Variables and ensure it\'s enabled for Production. After adding, redeploy your application.',
+        }
+      }
+      
+      return {
+        error: 'Admin API not available. Please create users manually via Supabase Dashboard or configure SUPABASE_SERVICE_ROLE_KEY. See docs/AUTH_SETUP.md for details.',
+      }
+    }
+
     try {
-      const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
+      const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
         email,
         {
           data: {
@@ -94,25 +127,42 @@ export async function createUser(
       )
 
       if (inviteError) {
-        // If admin API not available, provide instructions
+        console.error('Error inviting user:', inviteError)
         return {
-          error: 'Admin API not available. Please create users manually via Supabase Dashboard or configure SUPABASE_SERVICE_ROLE_KEY. See docs/AUTH_SETUP.md for details.',
+          error: inviteError.message || 'Failed to invite user. Please check Supabase settings.',
         }
       }
 
       // Create user profile
       if (inviteData?.user) {
-        await supabase.from('users').insert({
+        const { error: profileError } = await supabase.from('users').insert({
           id: inviteData.user.id,
           email,
           full_name: fullName || null,
           role,
         })
+
+        if (profileError) {
+          console.error('Error creating user profile:', profileError)
+          // User was created in auth but profile failed - try to clean up
+          try {
+            await adminClient.auth.admin.deleteUser(inviteData.user.id)
+          } catch {
+            // Ignore cleanup errors
+          }
+          return {
+            error: 'Failed to create user profile. User may need to be created manually.',
+          }
+        }
+      } else {
+        return {
+          error: 'Failed to create user. No user data returned from invitation.',
+        }
       }
     } catch (adminError: any) {
-      // Admin API might not be available with anon key
+      console.error('Error creating user via Admin API:', adminError)
       return {
-        error: 'Unable to create user via Admin API. Please configure SUPABASE_SERVICE_ROLE_KEY for user management, or create users manually via Supabase Dashboard. See docs/AUTH_SETUP.md',
+        error: adminError.message || 'Unable to create user via Admin API. Please configure SUPABASE_SERVICE_ROLE_KEY or create users manually via Supabase Dashboard. See docs/AUTH_SETUP.md',
       }
     }
 
@@ -216,8 +266,16 @@ export async function deleteUser(userId: string) {
 
     if (error) throw error
 
-    // Delete auth user via admin API
-    await supabase.auth.admin.deleteUser(userId)
+    // Delete auth user via admin API (requires service role key)
+    const adminClient = await createAdminClient()
+    if (adminClient) {
+      try {
+        await adminClient.auth.admin.deleteUser(userId)
+      } catch (deleteError) {
+        console.error('Error deleting auth user:', deleteError)
+        // Continue even if auth deletion fails - profile is already deleted
+      }
+    }
 
     return { success: true }
   } catch (error) {

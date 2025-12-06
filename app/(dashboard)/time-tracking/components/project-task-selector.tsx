@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Search, Star, StarOff } from 'lucide-react'
 import { toggleFavoriteTask } from '@/app/actions/time-tracking'
 import { cn } from '@/lib/utils'
@@ -27,12 +28,16 @@ interface ProjectTaskSelectorProps {
   projects: Project[]
   onSelectTask: (task: Task, project: Project) => void
   showFavoritesOnly?: boolean
+  boardType?: 'main' | 'flexi-design'
+  onBoardTypeChange?: (boardType: 'main' | 'flexi-design') => void
 }
 
 export function ProjectTaskSelector({
   projects,
   onSelectTask,
   showFavoritesOnly = false,
+  boardType = 'main',
+  onBoardTypeChange,
 }: ProjectTaskSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
@@ -88,19 +93,32 @@ export function ProjectTaskSelector({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Projects & Tasks</CardTitle>
-            <CardDescription>Search and select a task to log time</CardDescription>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Projects & Tasks</CardTitle>
+              <CardDescription>Search and select a task to log time</CardDescription>
+            </div>
+            <Button
+              variant={favoritesOnly ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setFavoritesOnly(!favoritesOnly)}
+            >
+              <Star className={cn('h-4 w-4 mr-2', favoritesOnly && 'fill-current')} />
+              Favorites
+            </Button>
           </div>
-          <Button
-            variant={favoritesOnly ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setFavoritesOnly(!favoritesOnly)}
-          >
-            <Star className={cn('h-4 w-4 mr-2', favoritesOnly && 'fill-current')} />
-            Favorites
-          </Button>
+          {onBoardTypeChange && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Board:</span>
+              <Tabs value={boardType} onValueChange={(value) => onBoardTypeChange(value as 'main' | 'flexi-design')}>
+                <TabsList>
+                  <TabsTrigger value="main">Main Projects</TabsTrigger>
+                  <TabsTrigger value="flexi-design">Flexi-Design</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

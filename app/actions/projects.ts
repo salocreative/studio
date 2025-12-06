@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
 
 interface ProjectWithTimeTracking {
   id: string
@@ -30,14 +31,35 @@ export async function getProjectsWithTimeTracking() {
   }
 
   try {
-    // Get all projects (active and locked/completed - exclude archived)
-    const { data: projects, error: projectsError } = await supabase
+    // Get Flexi-Design board IDs to exclude from Projects page
+    const flexiDesignBoardIds = await getFlexiDesignBoardIds()
+    
+    // Build query - exclude Flexi-Design boards
+    let projectsQuery = supabase
       .from('monday_projects')
       .select('*')
       .in('status', ['active', 'locked'])
       .order('name', { ascending: true })
-
-    if (projectsError) throw projectsError
+    
+    // Exclude Flexi-Design boards from Projects page
+    // Since Supabase doesn't have direct "not in" syntax, filter client-side
+    let projects: any[] = []
+    if (flexiDesignBoardIds.size > 0) {
+      const { data: allProjects, error: projectsError } = await supabase
+        .from('monday_projects')
+        .select('*')
+        .in('status', ['active', 'locked'])
+        .order('name', { ascending: true })
+      
+      if (projectsError) throw projectsError
+      
+      const flexiIds = Array.from(flexiDesignBoardIds)
+      projects = (allProjects || []).filter(p => !flexiIds.includes(p.monday_board_id))
+    } else {
+      const { data: allProjects, error: projectsError } = await projectsQuery
+      if (projectsError) throw projectsError
+      projects = allProjects || []
+    }
 
     if (!projects || projects.length === 0) {
       return { success: true, projects: [] }

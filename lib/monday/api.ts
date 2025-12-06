@@ -124,6 +124,20 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     completedBoards?.forEach(cb => {
       mappedBoardIds.add(cb.monday_board_id)
     })
+    
+    // Also include leads board if configured (it needs column mappings too)
+    const { data: leadsBoard } = await supabase
+      .from('monday_leads_board')
+      .select('monday_board_id')
+      .maybeSingle()
+    
+    if (leadsBoard?.monday_board_id) {
+      // Only include if it has column mappings
+      const hasMappings = allMappings?.some(m => m.board_id === leadsBoard.monday_board_id)
+      if (hasMappings) {
+        mappedBoardIds.add(leadsBoard.monday_board_id)
+      }
+    }
   }
   
   // If no board-specific mappings, we can't sync (need at least one board mapped)
@@ -464,6 +478,14 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
     
     const completedBoardIds = new Set(completedBoards?.map(cb => cb.monday_board_id) || [])
     
+    // Get leads board ID
+    const { data: leadsBoard } = await supabase
+      .from('monday_leads_board')
+      .select('monday_board_id')
+      .maybeSingle()
+    
+    const leadsBoardId = leadsBoard?.monday_board_id || null
+    
     // Get column mappings to determine active boards
     const { data: allMappings } = await supabase
       .from('monday_column_mappings')
@@ -528,8 +550,20 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
       // Determine status based on board
       const isActive = activeBoardIds.has(project.board_id)
       const isCompleted = completedBoardIds.has(project.board_id)
+      const isLead = leadsBoardId && project.board_id === leadsBoardId
+      
       // Projects on completed boards should be locked (not just archived)
-      const projectStatus = isActive ? 'active' : (isCompleted ? 'locked' : 'archived')
+      // Projects on leads board should be marked as 'lead'
+      let projectStatus: 'active' | 'archived' | 'locked' | 'lead'
+      if (isLead) {
+        projectStatus = 'lead'
+      } else if (isActive) {
+        projectStatus = 'active'
+      } else if (isCompleted) {
+        projectStatus = 'locked'
+      } else {
+        projectStatus = 'archived'
+      }
       
       // Check if project exists - get full record to preserve quoted_hours for locked projects
       const { data: existing } = await supabase
@@ -545,6 +579,28 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         ? (existing.quoted_hours || project.quoted_hours || null)
         : (project.quoted_hours || null)
 
+      // Handle status transitions
+      // - Leads can move to active, but once active/completed they shouldn't go back to lead
+      // - Locked projects stay locked (preserve time tracking data)
+      // - If project was previously a lead and is now on leads board, keep it as lead
+      // - If project was previously a lead and moved to active board, change to active
+      let finalStatus = projectStatus
+      if (existing) {
+        if (existing.status === 'locked') {
+          // Once locked, stay locked (preserve time tracking data)
+          finalStatus = 'locked'
+        } else if (existing.status === 'lead' && !isLead) {
+          // Lead moved to active/completed board, update status accordingly
+          finalStatus = projectStatus
+        } else if (isLead) {
+          // On leads board, should be 'lead' status
+          finalStatus = 'lead'
+        } else if (isCompleted) {
+          // On completed board, should be 'locked'
+          finalStatus = 'locked'
+        }
+      }
+
       const projectData = {
         monday_item_id: project.id,
         monday_board_id: project.board_id,
@@ -552,26 +608,19 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         client_name: project.client_name || null,
         quoted_hours: finalQuotedHours,
         monday_data: project.column_values,
-        // If project is on completed board OR was previously locked, keep it locked
-        // Once locked, projects stay locked to preserve time tracking data integrity
-        status: (isCompleted || existing?.status === 'locked') ? 'locked' : projectStatus,
+        status: finalStatus,
         updated_at: new Date().toISOString(),
       }
 
       if (existing) {
         // Update existing project
-        // Projects on completed boards are always locked
-        // Previously locked projects remain locked even if moved to active board
         await supabase
           .from('monday_projects')
           .update(projectData)
           .eq('monday_item_id', project.id)
       } else {
         // Insert new project
-        await supabase.from('monday_projects').insert({
-          ...projectData,
-          status: projectStatus,
-        })
+        await supabase.from('monday_projects').insert(projectData)
       }
 
       // 3. Fetch and sync tasks for this project

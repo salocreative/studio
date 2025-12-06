@@ -1,11 +1,13 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
 
 /**
  * Get all active projects with their tasks
+ * @param boardType - 'main' for main projects, 'flexi-design' for Flexi-Design projects, or 'all' for both
  */
-export async function getProjectsWithTasks() {
+export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 'all' = 'main') {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -14,12 +16,84 @@ export async function getProjectsWithTasks() {
   }
 
   try {
-    // Get active projects (exclude locked/archived - users can't track time on locked projects)
-    const { data: projects, error: projectsError } = await supabase
+    // Build query for active projects
+    let projectsQuery = supabase
       .from('monday_projects')
       .select('*')
       .eq('status', 'active')
       .order('name', { ascending: true })
+
+    // Filter by board type if needed
+    if (boardType !== 'all') {
+      const flexiDesignBoardIds = await getFlexiDesignBoardIds()
+      
+      if (boardType === 'flexi-design') {
+        // Only show Flexi-Design boards
+        if (flexiDesignBoardIds.size > 0) {
+          projectsQuery = projectsQuery.in('monday_board_id', Array.from(flexiDesignBoardIds))
+        } else {
+          // No Flexi-Design boards found, return empty
+          return { success: true, projects: [] }
+        }
+      } else {
+        // Only show main projects (exclude Flexi-Design)
+        if (flexiDesignBoardIds.size > 0) {
+          const flexiIds = Array.from(flexiDesignBoardIds)
+          // Filter out Flexi-Design boards
+          // Since Supabase doesn't have a direct "not in" operator, we'll filter client-side
+          // or use a different approach - get all and filter
+          const { data: allProjects } = await supabase
+            .from('monday_projects')
+            .select('*')
+            .eq('status', 'active')
+            .order('name', { ascending: true })
+          
+          const filteredProjects = allProjects?.filter(p => !flexiIds.includes(p.monday_board_id)) || []
+          // Continue with filtered projects
+          const projectIds = filteredProjects.map((p) => p.id)
+          
+          if (projectIds.length === 0) {
+            return { success: true, projects: [] }
+          }
+
+          const { data: tasks, error: tasksError } = await supabase
+            .from('monday_tasks')
+            .select('*')
+            .in('project_id', projectIds)
+            .eq('is_subtask', true)
+            .order('name', { ascending: true })
+
+          if (tasksError) throw tasksError
+
+          // Get user's favorite tasks
+          const { data: favorites } = await supabase
+            .from('favorite_tasks')
+            .select('task_id')
+            .eq('user_id', user.id)
+
+          const favoriteTaskIds = new Set(favorites?.map((f) => f.task_id) || [])
+
+          // Group tasks by project
+          const projectsWithTasks = filteredProjects.map((project) => {
+            const projectTasks = (tasks || [])
+              .filter((task) => task.project_id === project.id)
+              .map((task) => ({
+                ...task,
+                is_favorite: favoriteTaskIds.has(task.id),
+              }))
+
+            return {
+              ...project,
+              tasks: projectTasks,
+            }
+          })
+
+          return { success: true, projects: projectsWithTasks }
+        }
+      }
+    }
+
+    const { data: projects, error: projectsError } = await projectsQuery
 
     if (projectsError) throw projectsError
 

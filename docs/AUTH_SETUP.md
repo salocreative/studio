@@ -101,15 +101,28 @@ Once logged in as admin:
 
 ## Troubleshooting
 
+**CORS Error / "Failed to fetch" when logging in?**
+This usually happens when your local development URL isn't configured in Supabase:
+1. Go to Supabase Dashboard → **Authentication** → **URL Configuration**
+2. Under **Site URL**, add: `http://localhost:3000` (or whatever port you're using)
+3. Under **Redirect URLs**, add:
+   - `http://localhost:3000/auth/callback`
+   - `http://localhost:3001/auth/callback` (if using port 3001)
+   - Any other local development URLs you use
+4. Click **Save**
+5. Try logging in again
+
 **Can't log in?**
 - Check that user exists in `auth.users` table
 - Check that user profile exists in `public.users` table
 - Verify role is set correctly
+- Verify CORS configuration (see above)
 
 **SSO not working?**
 - Verify redirect URIs match exactly in provider settings
 - Check Supabase logs for errors
 - Ensure provider is enabled in Supabase Dashboard
+- Make sure CORS is configured correctly (see above)
 
 **User management not working?**
 - Admin functions require Supabase service role key (server-side only)

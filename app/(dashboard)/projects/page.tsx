@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { DoughnutChart } from '@/components/ui/doughnut-chart'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { FolderKanban, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { FolderKanban, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
 import { getProjectsWithTimeTracking } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
 
@@ -30,6 +32,9 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedClient, setSelectedClient] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'live' | 'completed'>('live')
 
   useEffect(() => {
     loadProjects()
@@ -63,6 +68,40 @@ export default function ProjectsPage() {
     })
   }
 
+  // Filter projects based on search query (but not client filter yet, for getting available clients)
+  const searchFilteredProjects = useMemo(() => {
+    return projects.filter((project) => {
+      const matchesSearch = 
+        !searchQuery ||
+        project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (project.client_name && project.client_name.toLowerCase().includes(searchQuery.toLowerCase()))
+      
+      return matchesSearch
+    })
+  }, [projects, searchQuery])
+
+  // Filter projects based on search query AND selected client
+  const filteredProjects = useMemo(() => {
+    return searchFilteredProjects.filter((project) => {
+      const matchesClient = !selectedClient || project.client_name === selectedClient
+      return matchesClient
+    })
+  }, [searchFilteredProjects, selectedClient])
+
+  // Get unique clients from search-filtered projects (respecting current tab but not client filter)
+  const getUniqueClients = (statusFilter: 'active' | 'locked') => {
+    const filtered = searchFilteredProjects.filter(p => 
+      statusFilter === 'active' ? p.status === 'active' : p.status === 'locked'
+    )
+    const clients = new Set<string>()
+    filtered.forEach(project => {
+      if (project.client_name) {
+        clients.add(project.client_name)
+      }
+    })
+    return Array.from(clients).sort()
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-background">
@@ -82,40 +121,74 @@ export default function ProjectsPage() {
             <p className="text-muted-foreground">Loading projects...</p>
           </div>
         ) : (
-          <Tabs defaultValue="live" className="w-full">
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'live' | 'completed')} className="w-full">
             <TabsList className="mb-6">
               <TabsTrigger value="live">
                 Live
-                {projects.filter(p => p.status === 'active').length > 0 && (
+                {filteredProjects.filter(p => p.status === 'active').length > 0 && (
                   <Badge variant="secondary" className="ml-2">
-                    {projects.filter(p => p.status === 'active').length}
+                    {filteredProjects.filter(p => p.status === 'active').length}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="completed">
                 Completed
-                {projects.filter(p => p.status === 'locked').length > 0 && (
+                {filteredProjects.filter(p => p.status === 'locked').length > 0 && (
                   <Badge variant="secondary" className="ml-2">
-                    {projects.filter(p => p.status === 'locked').length}
+                    {filteredProjects.filter(p => p.status === 'locked').length}
                   </Badge>
                 )}
               </TabsTrigger>
             </TabsList>
 
+            {/* Search and Filters */}
+            <div className="mb-6 space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search projects & tasks..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+                {searchQuery && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              
+              {/* Client Quick Filters - Show clients from current tab's filtered results */}
+              <ClientFilters
+                clients={getUniqueClients(activeTab === 'live' ? 'active' : 'locked')}
+                selectedClient={selectedClient}
+                onSelectClient={setSelectedClient}
+              />
+            </div>
+
             <TabsContent value="live" className="mt-0">
-              {projects.filter(p => p.status === 'active').length === 0 ? (
+              {filteredProjects.filter(p => p.status === 'active').length === 0 ? (
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
-                    <p className="text-lg font-medium">No live projects</p>
+                    <p className="text-lg font-medium">
+                      {searchQuery || selectedClient ? 'No matching projects' : 'No live projects'}
+                    </p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Active projects will appear here once synced from Monday.com
+                      {searchQuery || selectedClient
+                        ? 'Try adjusting your search or filter criteria'
+                        : 'Active projects will appear here once synced from Monday.com'}
                     </p>
                   </CardContent>
                 </Card>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {projects
+                  {filteredProjects
                     .filter(p => p.status === 'active')
                     .map((project) => (
                       <ProjectCard 
@@ -130,19 +203,23 @@ export default function ProjectsPage() {
             </TabsContent>
 
             <TabsContent value="completed" className="mt-0">
-              {projects.filter(p => p.status === 'locked').length === 0 ? (
+              {filteredProjects.filter(p => p.status === 'locked').length === 0 ? (
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
-                    <p className="text-lg font-medium">No completed projects</p>
+                    <p className="text-lg font-medium">
+                      {searchQuery || selectedClient ? 'No matching projects' : 'No completed projects'}
+                    </p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Completed projects (from completed boards) will appear here
+                      {searchQuery || selectedClient
+                        ? 'Try adjusting your search or filter criteria'
+                        : 'Completed projects (from completed boards) will appear here'}
                     </p>
                   </CardContent>
                 </Card>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {projects
+                  {filteredProjects
                     .filter(p => p.status === 'locked')
                     .map((project) => (
                       <ProjectCard 
@@ -379,5 +456,43 @@ function getStatus(percentage: number): 'over' | 'on-track' | 'under' {
   if (percentage >= 100) return 'over'
   if (percentage >= 80) return 'on-track'
   return 'under'
+}
+
+function ClientFilters({
+  clients,
+  selectedClient,
+  onSelectClient,
+}: {
+  clients: string[]
+  selectedClient: string | null
+  onSelectClient: (client: string | null) => void
+}) {
+  if (clients.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        variant={selectedClient === null ? 'default' : 'outline'}
+        size="sm"
+        onClick={() => onSelectClient(null)}
+        className="h-8"
+      >
+        All Clients
+      </Button>
+      {clients.map((client) => (
+        <Button
+          key={client}
+          variant={selectedClient === client ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onSelectClient(selectedClient === client ? null : client)}
+          className="h-8"
+        >
+          {client}
+        </Button>
+      ))}
+    </div>
+  )
 }
 

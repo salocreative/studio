@@ -9,7 +9,9 @@ import {
   Trophy, 
   Users,
   Settings,
-  LogOut
+  LogOut,
+  Palette,
+  TrendingUp
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -34,6 +36,18 @@ const navigation: NavItem[] = [
     href: '/projects',
     icon: FolderKanban,
     roles: ['admin', 'designer', 'employee'],
+  },
+  {
+    title: 'Flexi-Design',
+    href: '/flexi-design',
+    icon: Palette,
+    roles: ['admin'], // Only admins can see Flexi-Design
+  },
+  {
+    title: 'Performance',
+    href: '/performance',
+    icon: TrendingUp,
+    roles: ['admin', 'designer'], // Admins and designers can see performance
   },
   {
     title: 'Forecast',
