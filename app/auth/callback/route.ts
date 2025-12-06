@@ -16,6 +16,31 @@ export async function GET(request: Request) {
     fullUrl: requestUrl.toString(),
   })
 
+  // Check for error parameters (Supabase may redirect with errors)
+  const errorParam = requestUrl.searchParams.get('error')
+  const errorCode = requestUrl.searchParams.get('error_code')
+  const errorDescription = requestUrl.searchParams.get('error_description')
+
+  if (errorParam || errorCode) {
+    console.log('Auth callback - Error detected:', {
+      error: errorParam,
+      errorCode,
+      errorDescription,
+    })
+    
+    // If this is an invitation and there's an error, redirect to reset-password page
+    // The error will be in the hash when Supabase redirects, so we let the reset-password page handle it
+    if (type === 'invite') {
+      // Redirect to reset-password, it will read errors from URL hash
+      return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
+    }
+    
+    // For other errors, redirect to login
+    return NextResponse.redirect(
+      `${origin}/auth/login?error=${encodeURIComponent(errorDescription || 'Authentication failed')}`
+    )
+  }
+
   if (code) {
     const supabase = await createClient()
     
@@ -24,6 +49,13 @@ export async function GET(request: Request) {
     
     if (exchangeError) {
       console.error('Error exchanging code for session:', exchangeError)
+      
+      // If this is an invitation and the code exchange failed, redirect to reset-password
+      // The reset-password page will show an appropriate error message
+      if (type === 'invite') {
+        return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
+      }
+      
       return NextResponse.redirect(`${origin}/auth/login?error=Invalid or expired link`)
     }
 
@@ -85,6 +117,17 @@ export async function GET(request: Request) {
         // Redirect to password setup page for invited users
         return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
       }
+    }
+  }
+
+  // If no code and no error, but we're on a callback route, something went wrong
+  if (!code) {
+    console.log('Auth callback - No code present, redirecting to:', redirect)
+    
+    // If this was supposed to be an invitation, redirect to reset-password
+    // The reset-password page will handle showing an appropriate error if needed
+    if (type === 'invite') {
+      return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
     }
   }
 

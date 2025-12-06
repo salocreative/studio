@@ -17,6 +17,7 @@ function ResetPasswordForm() {
   const [success, setSuccess] = useState(false)
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [expiredLink, setExpiredLink] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
@@ -25,6 +26,36 @@ function ResetPasswordForm() {
   const supabase = createClient()
 
   useEffect(() => {
+    // Check for error parameters in URL hash (Supabase redirects errors in hash)
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash
+      if (hash) {
+        const hashParams = new URLSearchParams(hash.substring(1))
+        const errorCode = hashParams.get('error_code')
+        const errorDescription = hashParams.get('error_description')
+        
+        if (errorCode === 'otp_expired' || errorCode === 'token_expired') {
+          setExpiredLink(true)
+          setCheckingAuth(false)
+          setError(
+            errorDescription 
+              ? decodeURIComponent(errorDescription.replace(/\+/g, ' '))
+              : 'This invitation link has expired. Please contact your administrator for a new invitation.'
+          )
+          return
+        } else if (hashParams.get('error')) {
+          // Other error from Supabase
+          setCheckingAuth(false)
+          setError(
+            errorDescription 
+              ? decodeURIComponent(errorDescription.replace(/\+/g, ' '))
+              : 'This link is invalid or has expired. Please contact your administrator for a new invitation.'
+          )
+          return
+        }
+      }
+    }
+
     // Check if user is authenticated first
     supabase.auth.getUser().then(({ data: { user }, error: userError }) => {
       setIsAuthenticated(!!user)
@@ -104,19 +135,19 @@ function ResetPasswordForm() {
     )
   }
 
-  // Show error page only for password reset flow without token AND not authenticated
-  // Don't show error if user is authenticated (they might be coming from invitation)
-  // For invitations, if user is not authenticated, they need to click the link from email again
-  if (!isAuthenticated && !token && type !== 'invite' && error && !checkingAuth) {
+  // Show error page for expired links or invalid links
+  if (expiredLink || (!isAuthenticated && !token && error && !checkingAuth && type !== 'invite')) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl font-bold">Invalid Link</CardTitle>
+            <CardTitle className="text-2xl font-bold">
+              {expiredLink ? 'Link Expired' : 'Invalid Link'}
+            </CardTitle>
             <CardDescription>
-              {type === 'invite'
+              {error || (type === 'invite'
                 ? 'This invitation link is invalid or has expired. Please contact your administrator for a new invitation.'
-                : 'This password reset link is invalid or has expired. Please request a new password reset link.'}
+                : 'This password reset link is invalid or has expired. Please request a new password reset link.')}
             </CardDescription>
           </CardHeader>
           <CardContent>
