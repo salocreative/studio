@@ -40,6 +40,24 @@ export async function middleware(request: NextRequest) {
       error: authError,
     } = await supabase.auth.getUser()
 
+    // Handle Supabase invitation/auth codes at root path
+    // When Supabase verifies an invitation, it redirects to Site URL with a code parameter
+    if (request.nextUrl.pathname === '/' || request.nextUrl.pathname === '') {
+      const code = request.nextUrl.searchParams.get('code')
+      const type = request.nextUrl.searchParams.get('type')
+      
+      if (code) {
+        // Redirect to callback route to handle authentication
+        const callbackUrl = new URL('/auth/callback', request.url)
+        callbackUrl.searchParams.set('code', code)
+        if (type) {
+          callbackUrl.searchParams.set('type', type)
+        }
+        callbackUrl.searchParams.set('redirect', '/auth/reset-password')
+        return NextResponse.redirect(callbackUrl)
+      }
+    }
+
     // Only check auth if there's no error
     if (!authError) {
       // Protect dashboard routes
