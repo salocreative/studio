@@ -16,6 +16,7 @@ function ResetPasswordForm() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [checkingAuth, setCheckingAuth] = useState(true)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
@@ -24,22 +25,28 @@ function ResetPasswordForm() {
   const supabase = createClient()
 
   useEffect(() => {
-    // For invitation flow (type=invite), user is already authenticated via callback
-    // We don't need a token - just check if they're authenticated
-    if (type === 'invite') {
-      supabase.auth.getUser().then(({ data: { user }, error: userError }) => {
+    // Check if user is authenticated first
+    supabase.auth.getUser().then(({ data: { user }, error: userError }) => {
+      setIsAuthenticated(!!user)
+      
+      // For invitation flow (type=invite or authenticated user)
+      if (type === 'invite' || user) {
         setCheckingAuth(false)
-        if (!user) {
+        if (!user && type === 'invite') {
           setError('You must be logged in to set your password. Please click the invitation link from your email.')
         }
-      })
-    } else if (!token) {
+        // User is authenticated, they can set password
+        return
+      }
+      
       // For password reset flow (recovery), token is required
-      setCheckingAuth(false)
-      setError('Invalid or missing reset token. Please check your email link.')
-    } else {
-      setCheckingAuth(false)
-    }
+      if (!token) {
+        setCheckingAuth(false)
+        setError('Invalid or missing reset token. Please check your email link.')
+      } else {
+        setCheckingAuth(false)
+      }
+    })
   }, [token, type, supabase])
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -97,15 +104,19 @@ function ResetPasswordForm() {
     )
   }
 
-  // Show error page only for password reset flow without token
-  if (!token && type !== 'invite' && error) {
+  // Show error page only for password reset flow without token AND not authenticated
+  // Don't show error if user is authenticated (they might be coming from invitation)
+  // For invitations, if user is not authenticated, they need to click the link from email again
+  if (!isAuthenticated && !token && type !== 'invite' && error && !checkingAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl font-bold">Invalid Link</CardTitle>
             <CardDescription>
-              This password reset link is invalid or has expired.
+              {type === 'invite'
+                ? 'This invitation link is invalid or has expired. Please contact your administrator for a new invitation.'
+                : 'This password reset link is invalid or has expired. Please request a new password reset link.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -141,10 +152,10 @@ function ResetPasswordForm() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold">
-            {type === 'invite' ? 'Set Your Password' : 'Reset Your Password'}
+            {(type === 'invite' || isAuthenticated) ? 'Set Your Password' : 'Reset Your Password'}
           </CardTitle>
           <CardDescription>
-            {type === 'invite'
+            {(type === 'invite' || isAuthenticated)
               ? 'Welcome! Please set a password for your account.'
               : 'Enter your new password below.'}
           </CardDescription>
@@ -195,7 +206,7 @@ function ResetPasswordForm() {
             </div>
 
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Setting Password...' : type === 'invite' ? 'Set Password' : 'Reset Password'}
+              {loading ? 'Setting Password...' : (type === 'invite' || isAuthenticated) ? 'Set Password' : 'Reset Password'}
             </Button>
           </form>
         </CardContent>

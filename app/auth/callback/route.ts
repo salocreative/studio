@@ -8,6 +8,14 @@ export async function GET(request: Request) {
   const redirect = requestUrl.searchParams.get('redirect') || '/time-tracking'
   const origin = requestUrl.origin
 
+  // Log all URL parameters for debugging
+  console.log('Auth callback - URL params:', {
+    code: code ? 'present' : 'missing',
+    type,
+    redirect,
+    fullUrl: requestUrl.toString(),
+  })
+
   if (code) {
     const supabase = await createClient()
     
@@ -25,6 +33,14 @@ export async function GET(request: Request) {
     } = await supabase.auth.getUser()
 
     if (user) {
+      console.log('Auth callback - User info:', {
+        userId: user.id,
+        email: user.email,
+        createdAt: user.created_at,
+        emailConfirmed: user.email_confirmed_at,
+        metadata: user.user_metadata,
+      })
+
       const { data: existingProfile } = await supabase
         .from('users')
         .select('id')
@@ -45,24 +61,28 @@ export async function GET(request: Request) {
           console.error('Error creating user profile:', insertError)
         }
       }
-    }
 
-    // If this is an invitation (type=invite), always redirect to password setup
-    // Invited users need to set their password before they can use the app
-    if (type === 'invite') {
-      return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
-    }
-    
-    // Also check if this is a newly created user (likely from invitation)
-    // If user was just created in the last 5 minutes, redirect to password setup
-    if (user && user.created_at) {
-      const userCreatedAt = new Date(user.created_at).getTime()
-      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000
+      // Check if this is an invitation flow
+      // Invited users are newly created and need to set a password
+      // We can detect this by:
+      // 1. type=invite parameter in URL
+      // 2. User was just created (last 15 minutes)
+      // 3. User doesn't have email_confirmed_at (invited users may not have this set initially)
+      const userCreatedAt = user.created_at ? new Date(user.created_at).getTime() : 0
+      const fifteenMinutesAgo = Date.now() - 15 * 60 * 1000
+      const isNewUser = userCreatedAt > fifteenMinutesAgo
+      const isInvitation = type === 'invite' || isNewUser || !user.email_confirmed_at
       
-      if (userCreatedAt > fiveMinutesAgo) {
-        // This is a newly created user, likely from invitation
-        // Check if they have a password by trying to verify their session
-        // If session exists but they can't log in, they need to set password
+      console.log('Auth callback - Invitation check:', {
+        typeFromUrl: type,
+        isNewUser,
+        emailConfirmed: !!user.email_confirmed_at,
+        isInvitation,
+      })
+      
+      if (isInvitation) {
+        console.log('Redirecting to password setup page')
+        // Redirect to password setup page for invited users
         return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
       }
     }
