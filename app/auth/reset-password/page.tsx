@@ -57,14 +57,29 @@ function ResetPasswordForm() {
     }
 
     // Check if user is authenticated first
-    supabase.auth.getUser().then(({ data: { user }, error: userError }) => {
+    const checkAuth = async () => {
+      // For invitation flows, wait a bit for session cookies to be set
+      if (type === 'invite') {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+      
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
       setIsAuthenticated(!!user)
       
       // For invitation flow (type=invite or authenticated user)
       if (type === 'invite' || user) {
         setCheckingAuth(false)
         if (!user && type === 'invite') {
-          setError('You must be logged in to set your password. Please click the invitation link from your email.')
+          // Try checking again after a short delay (session cookies might still be setting)
+          setTimeout(async () => {
+            const { data: { user: retryUser } } = await supabase.auth.getUser()
+            if (retryUser) {
+              setIsAuthenticated(true)
+              setError(null)
+            } else {
+              setError('You must be authenticated to set your password. Please click the invitation link from your email again. If you continue to see this error, the link may have expired or you may need to request a new invitation.')
+            }
+          }, 1000)
         }
         // User is authenticated, they can set password
         return
@@ -77,13 +92,24 @@ function ResetPasswordForm() {
       } else {
         setCheckingAuth(false)
       }
-    })
+    }
+    
+    checkAuth()
   }, [token, type, supabase])
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
+
+    // Verify user is authenticated before attempting to set password
+    const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser()
+    
+    if (!currentUser) {
+      setError('You must be authenticated to set your password. Please click the invitation link from your email again.')
+      setLoading(false)
+      return
+    }
 
     if (password !== confirmPassword) {
       setError('Passwords do not match')
@@ -178,6 +204,31 @@ function ResetPasswordForm() {
     )
   }
 
+  // Don't show form if user is not authenticated for invitation flow
+  if (type === 'invite' && !isAuthenticated && error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-2xl font-bold">Authentication Required</CardTitle>
+            <CardDescription>
+              You must be authenticated to set your password.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </div>
+            <Button onClick={() => router.push('/auth/login')} className="w-full">
+              Go to Login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
@@ -212,7 +263,7 @@ function ResetPasswordForm() {
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-9"
                   required
-                  disabled={loading}
+                  disabled={loading || (type === 'invite' && !isAuthenticated)}
                   minLength={6}
                 />
               </div>
@@ -230,13 +281,17 @@ function ResetPasswordForm() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="pl-9"
                   required
-                  disabled={loading}
+                  disabled={loading || (type === 'invite' && !isAuthenticated)}
                   minLength={6}
                 />
               </div>
             </div>
 
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button 
+              type="submit" 
+              className="w-full" 
+              disabled={loading || (type === 'invite' && !isAuthenticated)}
+            >
               {loading ? 'Setting Password...' : (type === 'invite' || isAuthenticated) ? 'Set Password' : 'Reset Password'}
             </Button>
           </form>

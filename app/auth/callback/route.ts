@@ -120,14 +120,58 @@ export async function GET(request: Request) {
     }
   }
 
-  // If no code and no error, but we're on a callback route, something went wrong
+  // If no code, check if user is already authenticated (invitation links might set cookies directly)
   if (!code) {
-    console.log('Auth callback - No code present, redirecting to:', redirect)
+    console.log('Auth callback - No code present, checking for existing session')
     
-    // If this was supposed to be an invitation, redirect to reset-password
-    // The reset-password page will handle showing an appropriate error if needed
-    if (type === 'invite') {
-      return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
+    const supabase = await createClient()
+    
+    // Check if user is already authenticated (Supabase might have set session cookies during verification)
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser()
+    
+    if (user && !userError) {
+      console.log('Auth callback - User already authenticated via cookies:', {
+        userId: user.id,
+        email: user.email,
+      })
+      
+      // Create user profile if it doesn't exist
+      const { data: existingProfile } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (!existingProfile) {
+        const role = user.user_metadata?.role || 'employee'
+        const { error: insertError } = await supabase.from('users').insert({
+          id: user.id,
+          email: user.email!,
+          full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+          role: role,
+        })
+        
+        if (insertError) {
+          console.error('Error creating user profile:', insertError)
+        }
+      }
+      
+      // If this is an invitation, redirect to password setup
+      if (type === 'invite') {
+        console.log('Auth callback - Redirecting to password setup page (session already established)')
+        return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
+      }
+    } else {
+      console.log('Auth callback - No code and no authenticated user, redirecting to:', redirect)
+      
+      // If this was supposed to be an invitation, redirect to reset-password
+      // The reset-password page will handle showing an appropriate error if needed
+      if (type === 'invite') {
+        return NextResponse.redirect(`${origin}/auth/reset-password?type=invite`)
+      }
     }
   }
 
