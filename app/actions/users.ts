@@ -70,10 +70,10 @@ export async function createUser(
       .from('users')
       .select('id, email')
       .eq('email', email)
-      .single()
+      .maybeSingle()
 
     if (existingProfile) {
-      return { error: 'User already exists' }
+      return { error: 'User already exists in the system' }
     }
 
     // Create new user via Supabase Admin API
@@ -116,9 +116,14 @@ export async function createUser(
     }
 
     try {
+      // Get the site URL for redirect
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+      
       const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
         email,
         {
+          redirectTo: `${siteUrl}/auth/callback?type=invite&redirect=/auth/reset-password`,
           data: {
             full_name: fullName,
             role,
@@ -133,9 +138,9 @@ export async function createUser(
         }
       }
 
-      // Create user profile
+      // Create user profile using admin client to bypass RLS
       if (inviteData?.user) {
-        const { error: profileError } = await supabase.from('users').insert({
+        const { error: profileError } = await adminClient.from('users').insert({
           id: inviteData.user.id,
           email,
           full_name: fullName || null,
@@ -143,15 +148,23 @@ export async function createUser(
         })
 
         if (profileError) {
-          console.error('Error creating user profile:', profileError)
+          console.error('Error creating user profile:', {
+            error: profileError,
+            message: profileError.message,
+            code: profileError.code,
+            details: profileError.details,
+            hint: profileError.hint,
+            userId: inviteData.user.id,
+            email: email,
+          })
           // User was created in auth but profile failed - try to clean up
           try {
             await adminClient.auth.admin.deleteUser(inviteData.user.id)
-          } catch {
-            // Ignore cleanup errors
+          } catch (cleanupError) {
+            console.error('Error cleaning up auth user:', cleanupError)
           }
           return {
-            error: 'Failed to create user profile. User may need to be created manually.',
+            error: `Failed to create user profile: ${profileError.message || 'Unknown error'}. Error code: ${profileError.code || 'N/A'}. User may need to be created manually.`,
           }
         }
       } else {
