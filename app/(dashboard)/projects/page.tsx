@@ -282,17 +282,19 @@ export default function ProjectsPage() {
             ) : projectDetails ? (
               <div className="space-y-4">
                 {/* Tasks Breakdown */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-2">Tasks</h3>
-                  {projectDetails.tasksBreakdown && projectDetails.tasksBreakdown.length > 0 ? (
-                    <div className="space-y-1.5">
-                      {projectDetails.tasksBreakdown.map((task: any) => (
-                        <Card key={task.id} className="border-muted">
-                          <CardContent className="p-3">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Tasks</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {projectDetails.tasksBreakdown && projectDetails.tasksBreakdown.length > 0 ? (
+                      <div className="divide-y">
+                        {projectDetails.tasksBreakdown.map((task: any) => (
+                          <div key={task.id} className="py-2.5 first:pt-0 last:pb-0">
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium truncate">{task.name}</div>
-                                <div className="flex items-center gap-2 mt-1">
+                                <div className="flex items-center gap-2 mt-0.5">
                                   <span className="text-xs text-muted-foreground">
                                     {task.loggedHours.toFixed(1)}h logged
                                   </span>
@@ -325,25 +327,27 @@ export default function ProjectsPage() {
                                 )}
                               </div>
                             </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No tasks found</p>
-                  )}
-                </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">No tasks found</p>
+                    )}
+                  </CardContent>
+                </Card>
 
                 {/* Time Totals by User */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-2">Time by Team Member</h3>
-                  {projectDetails.userTotals.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No time entries yet</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {projectDetails.userTotals.map((user: any) => (
-                        <Card key={user.userId} className="border-muted">
-                          <CardContent className="p-3">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Time by Team Member</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {projectDetails.userTotals.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No time entries yet</p>
+                    ) : (
+                      <div className="divide-y">
+                        {projectDetails.userTotals.map((user: any) => (
+                          <div key={user.userId} className="py-2.5 first:pt-0 last:pb-0">
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium">{user.userName}</div>
@@ -368,23 +372,25 @@ export default function ProjectsPage() {
                                 )}
                               </div>
                             </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
 
                 {/* Latest Time Entries */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-2">Latest Entries</h3>
-                  {projectDetails.latestEntries.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No time entries yet</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {projectDetails.latestEntries.map((entry: any) => (
-                        <Card key={entry.id} className="border-muted">
-                          <CardContent className="p-2.5">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Latest Entries</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {projectDetails.latestEntries.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No time entries yet</p>
+                    ) : (
+                      <div className="divide-y">
+                        {projectDetails.latestEntries.map((entry: any) => (
+                          <div key={entry.id} className="py-2 first:pt-0 last:pb-0">
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 mb-0.5">
@@ -405,12 +411,12 @@ export default function ProjectsPage() {
                                 )}
                               </div>
                             </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
                 </div>
             ) : null}
             </div>
