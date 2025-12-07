@@ -21,7 +21,7 @@ interface NavItem {
   title: string
   href: string
   icon: React.ComponentType<{ className?: string }>
-  roles: ('admin' | 'designer' | 'employee')[]
+  roles: ('admin' | 'designer' | 'manager')[]
 }
 
 const navigation: NavItem[] = [
@@ -29,43 +29,43 @@ const navigation: NavItem[] = [
     title: 'Time Tracking',
     href: '/time-tracking',
     icon: Clock,
-    roles: ['admin', 'designer', 'employee'],
+    roles: ['admin', 'designer', 'manager'],
   },
   {
     title: 'Projects',
     href: '/projects',
     icon: FolderKanban,
-    roles: ['admin', 'designer', 'employee'],
+    roles: ['admin', 'designer', 'manager'],
   },
   {
     title: 'Flexi-Design',
     href: '/flexi-design',
     icon: Palette,
-    roles: ['admin'], // Only admins can see Flexi-Design
+    roles: ['admin', 'designer', 'manager'], // Admins, designers, and managers can see Flexi-Design
   },
   {
     title: 'Performance',
     href: '/performance',
     icon: TrendingUp,
-    roles: ['admin', 'designer'], // Admins and designers can see performance
+    roles: ['admin', 'designer', 'manager'], // Admins, designers, and managers can see performance
   },
   {
     title: 'Forecast',
     href: '/forecast',
     icon: Calendar,
-    roles: ['admin', 'designer', 'employee'],
+    roles: ['admin', 'designer', 'manager'],
   },
   {
     title: 'Scorecard',
     href: '/scorecard',
     icon: Trophy,
-    roles: ['admin'], // Only admins can see scorecard
+    roles: ['admin', 'designer', 'manager'], // Managers can see scorecard
   },
   {
     title: 'Customers',
     href: '/customers',
     icon: Users,
-    roles: ['admin'], // Only admins can see customers
+    roles: ['admin', 'designer', 'manager'], // Managers can see customers
   },
   {
     title: 'Settings',
@@ -76,10 +76,10 @@ const navigation: NavItem[] = [
 ]
 
 interface SidebarProps {
-  userRole?: 'admin' | 'designer' | 'employee'
+  userRole?: 'admin' | 'designer' | 'manager'
 }
 
-export function Sidebar({ userRole = 'employee' }: SidebarProps) {
+export function Sidebar({ userRole = 'manager' }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()

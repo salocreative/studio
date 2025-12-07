@@ -52,7 +52,7 @@ export async function getUsers() {
 export async function createUser(
   email: string,
   fullName?: string,
-  role: 'admin' | 'designer' | 'employee' = 'employee'
+  role: 'admin' | 'designer' | 'manager' = 'manager'
 ) {
   const supabase = await createClient()
 
@@ -202,7 +202,7 @@ export async function createUser(
  */
 export async function updateUserRole(
   userId: string,
-  role: 'admin' | 'designer' | 'employee'
+  role: 'admin' | 'designer' | 'manager'
 ) {
   const supabase = await createClient()
 

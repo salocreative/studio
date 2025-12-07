@@ -4,10 +4,10 @@ import { Sidebar } from './sidebar'
 
 interface LayoutWrapperProps {
   children: React.ReactNode
-  userRole?: 'admin' | 'designer' | 'employee'
+  userRole?: 'admin' | 'designer' | 'manager'
 }
 
-export function LayoutWrapper({ children, userRole = 'employee' }: LayoutWrapperProps) {
+export function LayoutWrapper({ children, userRole = 'manager' }: LayoutWrapperProps) {
   return (
     <div className="flex h-screen">
       <Sidebar userRole={userRole} />

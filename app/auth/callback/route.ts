@@ -81,7 +81,7 @@ export async function GET(request: Request) {
 
       if (!existingProfile) {
         // Create user profile with default role (or use metadata from invitation)
-        const role = user.user_metadata?.role || 'employee'
+            const role = user.user_metadata?.role || 'manager'
         const { error: insertError } = await supabase.from('users').insert({
           id: user.id,
           email: user.email!,
@@ -146,7 +146,7 @@ export async function GET(request: Request) {
         .maybeSingle()
 
       if (!existingProfile) {
-        const role = user.user_metadata?.role || 'employee'
+            const role = user.user_metadata?.role || 'manager'
         const { error: insertError } = await supabase.from('users').insert({
           id: user.id,
           email: user.email!,

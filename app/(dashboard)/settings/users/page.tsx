@@ -28,7 +28,7 @@ interface User {
   id: string
   email: string
   full_name: string | null
-  role: 'admin' | 'designer' | 'employee'
+  role: 'admin' | 'designer' | 'manager'
   created_at: string
 }
 
@@ -38,7 +38,7 @@ export default function UsersPage() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
-  const [role, setRole] = useState<'admin' | 'designer' | 'employee'>('employee')
+  const [role, setRole] = useState<'admin' | 'designer' | 'manager'>('manager')
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -72,7 +72,7 @@ export default function UsersPage() {
       } else {
         setEmail('')
         setFullName('')
-        setRole('employee')
+        setRole('manager')
         setShowAddForm(false)
         await loadUsers()
         alert('User invitation sent! They will receive an email to set their password.')
@@ -85,7 +85,7 @@ export default function UsersPage() {
     }
   }
 
-  async function handleUpdateRole(userId: string, newRole: 'admin' | 'designer' | 'employee') {
+  async function handleUpdateRole(userId: string, newRole: 'admin' | 'designer' | 'manager') {
     try {
       const result = await updateUserRole(userId, newRole)
       if (result.error) {
@@ -188,7 +188,7 @@ export default function UsersPage() {
                       <SelectContent>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="designer">Designer</SelectItem>
-                        <SelectItem value="employee">Employee</SelectItem>
+                        <SelectItem value="manager">Manager</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -273,7 +273,7 @@ export default function UsersPage() {
                               <SelectContent>
                                 <SelectItem value="admin">Admin</SelectItem>
                                 <SelectItem value="designer">Designer</SelectItem>
-                                <SelectItem value="employee">Employee</SelectItem>
+                                <SelectItem value="manager">Manager</SelectItem>
                               </SelectContent>
                             </Select>
                           </TableCell>

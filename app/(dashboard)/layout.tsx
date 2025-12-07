@@ -41,7 +41,7 @@ export default async function DashboardLayout({
 
   // Get user profile with role
   // Use .maybeSingle() instead of .single() to avoid errors if profile doesn't exist yet
-  let userRole: 'admin' | 'designer' | 'employee' = 'employee'
+  let userRole: 'admin' | 'designer' | 'manager' = 'manager'
   
   try {
     const { data: userProfile, error: profileError } = await supabase
@@ -54,7 +54,13 @@ export default async function DashboardLayout({
       // PGRST116 is "not found" which is fine for new users
       console.error('Error fetching user profile:', profileError)
     } else if (userProfile?.role) {
-      userRole = (userProfile.role as 'admin' | 'designer' | 'employee') || 'employee'
+      // Handle both 'employee' (legacy) and 'manager' (new) roles
+      const role = userProfile.role as string
+      if (role === 'employee') {
+        userRole = 'manager' // Map legacy 'employee' to 'manager'
+      } else {
+        userRole = (role as 'admin' | 'designer' | 'manager') || 'manager'
+      }
     }
   } catch (profileError) {
     console.error('Error fetching user profile:', profileError)

@@ -32,7 +32,7 @@ interface TeamMemberUtilization {
   id: string
   email: string
   full_name: string | null
-  role: 'admin' | 'designer' | 'employee'
+  role: 'admin' | 'designer' | 'manager'
   hours_logged: number
   available_hours: number
   utilization_percentage: number

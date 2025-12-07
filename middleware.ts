@@ -67,6 +67,8 @@ export async function middleware(request: NextRequest) {
       // Protect dashboard routes
       if (request.nextUrl.pathname.startsWith('/time-tracking') ||
           request.nextUrl.pathname.startsWith('/projects') ||
+          request.nextUrl.pathname.startsWith('/flexi-design') ||
+          request.nextUrl.pathname.startsWith('/performance') ||
           request.nextUrl.pathname.startsWith('/forecast') ||
           request.nextUrl.pathname.startsWith('/scorecard') ||
           request.nextUrl.pathname.startsWith('/customers') ||

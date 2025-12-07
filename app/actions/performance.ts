@@ -7,7 +7,7 @@ interface TeamMemberUtilization {
   id: string
   email: string
   full_name: string | null
-  role: 'admin' | 'designer' | 'employee'
+  role: 'admin' | 'designer' | 'manager'
   hours_logged: number
   available_hours: number
   utilization_percentage: number
@@ -49,9 +49,9 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
     .eq('id', user.id)
     .single()
 
-  // Allow admin and designer roles to view performance
-  if (userProfile?.role !== 'admin' && userProfile?.role !== 'designer') {
-    return { error: 'Unauthorized: Admin or Designer access required' }
+  // Allow admin, designer, and manager roles to view performance
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'designer' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin, Designer, or Manager access required' }
   }
 
   // Use admin client to bypass RLS and fetch all users
