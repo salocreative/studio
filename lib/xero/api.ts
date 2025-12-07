@@ -207,17 +207,153 @@ async function refreshXeroToken(refreshToken: string, tenantId: string) {
 }
 
 /**
+ * Get cached financial data
+ */
+async function getCachedFinancialData(tenantId: string, startDate: string, endDate: string) {
+  const supabase = await createClient()
+  
+  try {
+    const { data, error } = await supabase
+      .from('xero_financial_cache')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('period_start', startDate)
+      .eq('period_end', endDate)
+      .maybeSingle()
+    
+    if (error) {
+      console.error('Error fetching cached financial data:', error)
+      return null
+    }
+    
+    return data
+  } catch (error) {
+    console.error('Error in getCachedFinancialData:', error)
+    return null
+  }
+}
+
+/**
+ * Save financial data to cache
+ */
+async function saveFinancialDataToCache(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+  revenue: number,
+  expenses: number,
+  profit: number
+) {
+  const supabase = await createClient()
+  
+  // Check if user is admin (required for cache write)
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    console.warn('Cannot save to cache: user not authenticated')
+    return
+  }
+  
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle()
+  
+  if (userProfile?.role !== 'admin') {
+    console.warn('Cannot save to cache: user is not admin')
+    return
+  }
+  
+  try {
+    const { error } = await supabase
+      .from('xero_financial_cache')
+      .upsert({
+        tenant_id: tenantId,
+        period_start: startDate,
+        period_end: endDate,
+        revenue,
+        expenses,
+        profit,
+        cached_at: new Date().toISOString(),
+      }, {
+        onConflict: 'tenant_id,period_start,period_end'
+      })
+    
+    if (error) {
+      console.error('Error saving to cache:', error)
+    } else {
+      console.log('Financial data saved to cache')
+    }
+  } catch (error) {
+    console.error('Error in saveFinancialDataToCache:', error)
+  }
+}
+
+/**
  * Fetch financial data from Xero API (simplified version)
  * For now, we'll fetch invoices and bills to calculate revenue and expenses
  */
 export async function fetchXeroFinancialData(startDate: string, endDate: string) {
   const connectionResult = await getXeroConnection()
   
+  // If no connection, try to get any cached data (we don't know tenant_id)
   if (connectionResult.error || !connectionResult.connection) {
+    // Try to find any cached data for this period (query without tenant_id filter)
+    const supabase = await createClient()
+    try {
+      const { data: cached } = await supabase
+        .from('xero_financial_cache')
+        .select('*')
+        .eq('period_start', startDate)
+        .eq('period_end', endDate)
+        .order('cached_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      
+      if (cached) {
+        console.log('Returning cached financial data (no active connection)')
+        return {
+          success: true,
+          revenue: Number(cached.revenue || 0),
+          expenses: Number(cached.expenses || 0),
+          profit: Number(cached.profit || 0),
+          period: {
+            start: startDate,
+            end: endDate,
+          },
+          fromCache: true,
+        }
+      }
+    } catch (error) {
+      console.error('Error checking cache without connection:', error)
+    }
+    
     return { error: 'Xero not connected. Please connect in Settings.' }
   }
   
   const connection = connectionResult.connection
+  
+  // Check cache first (if data is less than 24 hours old, use it)
+  const cached = await getCachedFinancialData(connection.tenant_id, startDate, endDate)
+  if (cached) {
+    const cacheAge = Date.now() - new Date(cached.cached_at).getTime()
+    const oneDayInMs = 24 * 60 * 60 * 1000
+    
+    if (cacheAge < oneDayInMs) {
+      console.log('Returning cached financial data (less than 24 hours old)')
+      return {
+        success: true,
+        revenue: Number(cached.revenue || 0),
+        expenses: Number(cached.expenses || 0),
+        profit: Number(cached.profit || 0),
+        period: {
+          start: startDate,
+          end: endDate,
+        },
+        fromCache: true,
+      }
+    }
+  }
   
   console.log('Xero connection details:', {
     hasAccessToken: !!connection.access_token,
@@ -228,12 +364,25 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
   
   const accessToken = await getValidAccessToken(connection)
   
+  // If token refresh fails, try to return cached data
   if (!accessToken) {
-    console.error('Failed to get valid access token. Connection:', {
-      hasAccessToken: !!connection.access_token,
-      hasRefreshToken: !!connection.refresh_token,
-      expiresAt: connection.token_expires_at || connection.expires_at,
-    })
+    console.error('Failed to get valid access token. Trying cached data...')
+    
+    if (cached) {
+      console.log('Returning cached financial data (token expired)')
+      return {
+        success: true,
+        revenue: Number(cached.revenue || 0),
+        expenses: Number(cached.expenses || 0),
+        profit: Number(cached.profit || 0),
+        period: {
+          start: startDate,
+          end: endDate,
+        },
+        fromCache: true,
+      }
+    }
+    
     return { 
       error: 'Failed to get valid Xero access token. The token may have expired. Please reconnect Xero in Settings.' 
     }
@@ -378,6 +527,16 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
     
     console.log(`Financial summary: Revenue=${revenue}, Expenses=${expenses}, Profit=${profit}`)
     
+    // Save to cache
+    await saveFinancialDataToCache(
+      connection.tenant_id,
+      startDate,
+      endDate,
+      revenue,
+      expenses,
+      profit
+    )
+    
     return {
       success: true,
       revenue,
@@ -387,6 +546,7 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
         start: startDate,
         end: endDate,
       },
+      fromCache: false,
     }
   } catch (error) {
     console.error('Error fetching Xero financial data:', error)

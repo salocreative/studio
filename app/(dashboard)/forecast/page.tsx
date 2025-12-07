@@ -20,6 +20,7 @@ interface FinancialData {
     start: string
     end: string
   }
+  fromCache?: boolean
 }
 
 export default function ForecastPage() {
@@ -82,7 +83,10 @@ export default function ForecastPage() {
       
       if (result.error) {
         console.error('Error loading financial data:', result.error)
-        toast.error('Error loading financial data', { description: result.error })
+        // Only show error toast if we don't have cached data
+        if (!result.fromCache) {
+          toast.error('Error loading financial data', { description: result.error })
+        }
         // Still set data to 0 so UI doesn't break
         setFinancialData({
           revenue: 0,
@@ -95,13 +99,23 @@ export default function ForecastPage() {
           revenue: result.revenue,
           expenses: result.expenses,
           profit: result.profit,
-          period: result.period
+          period: result.period,
+          fromCache: result.fromCache
         })
+        
+        // Show info toast if using cached data
+        if (result.fromCache) {
+          toast.info('Showing cached financial data', { 
+            description: 'Xero connection unavailable. Displaying last cached data.' 
+          })
+        }
+        
         setFinancialData({
           revenue: result.revenue || 0,
           expenses: result.expenses || 0,
           profit: result.profit || 0,
           period: result.period || { start: dates.start, end: dates.end },
+          fromCache: result.fromCache,
         })
       } else {
         console.warn('Unexpected result format:', result)
@@ -219,13 +233,20 @@ export default function ForecastPage() {
 
           {/* Financial Overview */}
           {xeroConnected && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Revenue
-                  </CardTitle>
-                </CardHeader>
+            <div className="space-y-4">
+              {financialData?.fromCache && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
+                  <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                  <span>Showing cached financial data. Xero connection unavailable.</span>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Revenue
+                    </CardTitle>
+                  </CardHeader>
                 <CardContent>
                   {loadingFinancial ? (
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -273,6 +294,7 @@ export default function ForecastPage() {
                   )}
                 </CardContent>
               </Card>
+              </div>
             </div>
           )}
 
