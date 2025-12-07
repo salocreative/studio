@@ -75,8 +75,10 @@ export default function ProjectsPage() {
       if (result.error) {
         console.error('Error loading project details:', result.error)
       } else if (result.project) {
+        console.log('Project details result:', result)
         setProjectDetails({
           project: result.project,
+          tasksBreakdown: result.tasksBreakdown || [],
           userTotals: result.userTotals || [],
           latestEntries: result.latestEntries || [],
         })
@@ -280,9 +282,9 @@ export default function ProjectsPage() {
             ) : projectDetails ? (
               <div className="space-y-4">
                 {/* Tasks Breakdown */}
-                {projectDetails.tasksBreakdown && projectDetails.tasksBreakdown.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-semibold mb-2">Tasks</h3>
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Tasks</h3>
+                  {projectDetails.tasksBreakdown && projectDetails.tasksBreakdown.length > 0 ? (
                     <div className="space-y-1.5">
                       {projectDetails.tasksBreakdown.map((task: any) => (
                         <Card key={task.id} className="border-muted">
@@ -327,8 +329,10 @@ export default function ProjectsPage() {
                         </Card>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No tasks found</p>
+                  )}
+                </div>
 
                 {/* Time Totals by User */}
                 <div>
