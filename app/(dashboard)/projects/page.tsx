@@ -261,23 +261,25 @@ export default function ProjectsPage() {
         {/* Project Details Sheet */}
         <Sheet open={selectedProjectId !== null} onOpenChange={(open) => !open && handleCloseSheet()}>
           <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>
+                {loadingDetails ? 'Loading...' : projectDetails?.project.name || 'Project Details'}
+              </SheetTitle>
+              {!loadingDetails && projectDetails?.project.client_name && (
+                <SheetDescription>
+                  {projectDetails.project.client_name}
+                </SheetDescription>
+              )}
+            </SheetHeader>
+            
             {loadingDetails ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : projectDetails ? (
-              <>
-                <SheetHeader>
-                  <SheetTitle>{projectDetails.project.name}</SheetTitle>
-                  {projectDetails.project.client_name && (
-                    <SheetDescription>
-                      {projectDetails.project.client_name}
-                    </SheetDescription>
-                  )}
-                </SheetHeader>
+              <div className="mt-6 space-y-6">
 
-                <div className="mt-6 space-y-6">
-                  {/* Time Totals by User */}
+                {/* Time Totals by User */}
                   <div>
                     <h3 className="text-lg font-semibold mb-4">Time Logged by Team Member</h3>
                     {projectDetails.userTotals.length === 0 ? (
@@ -354,7 +356,6 @@ export default function ProjectsPage() {
                     )}
                   </div>
                 </div>
-              </>
             ) : null}
           </SheetContent>
         </Sheet>
