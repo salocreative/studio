@@ -167,7 +167,6 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
     }, 0) || 0
 
     // Build daily breakdown
-    const expectedHoursPerDay = 6
     const allDays = eachDayOfInterval({
       start: periodStart,
       end: periodEnd,
