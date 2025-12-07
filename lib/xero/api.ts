@@ -59,13 +59,48 @@ export async function getXeroConnection() {
  * Get valid access token (refresh if needed)
  */
 async function getValidAccessToken(connection: any): Promise<string | null> {
+  if (!connection) {
+    console.error('getValidAccessToken: No connection provided')
+    return null
+  }
+
+  if (!connection.access_token) {
+    console.error('getValidAccessToken: No access_token in connection')
+    return null
+  }
+
   const now = new Date()
-  const expiresAt = new Date(connection.token_expires_at)
+  const expiresAt = new Date(connection.token_expires_at || connection.expires_at)
   
-  // If token expires in less than 5 minutes, refresh it
-  if (expiresAt.getTime() - now.getTime() < 5 * 60 * 1000) {
+  // Check if expires_at is valid
+  if (isNaN(expiresAt.getTime())) {
+    console.error('getValidAccessToken: Invalid expires_at date:', connection.token_expires_at || connection.expires_at)
+    // If we can't determine expiration, try to refresh
+    if (connection.refresh_token) {
+      const refreshed = await refreshXeroToken(connection.refresh_token, connection.tenant_id)
+      if (refreshed.error || !refreshed.accessToken) {
+        console.error('getValidAccessToken: Failed to refresh token:', refreshed.error)
+        return null
+      }
+      return refreshed.accessToken
+    }
+    // If no refresh token and invalid expiration, use existing token (might fail)
+    return connection.access_token
+  }
+  
+  // If token is already expired or expires in less than 5 minutes, refresh it
+  const timeUntilExpiry = expiresAt.getTime() - now.getTime()
+  if (timeUntilExpiry < 5 * 60 * 1000) {
+    console.log(`Token expires in ${Math.round(timeUntilExpiry / 1000 / 60)} minutes, refreshing...`)
+    
+    if (!connection.refresh_token) {
+      console.error('getValidAccessToken: Token expired but no refresh_token available')
+      return null
+    }
+    
     const refreshed = await refreshXeroToken(connection.refresh_token, connection.tenant_id)
     if (refreshed.error || !refreshed.accessToken) {
+      console.error('getValidAccessToken: Failed to refresh token:', refreshed.error)
       return null
     }
     return refreshed.accessToken
@@ -82,7 +117,13 @@ async function refreshXeroToken(refreshToken: string, tenantId: string) {
   const clientSecret = process.env.XERO_CLIENT_SECRET
   
   if (!clientId || !clientSecret) {
+    console.error('refreshXeroToken: Missing client credentials')
     return { error: 'Xero client credentials not configured' }
+  }
+  
+  if (!refreshToken) {
+    console.error('refreshXeroToken: No refresh token provided')
+    return { error: 'No refresh token available' }
   }
   
   try {
@@ -101,29 +142,62 @@ async function refreshXeroToken(refreshToken: string, tenantId: string) {
     
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('Xero token refresh error:', errorText)
-      return { error: 'Failed to refresh Xero token' }
+      let errorMessage = 'Failed to refresh Xero token'
+      try {
+        const errorData = JSON.parse(errorText)
+        errorMessage = errorData.error_description || errorData.error || errorMessage
+      } catch {
+        errorMessage = errorText || errorMessage
+      }
+      console.error('Xero token refresh error:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorMessage,
+      })
+      return { error: errorMessage }
     }
     
     const data = await response.json()
     
+    if (!data.access_token) {
+      console.error('refreshXeroToken: No access_token in refresh response')
+      return { error: 'Invalid response from Xero: missing access_token' }
+    }
+    
     // Update token in database
     const supabase = await createClient()
-    const expiresAt = new Date(Date.now() + data.expires_in * 1000)
+    const expiresAt = new Date(Date.now() + (data.expires_in || 1800) * 1000)
     
-    await supabase
+    const updateData: any = {
+      access_token: data.access_token,
+      token_expires_at: expiresAt.toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    
+    // Only update refresh_token if Xero provides a new one (they sometimes don't)
+    if (data.refresh_token) {
+      updateData.refresh_token = data.refresh_token
+    }
+    
+    const { error: updateError } = await supabase
       .from('xero_connection')
-      .update({
-        access_token: data.access_token,
-        refresh_token: data.refresh_token,
-        token_expires_at: expiresAt.toISOString(),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq('tenant_id', tenantId)
     
+    if (updateError) {
+      console.error('refreshXeroToken: Failed to update token in database:', updateError)
+      // Still return the token even if DB update fails
+      return { 
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || refreshToken,
+        expiresIn: data.expires_in 
+      }
+    }
+    
+    console.log('Token refreshed successfully')
     return { 
       accessToken: data.access_token,
-      refreshToken: data.refresh_token,
+      refreshToken: data.refresh_token || refreshToken,
       expiresIn: data.expires_in 
     }
   } catch (error) {
@@ -144,10 +218,25 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
   }
   
   const connection = connectionResult.connection
+  
+  console.log('Xero connection details:', {
+    hasAccessToken: !!connection.access_token,
+    hasRefreshToken: !!connection.refresh_token,
+    expiresAt: connection.token_expires_at || connection.expires_at,
+    tenantId: connection.tenant_id,
+  })
+  
   const accessToken = await getValidAccessToken(connection)
   
   if (!accessToken) {
-    return { error: 'Failed to get valid Xero access token' }
+    console.error('Failed to get valid access token. Connection:', {
+      hasAccessToken: !!connection.access_token,
+      hasRefreshToken: !!connection.refresh_token,
+      expiresAt: connection.token_expires_at || connection.expires_at,
+    })
+    return { 
+      error: 'Failed to get valid Xero access token. The token may have expired. Please reconnect Xero in Settings.' 
+    }
   }
   
   try {
