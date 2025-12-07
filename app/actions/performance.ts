@@ -14,6 +14,21 @@ interface TeamMemberUtilization {
   days_worked: number
 }
 
+interface DayBreakdown {
+  date: string
+  dayName: string
+  isWeekend: boolean
+  users: {
+    userId: string
+    userName: string
+    hoursLogged: number
+    percentage: number
+  }[]
+  totalHoursLogged: number
+  expectedHours: number
+  totalPercentage: number
+}
+
 /**
  * Calculate utilization for all team members
  * @param startDate - Start date for the period (ISO string)
@@ -89,15 +104,32 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
 
     // Aggregate hours by user
     const hoursByUser: Record<string, { hours: number; days: Set<string> }> = {}
+    
+    // Aggregate hours by user and date for daily breakdown
+    const hoursByUserAndDate: Record<string, Record<string, number>> = {}
+    const userMap = new Map(users.map((u: any) => [u.id, u]))
 
     if (timeEntries) {
       timeEntries.forEach((entry: any) => {
         const userId = entry.user_id
+        const date = entry.date
+        const hours = Number(entry.hours) || 0
+        
+        // Overall aggregation
         if (!hoursByUser[userId]) {
           hoursByUser[userId] = { hours: 0, days: new Set() }
         }
-        hoursByUser[userId].hours += Number(entry.hours) || 0
-        hoursByUser[userId].days.add(entry.date)
+        hoursByUser[userId].hours += hours
+        hoursByUser[userId].days.add(date)
+        
+        // Daily breakdown aggregation
+        if (!hoursByUserAndDate[date]) {
+          hoursByUserAndDate[date] = {}
+        }
+        if (!hoursByUserAndDate[date][userId]) {
+          hoursByUserAndDate[date][userId] = 0
+        }
+        hoursByUserAndDate[date][userId] += hours
       })
     }
 
@@ -134,6 +166,54 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       return sum + (lead.quoted_hours ? Number(lead.quoted_hours) : 0)
     }, 0) || 0
 
+    // Build daily breakdown
+    const expectedHoursPerDay = 6
+    const allDays = eachDayOfInterval({
+      start: periodStart,
+      end: periodEnd,
+    })
+
+    const dailyBreakdown: DayBreakdown[] = allDays.map((date) => {
+      const dateStr = format(date, 'yyyy-MM-dd')
+      const dayOfWeek = getDay(date)
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+      const dayName = format(date, 'EEEE, MMM d') // e.g., "Monday, Jan 15"
+      
+      const dayEntries = hoursByUserAndDate[dateStr] || {}
+      const dayUsers: DayBreakdown['users'] = []
+      let totalHoursForDay = 0
+      
+      // Get hours logged for each user on this day
+      users.forEach((user: any) => {
+        const hoursLogged = dayEntries[user.id] || 0
+        const percentage = expectedHoursPerDay > 0 ? (hoursLogged / expectedHoursPerDay) * 100 : 0
+        totalHoursForDay += hoursLogged
+        
+        dayUsers.push({
+          userId: user.id,
+          userName: user.full_name || user.email,
+          hoursLogged,
+          percentage,
+        })
+      })
+      
+      // Calculate total percentage based on number of users and expected hours
+      const totalExpectedHours = isWeekend ? 0 : users.length * expectedHoursPerDay
+      const totalPercentage = totalExpectedHours > 0 
+        ? (totalHoursForDay / totalExpectedHours) * 100 
+        : 0
+      
+      return {
+        date: dateStr,
+        dayName,
+        isWeekend,
+        users: dayUsers,
+        totalHoursLogged: totalHoursForDay,
+        expectedHours: totalExpectedHours,
+        totalPercentage,
+      }
+    })
+
     return {
       success: true,
       members,
@@ -147,6 +227,7 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
         totalLeadsHours,
         leadsCount: leads?.length || 0,
       },
+      dailyBreakdown,
     }
   } catch (error) {
     console.error('Error fetching team utilization:', error)

@@ -45,10 +45,26 @@ interface FutureCapacity {
   leadsCount: number
 }
 
+interface DayBreakdown {
+  date: string
+  dayName: string
+  isWeekend: boolean
+  users: {
+    userId: string
+    userName: string
+    hoursLogged: number
+    percentage: number
+  }[]
+  totalHoursLogged: number
+  expectedHours: number
+  totalPercentage: number
+}
+
 export default function PerformancePage() {
   const [members, setMembers] = useState<TeamMemberUtilization[]>([])
   const [period, setPeriod] = useState<Period | null>(null)
   const [futureCapacity, setFutureCapacity] = useState<FutureCapacity | null>(null)
+  const [dailyBreakdown, setDailyBreakdown] = useState<DayBreakdown[]>([])
   const [loading, setLoading] = useState(true)
   const [dateRange, setDateRange] = useState<'current' | 'last' | 'custom'>('current')
   const [customStartDate, setCustomStartDate] = useState('')
@@ -102,6 +118,9 @@ export default function PerformancePage() {
         }
         if (result.futureCapacity) {
           setFutureCapacity(result.futureCapacity)
+        }
+        if (result.dailyBreakdown) {
+          setDailyBreakdown(result.dailyBreakdown)
         }
       }
     } catch (error) {
@@ -256,6 +275,116 @@ export default function PerformancePage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Daily Breakdown */}
+        {dailyBreakdown.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Daily Breakdown</CardTitle>
+              <CardDescription>
+                Day-by-day breakdown of hours logged by each team member. Days with no logging are highlighted.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="sticky left-0 bg-background z-10 min-w-[150px]">Date</TableHead>
+                      {members.map((member) => (
+                        <TableHead key={member.id} className="text-right min-w-[120px]">
+                          {member.full_name || member.email}
+                        </TableHead>
+                      ))}
+                      <TableHead className="text-right min-w-[100px]">Total Hours</TableHead>
+                      <TableHead className="text-right min-w-[100px]">Expected</TableHead>
+                      <TableHead className="text-right min-w-[100px]">Total %</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dailyBreakdown.map((day) => {
+                      const hasNoLogging = !day.isWeekend && day.totalHoursLogged === 0
+                      const isIncomplete = !day.isWeekend && day.totalPercentage < 100 && day.totalHoursLogged > 0
+                      
+                      return (
+                        <TableRow 
+                          key={day.date}
+                          className={cn(
+                            hasNoLogging && "bg-destructive/5 hover:bg-destructive/10",
+                            isIncomplete && "bg-yellow-50 dark:bg-yellow-950/20"
+                          )}
+                        >
+                          <TableCell className="font-medium sticky left-0 bg-inherit z-10">
+                            <div>
+                              <div className={cn(day.isWeekend && "text-muted-foreground")}>
+                                {day.dayName}
+                              </div>
+                              {hasNoLogging && (
+                                <div className="text-xs text-destructive font-normal mt-1">
+                                  No time logged
+                                </div>
+                              )}
+                              {isIncomplete && (
+                                <div className="text-xs text-yellow-600 dark:text-yellow-500 font-normal mt-1">
+                                  Incomplete
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          {members.map((member) => {
+                            const dayUser = day.users.find(u => u.userId === member.id)
+                            const hoursLogged = dayUser?.hoursLogged || 0
+                            const percentage = dayUser?.percentage || 0
+                            const hasLoggedHours = hoursLogged > 0
+                            
+                            return (
+                              <TableCell key={member.id} className="text-right">
+                                <div className="flex flex-col items-end gap-1">
+                                  <span className={cn(
+                                    "text-sm",
+                                    hasLoggedHours ? "font-medium" : "text-muted-foreground"
+                                  )}>
+                                    {hoursLogged > 0 ? `${hoursLogged.toFixed(1)}h` : '—'}
+                                  </span>
+                                  {!day.isWeekend && (
+                                    <span className={cn(
+                                      "text-xs",
+                                      percentage === 0 && "text-muted-foreground",
+                                      percentage > 0 && percentage < 100 && "text-yellow-600 dark:text-yellow-500",
+                                      percentage >= 100 && "text-green-600 dark:text-green-500"
+                                    )}>
+                                      {percentage.toFixed(0)}%
+                                    </span>
+                                  )}
+                                </div>
+                              </TableCell>
+                            )
+                          })}
+                          <TableCell className="text-right font-medium">
+                            {day.totalHoursLogged > 0 ? `${day.totalHoursLogged.toFixed(1)}h` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {day.expectedHours > 0 ? `${day.expectedHours.toFixed(0)}h` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <span className={cn(
+                              "font-semibold",
+                              day.totalPercentage === 0 && "text-muted-foreground",
+                              day.totalPercentage > 0 && day.totalPercentage < 100 && "text-yellow-600 dark:text-yellow-500",
+                              day.totalPercentage >= 100 && "text-green-600 dark:text-green-500"
+                            )}>
+                              {day.expectedHours > 0 ? `${day.totalPercentage.toFixed(0)}%` : '—'}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Utilization Table */}
         <Card>
