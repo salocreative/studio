@@ -180,6 +180,15 @@ export async function getProjectDetails(projectId: string) {
       return { error: 'Project not found' }
     }
 
+    // Get all tasks for this project
+    const { data: tasks, error: tasksError } = await supabase
+      .from('monday_tasks')
+      .select('id, name, quoted_hours')
+      .eq('project_id', projectId)
+      .eq('is_subtask', true)
+
+    if (tasksError) throw tasksError
+
     // Get all time entries for this project
     const { data: timeEntries, error: timeEntriesError } = await supabase
       .from('time_entries')
@@ -190,7 +199,7 @@ export async function getProjectDetails(projectId: string) {
         notes,
         user_id,
         task_id,
-        task:monday_tasks(name)
+        task:monday_tasks(name, quoted_hours)
       `)
       .eq('project_id', projectId)
       .order('date', { ascending: false })
@@ -236,6 +245,34 @@ export async function getProjectDetails(projectId: string) {
       })
     }
 
+    // Aggregate hours by task for task breakdown
+    const hoursByTask: Record<string, number> = {}
+    if (timeEntries) {
+      timeEntries.forEach((entry: any) => {
+        const taskId = entry.task_id
+        if (taskId) {
+          hoursByTask[taskId] = (hoursByTask[taskId] || 0) + Number(entry.hours || 0)
+        }
+      })
+    }
+
+    // Build tasks breakdown
+    const tasksBreakdown = (tasks || []).map((task: any) => {
+      const loggedHours = hoursByTask[task.id] || 0
+      const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : null
+      const percentage = quotedHours && quotedHours > 0 
+        ? Math.min(100, (loggedHours / quotedHours) * 100)
+        : (loggedHours > 0 ? null : 0)
+
+      return {
+        id: task.id,
+        name: task.name,
+        loggedHours,
+        quotedHours,
+        percentage,
+      }
+    }).sort((a, b) => b.loggedHours - a.loggedHours) // Sort by logged hours descending
+
     // Get latest time entries (limit to 20 most recent)
     const latestEntries = (timeEntries || []).slice(0, 20).map((entry: any) => {
       const user = allUsers.find(u => u.id === entry.user_id)
@@ -263,6 +300,7 @@ export async function getProjectDetails(projectId: string) {
         status: project.status,
         quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
       },
+      tasksBreakdown,
       userTotals,
       latestEntries,
     }

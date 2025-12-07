@@ -261,12 +261,13 @@ export default function ProjectsPage() {
         {/* Project Details Sheet */}
         <Sheet open={selectedProjectId !== null} onOpenChange={(open) => !open && handleCloseSheet()}>
           <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-            <SheetHeader>
-              <SheetTitle>
+            <div className="p-6">
+            <SheetHeader className="pb-4 px-0">
+              <SheetTitle className="text-lg">
                 {loadingDetails ? 'Loading...' : projectDetails?.project.name || 'Project Details'}
               </SheetTitle>
               {!loadingDetails && projectDetails?.project.client_name && (
-                <SheetDescription>
+                <SheetDescription className="text-sm">
                   {projectDetails.project.client_name}
                 </SheetDescription>
               )}
@@ -277,86 +278,138 @@ export default function ProjectsPage() {
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : projectDetails ? (
-              <div className="mt-6 space-y-6">
+              <div className="space-y-4">
+                {/* Tasks Breakdown */}
+                {projectDetails.tasksBreakdown && projectDetails.tasksBreakdown.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">Tasks</h3>
+                    <div className="space-y-1.5">
+                      {projectDetails.tasksBreakdown.map((task: any) => (
+                        <Card key={task.id} className="border-muted">
+                          <CardContent className="p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium truncate">{task.name}</div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-xs text-muted-foreground">
+                                    {task.loggedHours.toFixed(1)}h logged
+                                  </span>
+                                  {task.quotedHours !== null && (
+                                    <>
+                                      <span className="text-xs text-muted-foreground">/</span>
+                                      <span className="text-xs text-muted-foreground">
+                                        {task.quotedHours.toFixed(1)}h quoted
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {task.percentage !== null && (
+                                  <span className={cn(
+                                    "text-xs font-semibold whitespace-nowrap",
+                                    task.percentage >= 100 ? "text-destructive" :
+                                    task.percentage >= 80 ? "text-green-600" :
+                                    "text-muted-foreground"
+                                  )}>
+                                    {task.percentage.toFixed(0)}%
+                                  </span>
+                                )}
+                                {task.quotedHours !== null && (
+                                  <Progress 
+                                    value={Math.min(100, task.percentage || 0)} 
+                                    className="h-1.5 w-16"
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Time Totals by User */}
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Time Logged by Team Member</h3>
-                    {projectDetails.userTotals.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No time entries yet</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {projectDetails.userTotals.map((user: any) => (
-                          <Card key={user.userId}>
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <div className="font-medium">{user.userName}</div>
-                                  {user.userEmail && (
-                                    <div className="text-sm text-muted-foreground">{user.userEmail}</div>
-                                  )}
-                                </div>
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Time by Team Member</h3>
+                  {projectDetails.userTotals.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No time entries yet</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {projectDetails.userTotals.map((user: any) => (
+                        <Card key={user.userId} className="border-muted">
+                          <CardContent className="p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium">{user.userName}</div>
+                                {user.userEmail && (
+                                  <div className="text-xs text-muted-foreground truncate">{user.userEmail}</div>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
                                 <div className="text-right">
-                                  <div className="text-lg font-semibold">{user.totalHours.toFixed(1)}h</div>
+                                  <div className="text-sm font-semibold">{user.totalHours.toFixed(1)}h</div>
                                   {projectDetails.project.quoted_hours && (
                                     <div className="text-xs text-muted-foreground">
-                                      {((user.totalHours / projectDetails.project.quoted_hours) * 100).toFixed(0)}% of quoted
+                                      {((user.totalHours / projectDetails.project.quoted_hours) * 100).toFixed(0)}%
                                     </div>
                                   )}
                                 </div>
+                                {projectDetails.project.quoted_hours && (
+                                  <Progress 
+                                    value={Math.min(100, (user.totalHours / projectDetails.project.quoted_hours) * 100)} 
+                                    className="h-1.5 w-16"
+                                  />
+                                )}
                               </div>
-                              {projectDetails.project.quoted_hours && (
-                                <Progress 
-                                  value={Math.min(100, (user.totalHours / projectDetails.project.quoted_hours) * 100)} 
-                                  className="h-2 mt-3"
-                                />
-                              )}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                  {/* Latest Time Entries */}
-                  <div>
-                    <h3 className="text-lg font-semibold mb-4">Latest Time Entries</h3>
-                    {projectDetails.latestEntries.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No time entries yet</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {projectDetails.latestEntries.map((entry: any) => (
-                          <Card key={entry.id}>
-                            <CardContent className="p-4">
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-medium">{entry.taskName}</span>
-                                    <Badge variant="outline" className="text-xs">
-                                      {entry.hours.toFixed(1)}h
-                                    </Badge>
-                                  </div>
-                                  <div className="text-sm text-muted-foreground">
-                                    {entry.userName}
-                                  </div>
-                                  {entry.notes && (
-                                    <div className="text-sm text-muted-foreground mt-2 italic">
-                                      "{entry.notes}"
-                                    </div>
-                                  )}
+                {/* Latest Time Entries */}
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Latest Entries</h3>
+                  {projectDetails.latestEntries.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No time entries yet</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {projectDetails.latestEntries.map((entry: any) => (
+                        <Card key={entry.id} className="border-muted">
+                          <CardContent className="p-2.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="text-xs font-medium truncate">{entry.taskName}</span>
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 h-4">
+                                    {entry.hours.toFixed(1)}h
+                                  </Badge>
                                 </div>
-                                <div className="text-sm text-muted-foreground whitespace-nowrap">
-                                  {format(parseISO(entry.date), 'MMM d, yyyy')}
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span>{entry.userName}</span>
+                                  <span>·</span>
+                                  <span>{format(parseISO(entry.date), 'MMM d')}</span>
                                 </div>
+                                {entry.notes && (
+                                  <div className="text-xs text-muted-foreground mt-1 italic line-clamp-2">
+                                    "{entry.notes}"
+                                  </div>
+                                )}
                               </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 </div>
             ) : null}
+            </div>
           </SheetContent>
         </Sheet>
       </div>
