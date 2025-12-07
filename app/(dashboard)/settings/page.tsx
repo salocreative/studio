@@ -191,6 +191,204 @@ export default function SettingsPage() {
             <TabsContent value="team" className="mt-6 space-y-6">
               <div className="space-y-4">
                 <div>
+                  <h2 className="text-xl font-semibold">Team Management</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Add team members and manage their roles and access
+                  </p>
+                </div>
+
+                {showAddForm && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Add Team Member</CardTitle>
+                      <CardDescription>
+                        Invite a new team member. They will receive an email to set their password.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <form onSubmit={handleCreateUser} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="email">Email *</Label>
+                            <Input
+                              id="email"
+                              type="email"
+                              placeholder="name@example.com"
+                              value={email}
+                              onChange={(e) => setEmail(e.target.value)}
+                              required
+                              disabled={submitting}
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="fullName">Full Name</Label>
+                            <Input
+                              id="fullName"
+                              placeholder="John Doe"
+                              value={fullName}
+                              onChange={(e) => setFullName(e.target.value)}
+                              disabled={submitting}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="role">Role</Label>
+                          <Select value={role} onValueChange={(value: any) => setRole(value)}>
+                            <SelectTrigger id="role">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="admin">Admin</SelectItem>
+                              <SelectItem value="designer">Designer</SelectItem>
+                              <SelectItem value="manager">Manager</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setShowAddForm(false)}
+                            disabled={submitting}
+                          >
+                            Cancel
+                          </Button>
+                          <Button type="submit" disabled={submitting}>
+                            {submitting ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Sending...
+                              </>
+                            ) : (
+                              'Send Invitation'
+                            )}
+                          </Button>
+                        </div>
+                      </form>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle>All Team Members</CardTitle>
+                      <CardDescription>
+                        Manage roles and remove team members from the platform
+                      </CardDescription>
+                    </div>
+                    <Button onClick={() => setShowAddForm(!showAddForm)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Member
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {loadingUsers ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Role</TableHead>
+                            <TableHead>Joined</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {users.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-muted-foreground">
+                                No users found
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            users.map((user) => (
+                              <TableRow key={user.id}>
+                                <TableCell className="font-medium">
+                                  {user.full_name || '—'}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <Mail className="h-4 w-4 text-muted-foreground" />
+                                    {user.email}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={user.role}
+                                    onValueChange={(value: any) =>
+                                      handleUpdateRole(user.id, value)
+                                    }
+                                  >
+                                    <SelectTrigger className="w-32">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="admin">Admin</SelectItem>
+                                      <SelectItem value="designer">Designer</SelectItem>
+                                      <SelectItem value="manager">Manager</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  {new Date(user.created_at).toLocaleDateString()}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeleteUser(user.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* Integrations Tab */}
+            <TabsContent value="integrations" className="mt-6 space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Xero Integration</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Connect your Xero account to import financial data for forecasting and planning
+                  </p>
+                </div>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Xero Connection</CardTitle>
+                    <CardDescription>
+                      Connect your Xero accounting account to automatically import revenue, expenses,
+                      and profit data. This data will be used for financial forecasting on the Forecast page.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <XeroConnectionForm />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </div>
+            <TabsContent value="data-sync" className="mt-6 space-y-6">
+              <div className="space-y-4">
+                <div>
                   <h2 className="text-xl font-semibold">Sync Settings</h2>
                   <p className="text-sm text-muted-foreground">
                     Manage synchronization of projects and tasks from Monday.com
@@ -361,180 +559,6 @@ export default function SettingsPage() {
           </Tabs>
         </div>
       </div>
-
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-xl font-semibold">Team Management</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Add team members and manage their roles and access
-                  </p>
-                </div>
-
-                {showAddForm && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Add Team Member</CardTitle>
-                      <CardDescription>
-                        Invite a new team member. They will receive an email to set their password.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <form onSubmit={handleCreateUser} className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="email">Email *</Label>
-                            <Input
-                              id="email"
-                              type="email"
-                              placeholder="name@example.com"
-                              value={email}
-                              onChange={(e) => setEmail(e.target.value)}
-                              required
-                              disabled={submitting}
-                            />
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="fullName">Full Name</Label>
-                            <Input
-                              id="fullName"
-                              placeholder="John Doe"
-                              value={fullName}
-                              onChange={(e) => setFullName(e.target.value)}
-                              disabled={submitting}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="role">Role</Label>
-                          <Select value={role} onValueChange={(value: any) => setRole(value)}>
-                            <SelectTrigger id="role">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="admin">Admin</SelectItem>
-                              <SelectItem value="designer">Designer</SelectItem>
-                              <SelectItem value="manager">Manager</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => setShowAddForm(false)}
-                            disabled={submitting}
-                          >
-                            Cancel
-                          </Button>
-                          <Button type="submit" disabled={submitting}>
-                            {submitting ? (
-                              <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Sending...
-                              </>
-                            ) : (
-                              'Send Invitation'
-                            )}
-                          </Button>
-                        </div>
-                      </form>
-                    </CardContent>
-                  </Card>
-                )}
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <div>
-                      <CardTitle>All Team Members</CardTitle>
-                      <CardDescription>
-                        Manage roles and remove team members from the platform
-                      </CardDescription>
-                    </div>
-                    <Button onClick={() => setShowAddForm(!showAddForm)}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Member
-                    </Button>
-                  </CardHeader>
-                  <CardContent>
-                    {loadingUsers ? (
-                      <div className="flex items-center justify-center py-8">
-                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : (
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Name</TableHead>
-                            <TableHead>Email</TableHead>
-                            <TableHead>Role</TableHead>
-                            <TableHead>Joined</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {users.length === 0 ? (
-                            <TableRow>
-                              <TableCell colSpan={5} className="text-center text-muted-foreground">
-                                No users found
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            users.map((user) => (
-                              <TableRow key={user.id}>
-                                <TableCell className="font-medium">
-                                  {user.full_name || '—'}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex items-center gap-2">
-                                    <Mail className="h-4 w-4 text-muted-foreground" />
-                                    {user.email}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <Select
-                                    value={user.role}
-                                    onValueChange={(value: any) =>
-                                      handleUpdateRole(user.id, value)
-                                    }
-                                  >
-                                    <SelectTrigger className="w-32">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="admin">Admin</SelectItem>
-                                      <SelectItem value="designer">Designer</SelectItem>
-                                      <SelectItem value="manager">Manager</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </TableCell>
-                                <TableCell>
-                                  {new Date(user.created_at).toLocaleDateString()}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleDeleteUser(user.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4 text-destructive" />
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          )}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            {/* Data Sync Tab */}
-            <TabsContent value="data-sync" className="mt-6 space-y-6">
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
