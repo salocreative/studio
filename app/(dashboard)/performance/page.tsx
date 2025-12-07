@@ -16,9 +16,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import { TrendingUp } from 'lucide-react'
 import { getTeamUtilization } from '@/app/actions/performance'
-import { startOfMonth, endOfMonth, format, subMonths, parseISO } from 'date-fns'
+import { startOfMonth, endOfMonth, format, subMonths, parseISO, startOfWeek } from 'date-fns'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -277,114 +283,170 @@ export default function PerformancePage() {
         </Card>
 
         {/* Daily Breakdown */}
-        {dailyBreakdown.length > 0 && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Daily Breakdown</CardTitle>
-              <CardDescription>
-                Day-by-day breakdown of hours logged by each team member. Days with no logging are highlighted.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="sticky left-0 bg-background z-10 min-w-[150px]">Date</TableHead>
-                      {members.map((member) => (
-                        <TableHead key={member.id} className="text-right min-w-[120px]">
-                          {member.full_name || member.email}
-                        </TableHead>
-                      ))}
-                      <TableHead className="text-right min-w-[100px]">Total Hours</TableHead>
-                      <TableHead className="text-right min-w-[100px]">Expected</TableHead>
-                      <TableHead className="text-right min-w-[100px]">Total %</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {dailyBreakdown.map((day) => {
-                      const hasNoLogging = !day.isWeekend && day.totalHoursLogged === 0
-                      const isIncomplete = !day.isWeekend && day.totalPercentage < 100 && day.totalHoursLogged > 0
-                      
-                      return (
-                        <TableRow 
-                          key={day.date}
-                          className={cn(
-                            hasNoLogging && "bg-destructive/5 hover:bg-destructive/10",
-                            isIncomplete && "bg-yellow-50 dark:bg-yellow-950/20"
-                          )}
-                        >
-                          <TableCell className="font-medium sticky left-0 bg-inherit z-10">
-                            <div>
-                              <div className={cn(day.isWeekend && "text-muted-foreground")}>
-                                {day.dayName}
-                              </div>
-                              {hasNoLogging && (
-                                <div className="text-xs text-destructive font-normal mt-1">
-                                  No time logged
-                                </div>
-                              )}
-                              {isIncomplete && (
-                                <div className="text-xs text-yellow-600 dark:text-yellow-500 font-normal mt-1">
-                                  Incomplete
-                                </div>
-                              )}
+        {dailyBreakdown.length > 0 && (() => {
+          // Group days by week
+          const weeks = new Map<string, DayBreakdown[]>()
+          
+          dailyBreakdown.forEach((day) => {
+            const date = parseISO(day.date)
+            const weekStart = startOfWeek(date, { weekStartsOn: 1 }) // Monday as start of week
+            const weekKey = format(weekStart, 'yyyy-MM-dd')
+            
+            if (!weeks.has(weekKey)) {
+              weeks.set(weekKey, [])
+            }
+            weeks.get(weekKey)!.push(day)
+          })
+          
+          // Sort weeks by date
+          const sortedWeeks = Array.from(weeks.entries()).sort((a, b) => 
+            a[0].localeCompare(b[0])
+          )
+          
+          return (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Daily Breakdown</CardTitle>
+                <CardDescription>
+                  Day-by-day breakdown of hours logged by each team member. Days with no logging are highlighted.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Accordion type="multiple" className="w-full">
+                  {sortedWeeks.map(([weekKey, weekDays]) => {
+                    const weekStart = parseISO(weekKey)
+                    const weekEnd = weekDays[weekDays.length - 1]
+                    const weekLabel = weekDays.length > 0
+                      ? `${format(weekStart, 'MMM d')} - ${format(parseISO(weekEnd.date), 'MMM d, yyyy')}`
+                      : format(weekStart, 'MMM d, yyyy')
+                    
+                    const weekTotalHours = weekDays.reduce((sum, day) => sum + day.totalHoursLogged, 0)
+                    const weekExpectedHours = weekDays.reduce((sum, day) => sum + day.expectedHours, 0)
+                    const weekPercentage = weekExpectedHours > 0 
+                      ? (weekTotalHours / weekExpectedHours) * 100 
+                      : 0
+                    
+                    return (
+                      <AccordionItem key={weekKey} value={weekKey}>
+                        <AccordionTrigger className="hover:no-underline">
+                          <div className="flex items-center justify-between w-full pr-4">
+                            <span className="font-medium">{weekLabel}</span>
+                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                              <span>{weekDays.length} day{weekDays.length !== 1 ? 's' : ''}</span>
+                              <span>{weekTotalHours.toFixed(1)}h / {weekExpectedHours.toFixed(0)}h</span>
+                              <span className={cn(
+                                "font-semibold",
+                                weekPercentage === 0 && "text-muted-foreground",
+                                weekPercentage > 0 && weekPercentage < 100 && "text-yellow-600 dark:text-yellow-500",
+                                weekPercentage >= 100 && "text-green-600 dark:text-green-500"
+                              )}>
+                                {weekPercentage.toFixed(0)}%
+                              </span>
                             </div>
-                          </TableCell>
-                          {members.map((member) => {
-                            const dayUser = day.users.find(u => u.userId === member.id)
-                            const hoursLogged = dayUser?.hoursLogged || 0
-                            const percentage = dayUser?.percentage || 0
-                            const hasLoggedHours = hoursLogged > 0
-                            
-                            return (
-                              <TableCell key={member.id} className="text-right">
-                                <div className="flex flex-col items-end gap-1">
-                                  <span className={cn(
-                                    "text-sm",
-                                    hasLoggedHours ? "font-medium" : "text-muted-foreground"
-                                  )}>
-                                    {hoursLogged > 0 ? `${hoursLogged.toFixed(1)}h` : '—'}
-                                  </span>
-                                  {!day.isWeekend && (
-                                    <span className={cn(
-                                      "text-xs",
-                                      percentage === 0 && "text-muted-foreground",
-                                      percentage > 0 && percentage < 100 && "text-yellow-600 dark:text-yellow-500",
-                                      percentage >= 100 && "text-green-600 dark:text-green-500"
-                                    )}>
-                                      {percentage.toFixed(0)}%
-                                    </span>
-                                  )}
-                                </div>
-                              </TableCell>
-                            )
-                          })}
-                          <TableCell className="text-right font-medium">
-                            {day.totalHoursLogged > 0 ? `${day.totalHoursLogged.toFixed(1)}h` : '—'}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {day.expectedHours > 0 ? `${day.expectedHours.toFixed(0)}h` : '—'}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <span className={cn(
-                              "font-semibold",
-                              day.totalPercentage === 0 && "text-muted-foreground",
-                              day.totalPercentage > 0 && day.totalPercentage < 100 && "text-yellow-600 dark:text-yellow-500",
-                              day.totalPercentage >= 100 && "text-green-600 dark:text-green-500"
-                            )}>
-                              {day.expectedHours > 0 ? `${day.totalPercentage.toFixed(0)}%` : '—'}
-                            </span>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="rounded-md border overflow-x-auto mt-4">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="sticky left-0 bg-background z-10 min-w-[150px]">Date</TableHead>
+                                  {members.map((member) => (
+                                    <TableHead key={member.id} className="text-right min-w-[120px]">
+                                      {member.full_name || member.email}
+                                    </TableHead>
+                                  ))}
+                                  <TableHead className="text-right min-w-[100px]">Total Hours</TableHead>
+                                  <TableHead className="text-right min-w-[100px]">Expected</TableHead>
+                                  <TableHead className="text-right min-w-[100px]">Total %</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {weekDays.map((day) => {
+                                  const hasNoLogging = day.totalHoursLogged === 0
+                                  const isIncomplete = day.totalPercentage < 100 && day.totalHoursLogged > 0
+                                  
+                                  return (
+                                    <TableRow 
+                                      key={day.date}
+                                      className={cn(
+                                        hasNoLogging && "bg-destructive/5 hover:bg-destructive/10",
+                                        isIncomplete && "bg-yellow-50 dark:bg-yellow-950/20"
+                                      )}
+                                    >
+                                      <TableCell className="font-medium sticky left-0 bg-inherit z-10">
+                                        <div>
+                                          <div>{day.dayName}</div>
+                                          {hasNoLogging && (
+                                            <div className="text-xs text-destructive font-normal mt-1">
+                                              No time logged
+                                            </div>
+                                          )}
+                                          {isIncomplete && (
+                                            <div className="text-xs text-yellow-600 dark:text-yellow-500 font-normal mt-1">
+                                              Incomplete
+                                            </div>
+                                          )}
+                                        </div>
+                                      </TableCell>
+                                      {members.map((member) => {
+                                        const dayUser = day.users.find(u => u.userId === member.id)
+                                        const hoursLogged = dayUser?.hoursLogged || 0
+                                        const percentage = dayUser?.percentage || 0
+                                        const hasLoggedHours = hoursLogged > 0
+                                        
+                                        return (
+                                          <TableCell key={member.id} className="text-right">
+                                            <div className="flex flex-col items-end gap-1">
+                                              <span className={cn(
+                                                "text-sm",
+                                                hasLoggedHours ? "font-medium" : "text-muted-foreground"
+                                              )}>
+                                                {hoursLogged > 0 ? `${hoursLogged.toFixed(1)}h` : '—'}
+                                              </span>
+                                              <span className={cn(
+                                                "text-xs",
+                                                percentage === 0 && "text-muted-foreground",
+                                                percentage > 0 && percentage < 100 && "text-yellow-600 dark:text-yellow-500",
+                                                percentage >= 100 && "text-green-600 dark:text-green-500"
+                                              )}>
+                                                {percentage.toFixed(0)}%
+                                              </span>
+                                            </div>
+                                          </TableCell>
+                                        )
+                                      })}
+                                      <TableCell className="text-right font-medium">
+                                        {day.totalHoursLogged > 0 ? `${day.totalHoursLogged.toFixed(1)}h` : '—'}
+                                      </TableCell>
+                                      <TableCell className="text-right text-muted-foreground">
+                                        {day.expectedHours > 0 ? `${day.expectedHours.toFixed(0)}h` : '—'}
+                                      </TableCell>
+                                      <TableCell className="text-right">
+                                        <span className={cn(
+                                          "font-semibold",
+                                          day.totalPercentage === 0 && "text-muted-foreground",
+                                          day.totalPercentage > 0 && day.totalPercentage < 100 && "text-yellow-600 dark:text-yellow-500",
+                                          day.totalPercentage >= 100 && "text-green-600 dark:text-green-500"
+                                        )}>
+                                          {day.totalPercentage.toFixed(0)}%
+                                        </span>
+                                      </TableCell>
+                                    </TableRow>
+                                  )
+                                })}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    )
+                  })}
+                </Accordion>
+              </CardContent>
+            </Card>
+          )
+        })()}
 
         {/* Utilization Table */}
         <Card>

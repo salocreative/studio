@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { startOfMonth, endOfMonth, eachDayOfInterval, getDay, format } from 'date-fns'
+import { startOfMonth, endOfMonth, eachDayOfInterval, getDay, format, startOfWeek } from 'date-fns'
 
 interface TeamMemberUtilization {
   id: string
@@ -166,16 +166,17 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       return sum + (lead.quoted_hours ? Number(lead.quoted_hours) : 0)
     }, 0) || 0
 
-    // Build daily breakdown
+    // Build daily breakdown (excluding weekends)
     const allDays = eachDayOfInterval({
       start: periodStart,
       end: periodEnd,
+    }).filter((date) => {
+      const dayOfWeek = getDay(date)
+      return dayOfWeek !== 0 && dayOfWeek !== 6 // Exclude Sunday (0) and Saturday (6)
     })
 
     const dailyBreakdown: DayBreakdown[] = allDays.map((date) => {
       const dateStr = format(date, 'yyyy-MM-dd')
-      const dayOfWeek = getDay(date)
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
       const dayName = format(date, 'EEEE, MMM d') // e.g., "Monday, Jan 15"
       
       const dayEntries = hoursByUserAndDate[dateStr] || {}
@@ -197,7 +198,7 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       })
       
       // Calculate total percentage based on number of users and expected hours
-      const totalExpectedHours = isWeekend ? 0 : users.length * expectedHoursPerDay
+      const totalExpectedHours = users.length * expectedHoursPerDay
       const totalPercentage = totalExpectedHours > 0 
         ? (totalHoursForDay / totalExpectedHours) * 100 
         : 0
@@ -205,7 +206,7 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       return {
         date: dateStr,
         dayName,
-        isWeekend,
+        isWeekend: false, // No weekends in filtered list
         users: dayUsers,
         totalHoursLogged: totalHoursForDay,
         expectedHours: totalExpectedHours,
