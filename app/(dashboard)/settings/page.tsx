@@ -360,32 +360,7 @@ export default function SettingsPage() {
               </div>
             </TabsContent>
 
-            {/* Integrations Tab */}
-            <TabsContent value="integrations" className="mt-6 space-y-6">
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-xl font-semibold">Xero Integration</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Connect your Xero account to import financial data for forecasting and planning
-                  </p>
-                </div>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Xero Connection</CardTitle>
-                    <CardDescription>
-                      Connect your Xero accounting account to automatically import revenue, expenses,
-                      and profit data. This data will be used for financial forecasting on the Forecast page.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <XeroConnectionForm />
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-          </Tabs>
-        </div>
-      </div>
+            {/* Data Sync Tab */}
             <TabsContent value="data-sync" className="mt-6 space-y-6">
               <div className="space-y-4">
                 <div>
