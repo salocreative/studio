@@ -8,9 +8,17 @@ import { DoughnutChart } from '@/components/ui/doughnut-chart'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { FolderKanban, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
-import { getProjectsWithTimeTracking } from '@/app/actions/projects'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2 } from 'lucide-react'
+import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
+import { format, parseISO } from 'date-fns'
 
 interface Project {
   id: string
@@ -31,10 +39,12 @@ interface Project {
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'live' | 'completed'>('live')
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [projectDetails, setProjectDetails] = useState<any>(null)
+  const [loadingDetails, setLoadingDetails] = useState(false)
 
   useEffect(() => {
     loadProjects()
@@ -56,16 +66,31 @@ export default function ProjectsPage() {
     }
   }
 
-  const toggleProject = (projectId: string) => {
-    setExpandedProjects((prev) => {
-      const next = new Set(prev)
-      if (next.has(projectId)) {
-        next.delete(projectId)
-      } else {
-        next.add(projectId)
+  const handleProjectClick = async (projectId: string) => {
+    setSelectedProjectId(projectId)
+    setLoadingDetails(true)
+    
+    try {
+      const result = await getProjectDetails(projectId)
+      if (result.error) {
+        console.error('Error loading project details:', result.error)
+      } else if (result.project) {
+        setProjectDetails({
+          project: result.project,
+          userTotals: result.userTotals || [],
+          latestEntries: result.latestEntries || [],
+        })
       }
-      return next
-    })
+    } catch (error) {
+      console.error('Error loading project details:', error)
+    } finally {
+      setLoadingDetails(false)
+    }
+  }
+
+  const handleCloseSheet = () => {
+    setSelectedProjectId(null)
+    setProjectDetails(null)
   }
 
   // Filter projects based on search query (but not client filter yet, for getting available clients)
@@ -194,8 +219,7 @@ export default function ProjectsPage() {
                       <ProjectCard 
                         key={project.id} 
                         project={project}
-                        isExpanded={expandedProjects.has(project.id)}
-                        onToggle={() => toggleProject(project.id)}
+                        onClick={() => handleProjectClick(project.id)}
                       />
                     ))}
                 </div>
@@ -225,8 +249,7 @@ export default function ProjectsPage() {
                       <ProjectCard 
                         key={project.id} 
                         project={project}
-                        isExpanded={expandedProjects.has(project.id)}
-                        onToggle={() => toggleProject(project.id)}
+                        onClick={() => handleProjectClick(project.id)}
                       />
                     ))}
                 </div>
@@ -234,6 +257,107 @@ export default function ProjectsPage() {
             </TabsContent>
           </Tabs>
         )}
+
+        {/* Project Details Sheet */}
+        <Sheet open={selectedProjectId !== null} onOpenChange={(open) => !open && handleCloseSheet()}>
+          <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+            {loadingDetails ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : projectDetails ? (
+              <>
+                <SheetHeader>
+                  <SheetTitle>{projectDetails.project.name}</SheetTitle>
+                  {projectDetails.project.client_name && (
+                    <SheetDescription>
+                      {projectDetails.project.client_name}
+                    </SheetDescription>
+                  )}
+                </SheetHeader>
+
+                <div className="mt-6 space-y-6">
+                  {/* Time Totals by User */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4">Time Logged by Team Member</h3>
+                    {projectDetails.userTotals.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No time entries yet</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {projectDetails.userTotals.map((user: any) => (
+                          <Card key={user.userId}>
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <div className="font-medium">{user.userName}</div>
+                                  {user.userEmail && (
+                                    <div className="text-sm text-muted-foreground">{user.userEmail}</div>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-lg font-semibold">{user.totalHours.toFixed(1)}h</div>
+                                  {projectDetails.project.quoted_hours && (
+                                    <div className="text-xs text-muted-foreground">
+                                      {((user.totalHours / projectDetails.project.quoted_hours) * 100).toFixed(0)}% of quoted
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {projectDetails.project.quoted_hours && (
+                                <Progress 
+                                  value={Math.min(100, (user.totalHours / projectDetails.project.quoted_hours) * 100)} 
+                                  className="h-2 mt-3"
+                                />
+                              )}
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Latest Time Entries */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4">Latest Time Entries</h3>
+                    {projectDetails.latestEntries.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No time entries yet</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {projectDetails.latestEntries.map((entry: any) => (
+                          <Card key={entry.id}>
+                            <CardContent className="p-4">
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-medium">{entry.taskName}</span>
+                                    <Badge variant="outline" className="text-xs">
+                                      {entry.hours.toFixed(1)}h
+                                    </Badge>
+                                  </div>
+                                  <div className="text-sm text-muted-foreground">
+                                    {entry.userName}
+                                  </div>
+                                  {entry.notes && (
+                                    <div className="text-sm text-muted-foreground mt-2 italic">
+                                      "{entry.notes}"
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-sm text-muted-foreground whitespace-nowrap">
+                                  {format(parseISO(entry.date), 'MMM d, yyyy')}
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   )
@@ -241,12 +365,10 @@ export default function ProjectsPage() {
 
 function ProjectCard({ 
   project, 
-  isExpanded, 
-  onToggle 
+  onClick 
 }: { 
   project: Project
-  isExpanded: boolean
-  onToggle: () => void
+  onClick: () => void
 }) {
   // Calculate totals from tasks
   // Note: This calculation works the same for both active and locked/completed projects
@@ -316,7 +438,13 @@ function ProjectCard({
   const isLocked = project.status === 'locked'
 
   return (
-    <Card className={cn(isLocked && "opacity-90 border-muted")}>
+    <Card 
+      className={cn(
+        isLocked && "opacity-90 border-muted",
+        "cursor-pointer hover:shadow-md transition-shadow"
+      )}
+      onClick={onClick}
+    >
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="flex-1">
@@ -397,53 +525,13 @@ function ProjectCard({
             )}
           </div>
 
-          {/* Tasks List */}
+          {/* Tasks Count */}
           {project.tasks.length > 0 && (
             <div className="border-t pt-4">
-              <button
-                onClick={onToggle}
-                className="w-full flex items-center justify-between text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-              >
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>{project.tasks.length} Task{project.tasks.length !== 1 ? 's' : ''}</span>
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-              </button>
-              
-              {isExpanded && (
-                <div className="mt-3 space-y-2">
-                  {project.tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="text-sm p-2 rounded bg-muted/50 border"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="font-medium">{task.name}</div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {task.logged_hours.toFixed(1)}h logged
-                            {task.quoted_hours !== null && (
-                              <> / {task.quoted_hours.toFixed(1)}h quoted</>
-                            )}
-                          </div>
-                        </div>
-                        {task.time_left !== null && (
-                          <div className={cn(
-                            "text-xs font-medium ml-2 px-2 py-1 rounded",
-                            task.time_left < (task.quoted_hours || 0) * 0.2
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-green-100 text-green-700"
-                          )}>
-                            {task.time_left.toFixed(1)}h left
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                <span className="text-xs">Click to view details</span>
+              </div>
             </div>
           )}
         </div>
