@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,19 +13,133 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { AlertTriangle, Trash2, Loader2 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AlertTriangle, Trash2, Loader2, Plus, Mail } from 'lucide-react'
 import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
 import { CompletedBoardsForm } from './completed-boards-form'
 import { LeadsBoardForm } from './leads-board-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
+import { getUsers, createUser, updateUserRole, deleteUser } from '@/app/actions/users'
 import { toast } from 'sonner'
+
+interface User {
+  id: string
+  email: string
+  full_name: string | null
+  role: 'admin' | 'designer' | 'manager'
+  created_at: string
+}
 
 export default function SettingsPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
+  
+  // Team management state
+  const [users, setUsers] = useState<User[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [email, setEmail] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [role, setRole] = useState<'admin' | 'designer' | 'manager'>('manager')
+  const [submitting, setSubmitting] = useState(false)
+
+  // Load users on mount
+  useEffect(() => {
+    loadUsers()
+  }, [])
+
+  async function loadUsers() {
+    setLoadingUsers(true)
+    try {
+      const result = await getUsers()
+      if (result.error) {
+        toast.error(result.error)
+      } else if (result.users) {
+        setUsers(result.users)
+      }
+    } catch (error) {
+      console.error('Error loading users:', error)
+      toast.error('Failed to load users')
+    } finally {
+      setLoadingUsers(false)
+    }
+  }
+
+  async function handleCreateUser(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+
+    try {
+      const result = await createUser(email, fullName || undefined, role)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        setEmail('')
+        setFullName('')
+        setRole('manager')
+        setShowAddForm(false)
+        await loadUsers()
+        toast.success('User invitation sent! They will receive an email to set their password.')
+      }
+    } catch (error) {
+      console.error('Error creating user:', error)
+      toast.error('An error occurred while creating the user')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleUpdateRole(userId: string, newRole: 'admin' | 'designer' | 'manager') {
+    try {
+      const result = await updateUserRole(userId, newRole)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        await loadUsers()
+        toast.success('User role updated')
+      }
+    } catch (error) {
+      console.error('Error updating role:', error)
+      toast.error('Failed to update user role')
+    }
+  }
+
+  async function handleDeleteUser(userId: string) {
+    if (!confirm('Are you sure you want to remove this user? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      const result = await deleteUser(userId)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        await loadUsers()
+        toast.success('User removed')
+      }
+    } catch (error) {
+      console.error('Error deleting user:', error)
+      toast.error('Failed to remove user')
+    }
+  }
 
   const handleDeleteAll = async () => {
     if (deleteConfirmText !== 'DELETE') {
@@ -58,208 +172,369 @@ export default function SettingsPage() {
           <div>
             <h1 className="text-2xl font-semibold">Settings</h1>
             <p className="text-sm text-muted-foreground">
-              Configure Monday.com column mappings
+              Manage your team, data sync, and integrations
             </p>
           </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl space-y-8">
-          {/* Sync Settings Section */}
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold">Sync Settings</h2>
-              <p className="text-sm text-muted-foreground">
-                Manage synchronization of projects and tasks from Monday.com
-              </p>
-            </div>
-            <Card>
-              <CardHeader>
-                <CardTitle>Sync Configuration</CardTitle>
-                <CardDescription>
-                  Control how and when projects and tasks are synchronized from Monday.com
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">Manual Sync</p>
-                    <p className="text-sm text-muted-foreground">
-                      Manually trigger a sync from Monday.com
-                    </p>
-                  </div>
-                  <SyncButton />
+        <div className="max-w-4xl">
+          <Tabs defaultValue="team" className="w-full">
+            <TabsList className="grid w-full max-w-md grid-cols-3">
+              <TabsTrigger value="team">Team</TabsTrigger>
+              <TabsTrigger value="data-sync">Data Sync</TabsTrigger>
+              <TabsTrigger value="integrations">Integrations</TabsTrigger>
+            </TabsList>
+
+            {/* Team Tab */}
+            <TabsContent value="team" className="mt-6 space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Sync Settings</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Manage synchronization of projects and tasks from Monday.com
+                  </p>
                 </div>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Sync Configuration</CardTitle>
+                    <CardDescription>
+                      Control how and when projects and tasks are synchronized from Monday.com
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">Manual Sync</p>
+                        <p className="text-sm text-muted-foreground">
+                          Manually trigger a sync from Monday.com
+                        </p>
+                      </div>
+                      <SyncButton />
+                    </div>
 
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">Automatic Sync</p>
-                    <p className="text-sm text-muted-foreground">
-                      Automatically sync projects and tasks on a schedule
-                    </p>
-                  </div>
-                  <Button variant="outline">Configure</Button>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">Automatic Sync</p>
+                        <p className="text-sm text-muted-foreground">
+                          Automatically sync projects and tasks on a schedule
+                        </p>
+                      </div>
+                      <Button variant="outline">Configure</Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Monday.com Configuration</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Configure how Studio connects to and interprets data from Monday.com
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Column Mappings</CardTitle>
+                    <CardDescription>
+                      Map Monday.com columns to Studio fields. This allows the system to correctly
+                      identify client names, quoted hours, and timeline information.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ColumnMappingForm />
+                  </CardContent>
+                </Card>
 
-          {/* Monday.com Integration Section */}
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold">Monday.com Integration</h2>
-              <p className="text-sm text-muted-foreground">
-                Configure how Studio connects to and interprets data from Monday.com
-              </p>
-            </div>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>Column Mappings</CardTitle>
-                <CardDescription>
-                  Map Monday.com columns to Studio fields. This allows the system to correctly
-                  identify client names, quoted hours, and timeline information.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ColumnMappingForm />
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Completed Boards</CardTitle>
+                    <CardDescription>
+                      Configure which Monday.com boards contain completed projects. Projects moved to these boards will be archived instead of deleted, preserving time tracking data.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CompletedBoardsForm />
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Completed Boards</CardTitle>
-                <CardDescription>
-                  Configure which Monday.com boards contain completed projects. Projects moved to these boards will be archived instead of deleted, preserving time tracking data.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <CompletedBoardsForm />
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Leads Board</CardTitle>
+                    <CardDescription>
+                      Configure the Monday.com board that contains lead/prospect projects. These projects will be used for forecasting and resource planning to show future capacity.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <LeadsBoardForm />
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Leads Board</CardTitle>
-                <CardDescription>
-                  Configure the Monday.com board that contains lead/prospect projects. These projects will be used for forecasting and resource planning to show future capacity.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <LeadsBoardForm />
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>API Configuration</CardTitle>
+                    <CardDescription>
+                      Configure your Monday.com API credentials for server-side integration
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="monday-api-token">API Token</Label>
+                      <Input
+                        id="monday-api-token"
+                        type="password"
+                        placeholder="Enter Monday.com API token"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        This token is stored securely and used server-side only
+                      </p>
+                    </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>API Configuration</CardTitle>
-                <CardDescription>
-                  Configure your Monday.com API credentials for server-side integration
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="monday-api-token">API Token</Label>
-                  <Input
-                    id="monday-api-token"
-                    type="password"
-                    placeholder="Enter Monday.com API token"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    This token is stored securely and used server-side only
+                    <div className="flex justify-end">
+                      <Button>Save Configuration</Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-destructive">
+                  <CardHeader>
+                    <CardTitle className="text-destructive">Danger Zone</CardTitle>
+                    <CardDescription>
+                      Permanently delete all Monday.com projects and tasks from the database
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
+                        <div className="flex-1 space-y-2">
+                          <p className="text-sm font-medium text-destructive">
+                            Delete All Monday.com Data
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            This will permanently delete all synced projects and tasks from Monday.com.
+                            This action cannot be undone. Time entries linked to these projects will prevent deletion.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        variant="destructive"
+                        onClick={() => setShowDeleteDialog(true)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete All Monday.com Data
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* Integrations Tab */}
+            <TabsContent value="integrations" className="mt-6 space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Xero Integration</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Connect your Xero account to import financial data for forecasting and planning
+                  </p>
+                </div>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Xero Connection</CardTitle>
+                    <CardDescription>
+                      Connect your Xero accounting account to automatically import revenue, expenses,
+                      and profit data. This data will be used for financial forecasting on the Forecast page.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <XeroConnectionForm />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Team Management</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Add team members and manage their roles and access
                   </p>
                 </div>
 
-                <div className="flex justify-end">
-                  <Button>Save Configuration</Button>
-                </div>
-              </CardContent>
-            </Card>
+                {showAddForm && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Add Team Member</CardTitle>
+                      <CardDescription>
+                        Invite a new team member. They will receive an email to set their password.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <form onSubmit={handleCreateUser} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="email">Email *</Label>
+                            <Input
+                              id="email"
+                              type="email"
+                              placeholder="name@example.com"
+                              value={email}
+                              onChange={(e) => setEmail(e.target.value)}
+                              required
+                              disabled={submitting}
+                            />
+                          </div>
 
-            <Card className="border-destructive">
-              <CardHeader>
-                <CardTitle className="text-destructive">Danger Zone</CardTitle>
-                <CardDescription>
-                  Permanently delete all Monday.com projects and tasks from the database
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
-                    <div className="flex-1 space-y-2">
-                      <p className="text-sm font-medium text-destructive">
-                        Delete All Monday.com Data
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        This will permanently delete all synced projects and tasks from Monday.com.
-                        This action cannot be undone. Time entries linked to these projects will prevent deletion.
-                      </p>
+                          <div className="space-y-2">
+                            <Label htmlFor="fullName">Full Name</Label>
+                            <Input
+                              id="fullName"
+                              placeholder="John Doe"
+                              value={fullName}
+                              onChange={(e) => setFullName(e.target.value)}
+                              disabled={submitting}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="role">Role</Label>
+                          <Select value={role} onValueChange={(value: any) => setRole(value)}>
+                            <SelectTrigger id="role">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="admin">Admin</SelectItem>
+                              <SelectItem value="designer">Designer</SelectItem>
+                              <SelectItem value="manager">Manager</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setShowAddForm(false)}
+                            disabled={submitting}
+                          >
+                            Cancel
+                          </Button>
+                          <Button type="submit" disabled={submitting}>
+                            {submitting ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Sending...
+                              </>
+                            ) : (
+                              'Send Invitation'
+                            )}
+                          </Button>
+                        </div>
+                      </form>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle>All Team Members</CardTitle>
+                      <CardDescription>
+                        Manage roles and remove team members from the platform
+                      </CardDescription>
                     </div>
-                  </div>
-                </div>
+                    <Button onClick={() => setShowAddForm(!showAddForm)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Member
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {loadingUsers ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Role</TableHead>
+                            <TableHead>Joined</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {users.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-muted-foreground">
+                                No users found
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            users.map((user) => (
+                              <TableRow key={user.id}>
+                                <TableCell className="font-medium">
+                                  {user.full_name || '—'}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <Mail className="h-4 w-4 text-muted-foreground" />
+                                    {user.email}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={user.role}
+                                    onValueChange={(value: any) =>
+                                      handleUpdateRole(user.id, value)
+                                    }
+                                  >
+                                    <SelectTrigger className="w-32">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="admin">Admin</SelectItem>
+                                      <SelectItem value="designer">Designer</SelectItem>
+                                      <SelectItem value="manager">Manager</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  {new Date(user.created_at).toLocaleDateString()}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeleteUser(user.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
 
-                <div className="flex justify-end">
-                  <Button
-                    variant="destructive"
-                    onClick={() => setShowDeleteDialog(true)}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete All Monday.com Data
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Xero Integration Section */}
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold">Xero Integration</h2>
-              <p className="text-sm text-muted-foreground">
-                Connect your Xero account to import financial data for forecasting and planning
-              </p>
-            </div>
-            <Card>
-              <CardHeader>
-                <CardTitle>Xero Connection</CardTitle>
-                <CardDescription>
-                  Connect your Xero accounting account to automatically import revenue, expenses,
-                  and profit data. This data will be used for financial forecasting on the Forecast page.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <XeroConnectionForm />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* User Management Section */}
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold">Team Management</h2>
-              <p className="text-sm text-muted-foreground">
-                Add team members and manage their roles and access
-              </p>
-            </div>
-            <Card>
-              <CardHeader>
-                <CardTitle>User Management</CardTitle>
-                <CardDescription>
-                  Manage team members, roles, and permissions
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild>
-                  <a href="/settings/users">Manage Team Members</a>
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-
-        </div>
-      </div>
+            {/* Data Sync Tab */}
+            <TabsContent value="data-sync" className="mt-6 space-y-6">
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
