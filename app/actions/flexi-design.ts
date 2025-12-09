@@ -343,6 +343,51 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       projects: projectsWithHours,
     }
 
+    // Get credit transactions for this client
+    let creditTransactions: Array<{
+      id: string
+      hours: number
+      transaction_date: string
+      created_at: string
+      created_by: string | null
+    }> = []
+    
+    if (clientData) {
+      const { data: transactions, error: transactionsError } = await supabase
+        .from('flexi_design_credit_transactions')
+        .select('id, hours, transaction_date, created_at, created_by')
+        .eq('client_id', clientData.id)
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false })
+      
+      if (transactionsError) {
+        // If table doesn't exist yet, just continue without transactions
+        if (!transactionsError.message.includes('does not exist') && 
+            !transactionsError.message.includes('relation')) {
+          throw transactionsError
+        }
+      } else if (transactions) {
+        creditTransactions = transactions.map((tx: any) => ({
+          id: tx.id,
+          hours: Number(tx.hours),
+          transaction_date: tx.transaction_date,
+          created_at: tx.created_at,
+          created_by: tx.created_by,
+        }))
+      }
+    }
+
+    const clientDetail: ClientDetail = {
+      id: clientData?.id || '',
+      client_name: clientName,
+      remaining_hours: remainingHours,
+      hours_used: totalHoursUsed, // logged hours for internal tracking
+      quoted_hours_used: totalQuotedHours, // quoted hours for credit deduction
+      total_projects: projectsWithHours.length,
+      projects: projectsWithHours,
+      credit_transactions: creditTransactions,
+    }
+
     return { success: true, client: clientDetail }
   } catch (error) {
     console.error('Error fetching Flexi-Design client detail:', error)

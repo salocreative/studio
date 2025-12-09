@@ -262,6 +262,42 @@ function FlexiDesignPageContent() {
                 </Card>
               </div>
 
+              {/* Credit Transactions List */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Credit Transactions</CardTitle>
+                  <CardDescription>History of all credit additions</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!clientDetail.credit_transactions || clientDetail.credit_transactions.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No credit transactions yet
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {clientDetail.credit_transactions.map((transaction) => (
+                        <div
+                          key={transaction.id}
+                          className="flex items-center justify-between p-3 border rounded-lg"
+                        >
+                          <div className="flex-1">
+                            <div className="font-medium text-green-600">
+                              +{transaction.hours.toFixed(1)} hours
+                            </div>
+                            <div className="text-sm text-muted-foreground mt-0.5">
+                              {format(new Date(transaction.transaction_date), 'MMM d, yyyy')}
+                            </div>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Added {format(new Date(transaction.created_at), 'MMM d, yyyy')}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Projects List */}
               <Card>
                 <CardHeader>
