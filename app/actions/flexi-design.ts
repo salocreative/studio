@@ -386,11 +386,12 @@ export async function getFlexiDesignClientDetail(clientName: string) {
 }
 
 /**
- * Update or create a Flexi-Design client's remaining hours
+ * Update or create a Flexi-Design client's credit by adding a transaction
  */
 export async function updateFlexiDesignClientCredit(
   clientName: string,
-  additionalHours: number
+  additionalHours: number,
+  transactionDate?: string
 ) {
   const supabase = await createClient()
 
@@ -412,41 +413,85 @@ export async function updateFlexiDesignClientCredit(
 
   try {
     // Check if client exists
+    let clientId: string
     const { data: existingClient, error: checkError } = await supabase
       .from('flexi_design_clients')
-      .select('*')
+      .select('id')
       .eq('client_name', clientName)
       .maybeSingle()
 
-    if (checkError) throw checkError
+    if (checkError) {
+      // If table doesn't exist yet, provide helpful error
+      const errorMsg = checkError.message || ''
+      if (errorMsg.includes('does not exist') || errorMsg.includes('relation')) {
+        return { 
+          error: 'Database table not found. Please run migration 004_add_flexi_design_clients.sql in Supabase.' 
+        }
+      }
+      throw checkError
+    }
 
     if (existingClient) {
-      // Update existing client
-      const newRemainingHours = Number(existingClient.remaining_hours) + additionalHours
-      
-      const { data, error } = await supabase
-        .from('flexi_design_clients')
-        .update({ remaining_hours: newRemainingHours })
-        .eq('id', existingClient.id)
-        .select()
-        .single()
-
-      if (error) throw error
-      return { success: true, client: data }
+      clientId = existingClient.id
     } else {
-      // Create new client
-      const { data, error } = await supabase
+      // Create new client first
+      const { data: newClient, error: createError } = await supabase
         .from('flexi_design_clients')
         .insert({
           client_name: clientName,
-          remaining_hours: additionalHours,
+          remaining_hours: 0, // Will be calculated from transactions - quoted hours
         })
-        .select()
+        .select('id')
         .single()
 
-      if (error) throw error
-      return { success: true, client: data }
+      if (createError) {
+        console.error('Error creating client:', createError)
+        throw createError
+      }
+      clientId = newClient.id
     }
+
+    // Add credit transaction with date
+    const dateToUse = transactionDate || new Date().toISOString().split('T')[0]
+    
+    const { data: transaction, error: transactionError } = await supabase
+      .from('flexi_design_credit_transactions')
+      .insert({
+        client_id: clientId,
+        hours: additionalHours,
+        transaction_date: dateToUse,
+        created_by: user.id,
+      })
+      .select()
+      .single()
+
+    if (transactionError) {
+      // If transactions table doesn't exist yet, provide helpful error
+      const errorMsg = transactionError.message || ''
+      if (errorMsg.includes('does not exist') || errorMsg.includes('relation')) {
+        return { 
+          error: 'Credit transactions table not found. Please run migration 013_add_flexi_design_credit_transactions.sql in Supabase.' 
+        }
+      }
+      console.error('Error creating credit transaction:', transactionError)
+      throw transactionError
+    }
+
+    // Get updated client data (remaining_hours will be calculated on read)
+    const { data: updatedClient, error: fetchError } = await supabase
+      .from('flexi_design_clients')
+      .select('*')
+      .eq('id', clientId)
+      .single()
+
+    if (fetchError) {
+      console.error('Error fetching updated client:', fetchError)
+      throw fetchError
+    }
+
+    console.log(`Successfully added ${additionalHours} hours to ${clientName} (transaction ID: ${transaction.id})`)
+    
+    return { success: true, client: updatedClient, transaction }
   } catch (error) {
     console.error('Error updating Flexi-Design client credit:', error)
     return { error: error instanceof Error ? error.message : 'Failed to update client credit' }
