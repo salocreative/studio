@@ -61,7 +61,7 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
             .select('*')
             .in('project_id', projectIds)
             .eq('is_subtask', true)
-            .order('name', { ascending: true })
+            .order('created_at', { ascending: true })
 
           if (tasksError) throw tasksError
 
@@ -109,7 +109,7 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
       .select('*')
       .in('project_id', projectIds)
       .eq('is_subtask', true)
-      .order('name', { ascending: true })
+      .order('created_at', { ascending: true })
 
     if (tasksError) throw tasksError
 
