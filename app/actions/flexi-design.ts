@@ -333,16 +333,6 @@ export async function getFlexiDesignClientDetail(clientName: string) {
     // Calculate remaining hours: total deposited - total quoted hours
     const remainingHours = totalDeposited - totalQuotedHours
 
-    const clientDetail: ClientDetail = {
-      id: clientData?.id || '',
-      client_name: clientName,
-      remaining_hours: remainingHours,
-      hours_used: totalHoursUsed, // logged hours for internal tracking
-      quoted_hours_used: totalQuotedHours, // quoted hours for credit deduction
-      total_projects: projectsWithHours.length,
-      projects: projectsWithHours,
-    }
-
     // Get credit transactions for this client
     let creditTransactions: Array<{
       id: string
@@ -375,6 +365,17 @@ export async function getFlexiDesignClientDetail(clientName: string) {
           created_by: tx.created_by,
         }))
       }
+    }
+
+    const clientDetail: ClientDetail = {
+      id: clientData?.id || '',
+      client_name: clientName,
+      remaining_hours: remainingHours,
+      hours_used: totalHoursUsed, // logged hours for internal tracking
+      quoted_hours_used: totalQuotedHours, // quoted hours for credit deduction
+      total_projects: projectsWithHours.length,
+      projects: projectsWithHours,
+      credit_transactions: creditTransactions,
     }
 
     const clientDetail: ClientDetail = {

@@ -36,9 +36,17 @@ interface ClientDetail {
   id: string
   client_name: string
   remaining_hours: number
-  hours_used: number
+  hours_used: number // logged hours for internal tracking
+  quoted_hours_used?: number // quoted hours for credit deduction
   total_projects: number
   projects: FlexiDesignProject[]
+  credit_transactions?: Array<{
+    id: string
+    hours: number
+    transaction_date: string
+    created_at: string
+    created_by: string | null
+  }>
 }
 
 function FlexiDesignPageContent() {
