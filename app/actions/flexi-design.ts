@@ -378,17 +378,6 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       credit_transactions: creditTransactions,
     }
 
-    const clientDetail: ClientDetail = {
-      id: clientData?.id || '',
-      client_name: clientName,
-      remaining_hours: remainingHours,
-      hours_used: totalHoursUsed, // logged hours for internal tracking
-      quoted_hours_used: totalQuotedHours, // quoted hours for credit deduction
-      total_projects: projectsWithHours.length,
-      projects: projectsWithHours,
-      credit_transactions: creditTransactions,
-    }
-
     return { success: true, client: clientDetail }
   } catch (error) {
     console.error('Error fetching Flexi-Design client detail:', error)
