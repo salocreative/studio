@@ -15,7 +15,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2 } from 'lucide-react'
+import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2, ChevronRight } from 'lucide-react'
 import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
 import { format, parseISO } from 'date-fns'
@@ -431,13 +431,7 @@ export default function ProjectsPage() {
   )
 }
 
-function ProjectCard({ 
-  project, 
-  onClick 
-}: { 
-  project: Project
-  onClick: () => void
-}) {
+function getProjectStats(project: Project) {
   // Calculate totals from tasks
   // Note: This calculation works the same for both active and locked/completed projects
   // Time entries are preserved for completed projects to enable historical reflection
@@ -457,6 +451,24 @@ function ProjectCard({
   
   const status = getStatus(percentage)
   const isOverBudget = percentage > 100 || (totalQuotedHours === 0 && totalLoggedHours > 0)
+
+  return {
+    totalQuotedHours,
+    totalLoggedHours,
+    percentage,
+    status,
+    isOverBudget,
+  }
+}
+
+function ProjectCard({ 
+  project, 
+  onClick 
+}: { 
+  project: Project
+  onClick: () => void
+}) {
+  const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = getProjectStats(project)
   
   // Data for doughnut chart
   // If over budget, show: quoted hours (gray), over-budget hours (red)
@@ -504,51 +516,6 @@ function ProjectCard({
     : (totalLoggedHours > 0 ? 150 : 0) // Show as over budget if we have hours but no quoted hours
 
   const isLocked = project.status === 'locked'
-  
-  // Data for doughnut chart
-  // If over budget, show: quoted hours (gray), over-budget hours (red)
-  // If under budget, show: logged hours (purple), remaining hours (gray)
-  // Special case: if no quoted hours but we have logged hours, show all as over budget
-  const chartData = isOverBudget
-    ? totalQuotedHours === 0 && totalLoggedHours > 0
-      ? [
-          // No quoted hours - show all logged hours as over budget
-          {
-            name: 'Over Budget',
-            value: totalLoggedHours,
-            color: '#EF4444', // red-500
-          },
-        ]
-      : [
-          {
-            name: 'Quoted Hours',
-            value: totalQuotedHours,
-            color: '#E5E7EB',
-          },
-          {
-            name: 'Over Budget',
-            value: totalLoggedHours - totalQuotedHours,
-            color: '#EF4444', // red-500
-          },
-        ]
-    : [
-        {
-          name: 'Time Spent',
-          value: totalLoggedHours,
-          color: '#6405FF',
-        },
-        {
-          name: 'Time Remaining',
-          value: Math.max(0, totalQuotedHours - totalLoggedHours),
-          color: '#E5E7EB',
-        },
-      ]
-  
-  // For chart percentage display: show logged/quoted percentage
-  // If no quoted hours but we have logged hours, show 100%+ (over budget)
-  const chartPercentage = totalQuotedHours > 0 
-    ? (totalLoggedHours / totalQuotedHours) * 100 
-    : (totalLoggedHours > 0 ? 150 : 0) // Show as over budget if we have hours but no quoted hours
 
   return (
     <Card 
