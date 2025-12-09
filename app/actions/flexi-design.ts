@@ -8,7 +8,8 @@ interface FlexiDesignClient {
   client_name: string
   remaining_hours: number
   total_projects: number
-  hours_used: number
+  hours_used: number // logged hours for internal tracking
+  quoted_hours_used?: number // quoted hours for credit deduction
 }
 
 interface FlexiDesignProject {
@@ -16,6 +17,7 @@ interface FlexiDesignProject {
   name: string
   status: 'active' | 'archived' | 'locked'
   total_logged_hours: number
+  quoted_hours?: number | null
   created_at: string
 }
 
@@ -47,10 +49,10 @@ export async function getFlexiDesignClients() {
       return { success: true, clients: [] }
     }
 
-    // Get all Flexi-Design projects
+    // Get all Flexi-Design projects with quoted_hours
     const { data: allProjects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, status, created_at')
+      .select('id, name, client_name, status, created_at, quoted_hours')
       .in('monday_board_id', Array.from(flexiDesignBoardIds))
       .in('status', ['active', 'archived', 'locked'])
       .order('created_at', { ascending: false })
@@ -111,7 +113,8 @@ export async function getFlexiDesignClients() {
     // Group projects by client and calculate stats
     const clientsMap = new Map<string, {
       projects: typeof allProjects
-      hoursUsed: number
+      hoursUsed: number // logged hours for tracking
+      quotedHoursUsed: number // quoted hours for credit deduction
     }>()
 
     allProjects?.forEach((project: any) => {
@@ -121,13 +124,37 @@ export async function getFlexiDesignClients() {
         clientsMap.set(project.client_name, {
           projects: [],
           hoursUsed: 0,
+          quotedHoursUsed: 0,
         })
       }
 
       const client = clientsMap.get(project.client_name)!
       client.projects.push(project)
       client.hoursUsed += timeEntriesByProject[project.id] || 0
+      // Use quoted_hours for credit deduction
+      const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
+      client.quotedHoursUsed += quotedHours
     })
+
+    // Get credit transactions to calculate total deposited
+    let creditTransactions: Record<string, number> = {}
+    if (clientsData && clientsData.length > 0) {
+      const clientIds = clientsData.map((c: any) => c.id)
+      const { data: transactions } = await supabase
+        .from('flexi_design_credit_transactions')
+        .select('client_id, hours')
+        .in('client_id', clientIds)
+      
+      if (transactions) {
+        transactions.forEach((tx: any) => {
+          const client = clientsData.find((c: any) => c.id === tx.client_id)
+          if (client) {
+            creditTransactions[client.client_name] = 
+              (creditTransactions[client.client_name] || 0) + Number(tx.hours)
+          }
+        })
+      }
+    }
 
     // Build client list with stats
     const clients: FlexiDesignClient[] = []
@@ -136,14 +163,20 @@ export async function getFlexiDesignClients() {
     clientsData?.forEach((client: any) => {
       const clientProjects = clientsMap.get(client.client_name)
       const hoursUsed = clientProjects?.hoursUsed || 0
+      const quotedHoursUsed = clientProjects?.quotedHoursUsed || 0
       const totalProjects = clientProjects?.projects.length || 0
+      const totalDeposited = creditTransactions[client.client_name] || 0
+      
+      // Calculate remaining hours: total deposited - total quoted hours
+      const remainingHours = totalDeposited - quotedHoursUsed
 
       clients.push({
         id: client.id,
         client_name: client.client_name,
-        remaining_hours: Number(client.remaining_hours),
+        remaining_hours: remainingHours,
         total_projects: totalProjects,
-        hours_used: hoursUsed,
+        hours_used: hoursUsed, // logged hours for internal tracking
+        quoted_hours_used: quotedHoursUsed, // quoted hours for credit deduction
       })
     })
 
@@ -154,9 +187,10 @@ export async function getFlexiDesignClients() {
         clients.push({
           id: '', // Will be created when they get their first credit
           client_name: clientName,
-          remaining_hours: 0,
+          remaining_hours: 0 - data.quotedHoursUsed, // Negative if they have quoted hours but no credit
           total_projects: data.projects.length,
-          hours_used: data.hoursUsed,
+          hours_used: data.hoursUsed, // logged hours for internal tracking
+          quoted_hours_used: data.quotedHoursUsed, // quoted hours for credit deduction
         })
       }
     })
@@ -230,10 +264,10 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       clientData = data
     }
 
-    // Get all projects for this client from Flexi-Design boards
+    // Get all projects for this client from Flexi-Design boards with quoted_hours
     const { data: projects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, status, created_at')
+      .select('id, name, status, created_at, quoted_hours')
       .in('monday_board_id', Array.from(flexiDesignBoardIds))
       .eq('client_name', clientName)
       .in('status', ['active', 'archived', 'locked'])
@@ -241,10 +275,11 @@ export async function getFlexiDesignClientDetail(clientName: string) {
 
     if (projectsError) throw projectsError
 
-    // Get time entries for these projects
+    // Get time entries for these projects (for internal tracking display)
     const projectIds = (projects || []).map(p => p.id)
     let timeEntriesByProject: Record<string, number> = {}
     let totalHoursUsed = 0
+    let totalQuotedHours = 0
 
     if (projectIds.length > 0) {
       const { data: timeEntries, error: timeEntriesError } = await supabase
@@ -264,20 +299,46 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       }
     }
 
+    // Calculate total quoted hours for credit deduction
+    if (projects) {
+      projects.forEach((project: any) => {
+        const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
+        totalQuotedHours += quotedHours
+      })
+    }
+
+    // Get total deposited from credit transactions
+    let totalDeposited = 0
+    if (clientData) {
+      const { data: transactions } = await supabase
+        .from('flexi_design_credit_transactions')
+        .select('hours')
+        .eq('client_id', clientData.id)
+      
+      if (transactions) {
+        totalDeposited = transactions.reduce((sum, tx: any) => sum + Number(tx.hours), 0)
+      }
+    }
+
     // Build projects with hours
     const projectsWithHours: FlexiDesignProject[] = (projects || []).map((project: any) => ({
       id: project.id,
       name: project.name,
       status: project.status,
       total_logged_hours: timeEntriesByProject[project.id] || 0,
+      quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
       created_at: project.created_at,
     }))
+
+    // Calculate remaining hours: total deposited - total quoted hours
+    const remainingHours = totalDeposited - totalQuotedHours
 
     const clientDetail: ClientDetail = {
       id: clientData?.id || '',
       client_name: clientName,
-      remaining_hours: clientData ? Number(clientData.remaining_hours) : 0,
-      hours_used: totalHoursUsed,
+      remaining_hours: remainingHours,
+      hours_used: totalHoursUsed, // logged hours for internal tracking
+      quoted_hours_used: totalQuotedHours, // quoted hours for credit deduction
       total_projects: projectsWithHours.length,
       projects: projectsWithHours,
     }

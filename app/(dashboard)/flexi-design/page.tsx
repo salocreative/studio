@@ -19,7 +19,8 @@ interface FlexiDesignClient {
   client_name: string
   remaining_hours: number
   total_projects: number
-  hours_used: number
+  hours_used: number // logged hours for internal tracking
+  quoted_hours_used?: number // quoted hours for credit deduction
 }
 
 interface FlexiDesignProject {
@@ -27,6 +28,7 @@ interface FlexiDesignProject {
   name: string
   status: 'active' | 'archived' | 'locked'
   total_logged_hours: number
+  quoted_hours?: number | null
   created_at: string
 }
 
@@ -50,6 +52,7 @@ function FlexiDesignPageContent() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [showCreditDialog, setShowCreditDialog] = useState(false)
   const [creditHours, setCreditHours] = useState('')
+  const [creditDate, setCreditDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [selectedClientForCredit, setSelectedClientForCredit] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -121,6 +124,7 @@ function FlexiDesignPageContent() {
   const handleAddCredit = (clientName: string) => {
     setSelectedClientForCredit(clientName)
     setCreditHours('')
+    setCreditDate(format(new Date(), 'yyyy-MM-dd'))
     setShowCreditDialog(true)
   }
 
@@ -137,7 +141,7 @@ function FlexiDesignPageContent() {
     }
 
     try {
-      const result = await updateFlexiDesignClientCredit(selectedClientForCredit, hours)
+      const result = await updateFlexiDesignClientCredit(selectedClientForCredit, hours, creditDate)
       if (result.error) {
         toast.error('Error updating credit', { description: result.error })
       } else {
@@ -145,6 +149,7 @@ function FlexiDesignPageContent() {
         setShowCreditDialog(false)
         setCreditHours('')
         setSelectedClientForCredit(null)
+        setCreditDate(format(new Date(), 'yyyy-MM-dd'))
         
         // Reload clients and client detail if viewing that client
         await loadClients()
@@ -158,10 +163,10 @@ function FlexiDesignPageContent() {
     }
   }
 
-  const getCreditStatusColor = (remainingHours: number, hoursUsed: number) => {
-    const totalCredit = remainingHours + hoursUsed
-    if (totalCredit === 0) return 'text-muted-foreground'
-    const percentage = (hoursUsed / totalCredit) * 100
+  const getCreditStatusColor = (remainingHours: number, quotedHoursUsed: number) => {
+    const totalDeposited = remainingHours + quotedHoursUsed
+    if (totalDeposited === 0) return 'text-muted-foreground'
+    const percentage = (quotedHoursUsed / totalDeposited) * 100
     if (percentage >= 90) return 'text-destructive'
     if (percentage >= 75) return 'text-orange-500'
     return 'text-foreground'
@@ -211,7 +216,10 @@ function FlexiDesignPageContent() {
                   <CardContent>
                     <div className={cn(
                       "text-3xl font-bold",
-                      getCreditStatusColor(clientDetail.remaining_hours, clientDetail.hours_used)
+                      getCreditStatusColor(
+                        clientDetail.remaining_hours, 
+                        clientDetail.quoted_hours_used || 0
+                      )
                     )}>
                       {clientDetail.remaining_hours.toFixed(1)}
                     </div>
@@ -221,7 +229,20 @@ function FlexiDesignPageContent() {
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Hours Used
+                      Quoted Hours (Credit)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold">
+                      {(clientDetail.quoted_hours_used || 0).toFixed(1)}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Logged Hours (Tracking)
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -270,9 +291,17 @@ function FlexiDesignPageContent() {
                               Created: {format(new Date(project.created_at), 'MMM d, yyyy')}
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="font-medium">{project.total_logged_hours.toFixed(1)}h</div>
-                            <div className="text-xs text-muted-foreground">Hours logged</div>
+                          <div className="text-right space-y-1">
+                            {project.quoted_hours && (
+                              <div>
+                                <div className="font-medium">{project.quoted_hours.toFixed(1)}h</div>
+                                <div className="text-xs text-muted-foreground">Quoted</div>
+                              </div>
+                            )}
+                            <div>
+                              <div className="font-medium">{project.total_logged_hours.toFixed(1)}h</div>
+                              <div className="text-xs text-muted-foreground">Logged</div>
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -293,7 +322,7 @@ function FlexiDesignPageContent() {
                 Add credit hours to {selectedClientForCredit}. Common blocks: 20, 40, 60, 80 hours.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+              <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label htmlFor="hours">Hours to Add</Label>
                 <Input
@@ -333,6 +362,15 @@ function FlexiDesignPageContent() {
                 >
                   80h
                 </Button>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="credit-date">Credit Date</Label>
+                <Input
+                  id="credit-date"
+                  type="date"
+                  value={creditDate}
+                  onChange={(e) => setCreditDate(e.target.value)}
+                />
               </div>
             </div>
             <DialogFooter>
@@ -447,10 +485,14 @@ function FlexiDesignPageContent() {
                             </span>
                           </div>
                           <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Used</span>
+                            <span className="text-muted-foreground">Quoted (Credit)</span>
+                            <span className="font-semibold">{(client.quoted_hours_used || 0).toFixed(1)}h</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">Logged (Tracking)</span>
                             <span className="font-semibold">{client.hours_used.toFixed(1)}h</span>
                           </div>
-                          {totalCredit > 0 && (
+                          {totalDeposited > 0 && (
                             <div className="pt-2">
                               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                                 <span>Credit Usage</span>
@@ -490,7 +532,7 @@ function FlexiDesignPageContent() {
                 Add credit hours to {selectedClientForCredit}. Common blocks: 20, 40, 60, 80 hours.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+              <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label htmlFor="hours">Hours to Add</Label>
                 <Input
@@ -530,6 +572,15 @@ function FlexiDesignPageContent() {
                 >
                   80h
                 </Button>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="credit-date">Credit Date</Label>
+                <Input
+                  id="credit-date"
+                  type="date"
+                  value={creditDate}
+                  onChange={(e) => setCreditDate(e.target.value)}
+                />
               </div>
             </div>
             <DialogFooter>
