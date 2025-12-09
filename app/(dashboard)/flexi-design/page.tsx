@@ -154,6 +154,7 @@ function FlexiDesignPageContent() {
         toast.error('Error updating credit', { description: result.error })
       } else {
         toast.success(`Added ${hours} hours to ${selectedClientForCredit}`)
+        const wasViewingClient = selectedClientForCredit === clientName
         setShowCreditDialog(false)
         setCreditHours('')
         setSelectedClientForCredit(null)
@@ -161,8 +162,8 @@ function FlexiDesignPageContent() {
         
         // Reload clients and client detail if viewing that client
         await loadClients()
-        if (clientName === selectedClientForCredit) {
-          await loadClientDetail(selectedClientForCredit)
+        if (wasViewingClient && clientName) {
+          await loadClientDetail(clientName)
         }
       }
     } catch (error) {
