@@ -280,7 +280,7 @@ function DailyView({
                 variant="outline"
                 size="icon"
                 onClick={() => onDateChange(-1)}
-                className="border-slate-700 text-slate-200 hover:bg-slate-800"
+                className="border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -295,7 +295,7 @@ function DailyView({
                   }
                   onDateSelect(today)
                 }}
-                className="border-slate-700 text-slate-200 hover:bg-slate-800"
+                className="border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white"
               >
                 Today
               </Button>
@@ -303,7 +303,7 @@ function DailyView({
                 variant="outline"
                 size="icon"
                 onClick={() => onDateChange(1)}
-                className="border-slate-700 text-slate-200 hover:bg-slate-800"
+                className="border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
