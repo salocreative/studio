@@ -442,9 +442,11 @@ function FlexiDesignPageContent() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {clients.map((client) => {
-                  const totalCredit = client.remaining_hours + client.hours_used
-                  const creditPercentage = totalCredit > 0 
-                    ? (client.hours_used / totalCredit) * 100 
+                  // Calculate credit usage based on quoted hours (not logged hours)
+                  const quotedHoursUsed = client.quoted_hours_used || 0
+                  const totalDeposited = client.remaining_hours + quotedHoursUsed
+                  const creditPercentage = totalDeposited > 0 
+                    ? (quotedHoursUsed / totalDeposited) * 100 
                     : 0
 
                   return (
@@ -479,7 +481,7 @@ function FlexiDesignPageContent() {
                             <span className="text-muted-foreground">Remaining</span>
                             <span className={cn(
                               "font-semibold",
-                              getCreditStatusColor(client.remaining_hours, client.hours_used)
+                              getCreditStatusColor(client.remaining_hours, quotedHoursUsed)
                             )}>
                               {client.remaining_hours.toFixed(1)}h
                             </span>
