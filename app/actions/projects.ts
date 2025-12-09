@@ -7,6 +7,7 @@ interface ProjectWithTimeTracking {
   id: string
   name: string
   client_name: string | null
+  completed_date: string | null
   status: 'active' | 'archived' | 'locked'
   quoted_hours: number | null
   total_logged_hours: number
@@ -142,6 +143,7 @@ export async function getProjectsWithTimeTracking() {
         id: project.id,
         name: project.name,
         client_name: project.client_name,
+        completed_date: project.completed_date || null,
         status: project.status,
         quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
         total_logged_hours: totalLoggedHours,

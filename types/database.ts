@@ -42,6 +42,7 @@ export interface Database {
           monday_board_id: string
           name: string
           client_name: string | null
+          completed_date: string | null
           status: 'active' | 'archived' | 'locked'
           quoted_hours: number | null
           monday_data: Json | null
@@ -54,6 +55,7 @@ export interface Database {
           monday_board_id: string
           name: string
           client_name?: string | null
+          completed_date?: string | null
           status?: 'active' | 'archived' | 'locked'
           quoted_hours?: number | null
           monday_data?: Json | null
@@ -66,6 +68,7 @@ export interface Database {
           monday_board_id?: string
           name?: string
           client_name?: string | null
+          completed_date?: string | null
           status?: 'active' | 'archived' | 'locked'
           quoted_hours?: number | null
           monday_data?: Json | null

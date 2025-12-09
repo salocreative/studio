@@ -12,6 +12,7 @@ export interface MondayProject {
   name: string
   board_id: string
   client_name?: string
+  completed_date?: string
   status?: string
   quoted_hours?: number
   column_values?: Record<string, any>
@@ -243,6 +244,38 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         }
       }
 
+      // Find completed date from date__1 column (for completed projects)
+      let completed_date: string | undefined
+      const completedDateColumnId = 'date__1'
+      if (item.column_values) {
+        const completedDateColumn = item.column_values.find((cv) => cv.id === completedDateColumnId)
+        if (completedDateColumn) {
+          // Date columns in Monday.com return the date in ISO format in the value field
+          if (completedDateColumn.value) {
+            try {
+              const value = JSON.parse(completedDateColumn.value)
+              if (value?.date) {
+                completed_date = value.date
+              } else if (completedDateColumn.text) {
+                // Fallback: try parsing the text if it's a valid date
+                const parsedDate = new Date(completedDateColumn.text)
+                if (!isNaN(parsedDate.getTime())) {
+                  completed_date = parsedDate.toISOString().split('T')[0]
+                }
+              }
+            } catch {
+              // If parsing fails, try using text directly
+              if (completedDateColumn.text) {
+                const parsedDate = new Date(completedDateColumn.text)
+                if (!isNaN(parsedDate.getTime())) {
+                  completed_date = parsedDate.toISOString().split('T')[0]
+                }
+              }
+            }
+          }
+        }
+      }
+
       // Convert column_values to a more usable format
       const column_values: Record<string, any> = {}
       item.column_values?.forEach((cv) => {
@@ -258,6 +291,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         name: item.name,
         board_id: board.id,
         client_name,
+        completed_date,
         board_name: board.name,
         column_values,
       })
@@ -606,6 +640,7 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         monday_board_id: project.board_id,
         name: project.name,
         client_name: project.client_name || null,
+        completed_date: project.completed_date || null,
         quoted_hours: finalQuotedHours,
         monday_data: project.column_values,
         status: finalStatus,

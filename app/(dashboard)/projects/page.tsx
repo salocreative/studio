@@ -24,6 +24,7 @@ interface Project {
   id: string
   name: string
   client_name: string | null
+  completed_date?: string | null
   status: 'active' | 'archived' | 'locked'
   quoted_hours: number | null
   total_logged_hours: number
@@ -243,23 +244,76 @@ export default function ProjectsPage() {
                     </p>
                   </CardContent>
                 </Card>
-              ) : (
-                <Card>
-                  <CardContent className="p-0">
-                    <div className="divide-y">
-                      {filteredProjects
-                        .filter(p => p.status === 'locked')
-                        .map((project) => (
-                          <ProjectListItem
-                            key={project.id}
-                            project={project}
-                            onClick={() => handleProjectClick(project.id)}
-                          />
-                        ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+              ) : (() => {
+                // Group completed projects by month
+                const completedProjects = filteredProjects
+                  .filter(p => p.status === 'locked')
+                  .sort((a, b) => {
+                    // Sort by completed_date descending (latest first), then by name
+                    if (!a.completed_date && !b.completed_date) {
+                      return a.name.localeCompare(b.name)
+                    }
+                    if (!a.completed_date) return 1
+                    if (!b.completed_date) return -1
+                    return compareDesc(parseISO(a.completed_date), parseISO(b.completed_date))
+                  })
+
+                const groupedByMonth = new Map<string, Project[]>()
+                
+                completedProjects.forEach((project) => {
+                  let monthKey = 'No Date'
+                  if (project.completed_date) {
+                    const date = parseISO(project.completed_date)
+                    monthKey = format(date, 'MMMM yyyy')
+                  }
+                  
+                  if (!groupedByMonth.has(monthKey)) {
+                    groupedByMonth.set(monthKey, [])
+                  }
+                  groupedByMonth.get(monthKey)!.push(project)
+                })
+
+                // Sort month keys (latest first)
+                const sortedMonths = Array.from(groupedByMonth.keys()).sort((a, b) => {
+                  if (a === 'No Date') return 1
+                  if (b === 'No Date') return -1
+                  try {
+                    const dateA = parseISO(a + '-01')
+                    const dateB = parseISO(b + '-01')
+                    return compareDesc(dateA, dateB)
+                  } catch {
+                    return a.localeCompare(b)
+                  }
+                })
+
+                return (
+                  <div className="space-y-6">
+                    {sortedMonths.map((monthKey) => {
+                      const monthProjects = groupedByMonth.get(monthKey) || []
+                      return (
+                        <div key={monthKey}>
+                          <h3 className="text-sm font-semibold text-muted-foreground mb-3 px-1">
+                            {monthKey}
+                          </h3>
+                          <Card>
+                            <CardContent className="p-0">
+                              <div className="divide-y">
+                                {monthProjects.map((project) => (
+                                  <ProjectListItem
+                                    key={project.id}
+                                    project={project}
+                                    onClick={() => handleProjectClick(project.id)}
+                                  />
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
             </TabsContent>
           </Tabs>
         )}
