@@ -271,15 +271,16 @@ function DailyView({
   return (
     <div className="space-y-6">
       {/* Date Navigation */}
-      <Card>
+      <Card className="bg-slate-900 border-slate-800">
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>{format(selectedDate, 'EEEE, MMMM d, yyyy')}</CardTitle>
+            <CardTitle className="text-white">{format(selectedDate, 'EEEE, MMMM d, yyyy')}</CardTitle>
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 size="icon"
                 onClick={() => onDateChange(-1)}
+                className="border-slate-700 text-slate-200 hover:bg-slate-800"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -294,6 +295,7 @@ function DailyView({
                   }
                   onDateSelect(today)
                 }}
+                className="border-slate-700 text-slate-200 hover:bg-slate-800"
               >
                 Today
               </Button>
@@ -301,19 +303,20 @@ function DailyView({
                 variant="outline"
                 size="icon"
                 onClick={() => onDateChange(1)}
+                className="border-slate-700 text-slate-200 hover:bg-slate-800"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
           </div>
-          <CardDescription>
+          <CardDescription className="text-slate-400">
             {hoursLogged} hours logged • {hoursRemaining} hours remaining (target: 6 hours/day)
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             {timeEntries.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-8 text-slate-400">
                 <p>No time entries for this date</p>
                 <p className="text-sm mt-2">Select a task below to log time</p>
               </div>
@@ -325,7 +328,7 @@ function DailyView({
                     <div
                       key={entry.id}
                       className={cn(
-                        "flex items-center justify-between p-4 border rounded-lg",
+                        "flex items-center justify-between p-4 border rounded-lg bg-background",
                         isLocked && "opacity-75 bg-muted/30"
                       )}
                     >
