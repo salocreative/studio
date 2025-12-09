@@ -18,7 +18,7 @@ import {
 import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2, ChevronRight } from 'lucide-react'
 import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, compareDesc } from 'date-fns'
 
 interface Project {
   id: string
