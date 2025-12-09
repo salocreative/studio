@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   try {
     let supabaseResponse = NextResponse.next({
       request,
@@ -11,7 +11,7 @@ export async function middleware(request: NextRequest) {
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      console.error('Missing Supabase environment variables in middleware')
+      console.error('Missing Supabase environment variables in proxy')
       return supabaseResponse
     }
 
@@ -91,7 +91,7 @@ export async function middleware(request: NextRequest) {
 
     return supabaseResponse
   } catch (error) {
-    console.error('Middleware error:', error)
+    console.error('Proxy error:', error)
     // Return a response even on error to prevent 500
     return NextResponse.next({
       request,

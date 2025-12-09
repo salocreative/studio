@@ -690,18 +690,20 @@ function ProjectListItem({
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-3 mb-1">
-          <div className="font-medium text-base">{project.name}</div>
+          <div>
+            <div className="font-medium text-base">{project.name}</div>
+            {project.client_name && (
+              <div className="text-sm text-muted-foreground mt-0.5">
+                {project.client_name}
+              </div>
+            )}
+          </div>
           {project.status === 'locked' && (
             <Badge variant="outline" className="bg-muted text-xs">
               Completed
             </Badge>
           )}
         </div>
-        {project.client_name && (
-          <div className="text-sm text-muted-foreground mb-2">
-            {project.client_name}
-          </div>
-        )}
         <div className="flex items-center gap-4 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Time:</span>
