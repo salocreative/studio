@@ -244,17 +244,21 @@ export default function ProjectsPage() {
                   </CardContent>
                 </Card>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {filteredProjects
-                    .filter(p => p.status === 'locked')
-                    .map((project) => (
-                      <ProjectCard 
-                        key={project.id} 
-                        project={project}
-                        onClick={() => handleProjectClick(project.id)}
-                      />
-                    ))}
-                </div>
+                <Card>
+                  <CardContent className="p-0">
+                    <div className="divide-y">
+                      {filteredProjects
+                        .filter(p => p.status === 'locked')
+                        .map((project) => (
+                          <ProjectListItem
+                            key={project.id}
+                            project={project}
+                            onClick={() => handleProjectClick(project.id)}
+                          />
+                        ))}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
             </TabsContent>
           </Tabs>
@@ -500,6 +504,51 @@ function ProjectCard({
     : (totalLoggedHours > 0 ? 150 : 0) // Show as over budget if we have hours but no quoted hours
 
   const isLocked = project.status === 'locked'
+  
+  // Data for doughnut chart
+  // If over budget, show: quoted hours (gray), over-budget hours (red)
+  // If under budget, show: logged hours (purple), remaining hours (gray)
+  // Special case: if no quoted hours but we have logged hours, show all as over budget
+  const chartData = isOverBudget
+    ? totalQuotedHours === 0 && totalLoggedHours > 0
+      ? [
+          // No quoted hours - show all logged hours as over budget
+          {
+            name: 'Over Budget',
+            value: totalLoggedHours,
+            color: '#EF4444', // red-500
+          },
+        ]
+      : [
+          {
+            name: 'Quoted Hours',
+            value: totalQuotedHours,
+            color: '#E5E7EB',
+          },
+          {
+            name: 'Over Budget',
+            value: totalLoggedHours - totalQuotedHours,
+            color: '#EF4444', // red-500
+          },
+        ]
+    : [
+        {
+          name: 'Time Spent',
+          value: totalLoggedHours,
+          color: '#6405FF',
+        },
+        {
+          name: 'Time Remaining',
+          value: Math.max(0, totalQuotedHours - totalLoggedHours),
+          color: '#E5E7EB',
+        },
+      ]
+  
+  // For chart percentage display: show logged/quoted percentage
+  // If no quoted hours but we have logged hours, show 100%+ (over budget)
+  const chartPercentage = totalQuotedHours > 0 
+    ? (totalLoggedHours / totalQuotedHours) * 100 
+    : (totalLoggedHours > 0 ? 150 : 0) // Show as over budget if we have hours but no quoted hours
 
   return (
     <Card 
@@ -529,7 +578,7 @@ function ProjectCard({
       <CardContent>
         <div className="space-y-4">
           {/* Doughnut Chart */}
-          <div className="flex items-center justify-center py-2">
+          <div className="flex items-center justify-center py-0">
             <div className="relative">
               <DoughnutChart 
                 data={chartData} 
@@ -601,6 +650,82 @@ function ProjectCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function ProjectListItem({
+  project,
+  onClick,
+}: {
+  project: Project
+  onClick: () => void
+}) {
+  const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = getProjectStats(project)
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full px-6 py-4 flex items-center justify-between hover:bg-accent transition-colors text-left"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="font-medium text-base">{project.name}</div>
+          {project.status === 'locked' && (
+            <Badge variant="outline" className="bg-muted text-xs">
+              Completed
+            </Badge>
+          )}
+        </div>
+        {project.client_name && (
+          <div className="text-sm text-muted-foreground mb-2">
+            {project.client_name}
+          </div>
+        )}
+        <div className="flex items-center gap-4 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Time:</span>
+            <span className="font-medium">
+              {totalLoggedHours.toFixed(1)}h / {totalQuotedHours.toFixed(1)}h
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Tasks:</span>
+            <span>{project.tasks.length}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {status === 'over' && (
+              <>
+                <AlertCircle className="h-4 w-4 text-destructive" />
+                <span className={cn(
+                  "text-sm font-semibold",
+                  isOverBudget && "text-destructive"
+                )}>
+                  {percentage.toFixed(0)}%
+                </span>
+                <span className="text-sm text-destructive">Over budget</span>
+              </>
+            )}
+            {status === 'on-track' && (
+              <>
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span className="text-sm font-semibold">{percentage.toFixed(0)}%</span>
+                <span className="text-sm text-green-600">On track</span>
+              </>
+            )}
+            {status === 'under' && (
+              <>
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">{percentage.toFixed(0)}%</span>
+                <span className="text-sm text-muted-foreground">Under budget</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="ml-4">
+        <ChevronRight className="h-5 w-5 text-muted-foreground" />
+      </div>
+    </button>
   )
 }
 
