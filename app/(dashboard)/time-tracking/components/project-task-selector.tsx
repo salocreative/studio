@@ -29,6 +29,7 @@ interface ProjectTaskSelectorProps {
   showFavoritesOnly?: boolean
   boardType?: 'main' | 'flexi-design'
   onBoardTypeChange?: (boardType: 'main' | 'flexi-design') => void
+  hideClientFilters?: boolean
 }
 
 export function ProjectTaskSelector({
@@ -37,6 +38,7 @@ export function ProjectTaskSelector({
   showFavoritesOnly = false,
   boardType = 'main',
   onBoardTypeChange,
+  hideClientFilters = false,
 }: ProjectTaskSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
@@ -154,7 +156,7 @@ export function ProjectTaskSelector({
         </div>
 
         {/* Client Quick Filters */}
-        {uniqueClients.length > 0 && (
+        {!hideClientFilters && uniqueClients.length > 0 && (
           <div className="flex flex-wrap gap-2">
             <Button
               variant={selectedClient === null ? 'default' : 'outline'}
@@ -177,8 +179,8 @@ export function ProjectTaskSelector({
             ))}
           </div>
         )}
-
-        <div className="space-y-2">
+        <hr className="my-2" />
+        <div className="space-y-2 py-8">
           {filteredProjects.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <p>No tasks found</p>

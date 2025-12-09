@@ -9,6 +9,13 @@ import { format, addDays, startOfDay, isSameDay, getDay, nextMonday, isWeekend, 
 import { getProjectsWithTasks, getTimeEntries, deleteTimeEntry } from '@/app/actions/time-tracking'
 import { ProjectTaskSelector } from './components/project-task-selector'
 import { TimeEntryForm } from './components/time-entry-form'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -209,6 +216,11 @@ export default function TimeTrackingPage() {
             selectedDate={selectedDate}
             onDateSelect={setSelectedDate}
             onDeleteEntry={handleDeleteEntry}
+            projects={projects}
+            onSelectTask={handleSelectTask}
+            boardType={boardType}
+            onBoardTypeChange={setBoardType}
+            onTimeEntrySuccess={handleTimeEntrySuccess}
           />
         )}
       </div>
@@ -387,10 +399,20 @@ function CalendarView({
   selectedDate,
   onDateSelect,
   onDeleteEntry,
+  projects,
+  onSelectTask,
+  boardType,
+  onBoardTypeChange,
+  onTimeEntrySuccess,
 }: {
   selectedDate: Date
   onDateSelect: (date: Date) => void
   onDeleteEntry: (entryId: string) => void
+  projects: Project[]
+  onSelectTask: (task: Task, project: Project) => void
+  boardType: 'main' | 'flexi-design'
+  onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
+  onTimeEntrySuccess: () => void
 }) {
   const [selectedMonth, setSelectedMonth] = useState(new Date())
   const [monthTimeEntries, setMonthTimeEntries] = useState<Record<string, number>>({})
@@ -398,11 +420,36 @@ function CalendarView({
   const [selectedDateEntries, setSelectedDateEntries] = useState<TimeEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [reloadTrigger, setReloadTrigger] = useState(0)
+  const [showLogTimeDialog, setShowLogTimeDialog] = useState(false)
+  const [calendarTask, setCalendarTask] = useState<Task | null>(null)
+  const [calendarProject, setCalendarProject] = useState<Project | null>(null)
 
   const handleDeleteEntry = async (entryId: string) => {
     await onDeleteEntry(entryId)
     // Trigger reload of month entries after deletion
     setReloadTrigger(prev => prev + 1)
+  }
+
+  const handleTaskSelect = (task: Task, project: Project) => {
+    setCalendarTask(task)
+    setCalendarProject(project)
+    setShowLogTimeDialog(false)
+  }
+
+  const handleCalendarTimeEntrySuccess = () => {
+    // Ensure we're viewing the month that contains the selected date
+    const selectedMonthValue = startOfMonth(selectedDate)
+    const currentMonthValue = startOfMonth(selectedMonth)
+    if (selectedMonthValue.getTime() !== currentMonthValue.getTime()) {
+      setSelectedMonth(selectedMonthValue)
+    }
+    // Reload calendar data - this will trigger the useEffect to reload entries
+    setReloadTrigger(prev => prev + 1)
+    // Call parent success handler (which might do other things)
+    onTimeEntrySuccess()
+    // Clear selected task/project
+    setCalendarTask(null)
+    setCalendarProject(null)
   }
 
   // Fetch time entries for the entire month
@@ -639,65 +686,111 @@ function CalendarView({
               }
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             {selectedDateEntries.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
+              <div className="text-center py-12 text-muted-foreground space-y-4">
                 <p>No time entries for this date</p>
-                <p className="text-sm mt-2">Switch to Daily view to log time</p>
+                <Button onClick={() => setShowLogTimeDialog(true)}>
+                  <Clock className="mr-2 h-4 w-4" />
+                  Log Time
+                </Button>
               </div>
             ) : (
-              <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                {selectedDateEntries.map((entry) => {
-                  const isLocked = entry.project.status === 'locked'
-                  return (
-                    <div
-                      key={entry.id}
-                      className={cn(
-                        "flex items-center justify-between p-4 border rounded-lg",
-                        isLocked && "opacity-75 bg-muted/30"
-                      )}
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="font-medium">{entry.task.name}</div>
-                          {isLocked && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                              Locked
-                            </span>
+              <>
+                <div className="space-y-2">
+                  {selectedDateEntries.map((entry) => {
+                    const isLocked = entry.project.status === 'locked'
+                    return (
+                      <div
+                        key={entry.id}
+                        className={cn(
+                          "flex items-center justify-between p-4 border rounded-lg",
+                          isLocked && "opacity-75 bg-muted/30"
+                        )}
+                      >
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="font-medium">{entry.task.name}</div>
+                            {isLocked && (
+                              <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                                Locked
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {entry.project.name}
+                            {entry.project.client_name && ` • ${entry.project.client_name}`}
+                          </div>
+                          {entry.notes && (
+                            <div className="text-sm text-muted-foreground mt-1">
+                              {entry.notes}
+                            </div>
                           )}
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          {entry.project.name}
-                          {entry.project.client_name && ` • ${entry.project.client_name}`}
-                        </div>
-                        {entry.notes && (
-                          <div className="text-sm text-muted-foreground mt-1">
-                            {entry.notes}
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <div className="font-medium">{entry.hours}h</div>
                           </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <div className="font-medium">{entry.hours}h</div>
+                          {!isLocked && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteEntry(entry.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          )}
                         </div>
-                        {!isLocked && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteEntry(entry.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        )}
                       </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+                <Button 
+                  onClick={() => setShowLogTimeDialog(true)}
+                  className="w-full"
+                  variant="outline"
+                >
+                  <Clock className="mr-2 h-4 w-4" />
+                  Log Time
+                </Button>
+              </>
             )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Log Time Dialog */}
+      <Dialog open={showLogTimeDialog} onOpenChange={setShowLogTimeDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Select Project & Task</DialogTitle>
+            <DialogDescription>
+              Choose a project and task to log time for {format(selectedDate, 'EEEE, MMMM d, yyyy')}
+            </DialogDescription>
+          </DialogHeader>
+          <ProjectTaskSelector
+            projects={projects}
+            onSelectTask={handleTaskSelect}
+            boardType={boardType}
+            onBoardTypeChange={onBoardTypeChange}
+            hideClientFilters={true}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Time Entry Form for Calendar View */}
+      {calendarTask && calendarProject && (
+        <TimeEntryForm
+          task={calendarTask}
+          project={calendarProject}
+          date={format(selectedDate, 'yyyy-MM-dd')}
+          onSuccess={handleCalendarTimeEntrySuccess}
+          onCancel={() => {
+            setCalendarTask(null)
+            setCalendarProject(null)
+          }}
+        />
+      )}
     </div>
   )
 }
