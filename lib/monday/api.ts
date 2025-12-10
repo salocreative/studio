@@ -139,6 +139,20 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         mappedBoardIds.add(leadsBoard.monday_board_id)
       }
     }
+    
+    // Also include Flexi-Design completed board if configured (it needs column mappings too)
+    const { data: flexiDesignCompletedBoard } = await supabase
+      .from('flexi_design_completed_board')
+      .select('monday_board_id')
+      .maybeSingle()
+    
+    if (flexiDesignCompletedBoard?.monday_board_id) {
+      // Only include if it has column mappings
+      const hasMappings = allMappings?.some(m => m.board_id === flexiDesignCompletedBoard.monday_board_id)
+      if (hasMappings) {
+        mappedBoardIds.add(flexiDesignCompletedBoard.monday_board_id)
+      }
+    }
   }
   
   // If no board-specific mappings, we can't sync (need at least one board mapped)
@@ -584,16 +598,18 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
       // Determine status based on board
       const isActive = activeBoardIds.has(project.board_id)
       const isCompleted = completedBoardIds.has(project.board_id)
+      const isFlexiDesignCompleted = flexiDesignCompletedBoardId && project.board_id === flexiDesignCompletedBoardId
       const isLead = leadsBoardId && project.board_id === leadsBoardId
       
       // Projects on completed boards should be locked (not just archived)
+      // Projects on Flexi-Design completed board should also be locked
       // Projects on leads board should be marked as 'lead'
       let projectStatus: 'active' | 'archived' | 'locked' | 'lead'
       if (isLead) {
         projectStatus = 'lead'
       } else if (isActive) {
         projectStatus = 'active'
-      } else if (isCompleted) {
+      } else if (isCompleted || isFlexiDesignCompleted) {
         projectStatus = 'locked'
       } else {
         projectStatus = 'archived'
