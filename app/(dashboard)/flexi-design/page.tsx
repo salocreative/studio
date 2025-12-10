@@ -30,6 +30,7 @@ interface FlexiDesignProject {
   total_logged_hours: number
   quoted_hours?: number | null
   created_at: string
+  completed_date?: string | null
 }
 
 interface ClientDetail {
