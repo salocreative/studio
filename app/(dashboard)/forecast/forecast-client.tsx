@@ -13,7 +13,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { format } from 'date-fns'
 import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
