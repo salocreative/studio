@@ -20,7 +20,6 @@ import { getQuoteRates, getQuoteRateByType, type QuoteRate } from '@/app/actions
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
 
 interface QuoteItem {
   id: string
