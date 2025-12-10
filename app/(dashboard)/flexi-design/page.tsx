@@ -595,12 +595,12 @@ function FlexiDesignPageContent() {
                             </span>
                           </div>
                           <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Quoted (Credit)</span>
-                            <span className="font-semibold">{(client.quoted_hours_used || 0).toFixed(1)}h</span>
+                            <span className="font-medium">Quoted (From Monday)</span>
+                            <span className="font-bold text-primary text-base">{(client.quoted_hours_used || 0).toFixed(1)}h</span>
                           </div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Logged (Tracking)</span>
-                            <span className="font-semibold">{client.hours_used.toFixed(1)}h</span>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Logged (Performance)</span>
+                            <span className="text-muted-foreground">{client.hours_used.toFixed(1)}h</span>
                           </div>
                           {totalDeposited > 0 && (
                             <div className="pt-2">
