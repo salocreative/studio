@@ -587,16 +587,6 @@ export default function QuotePage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {quoteItems.length > 0 && (
-                    <Button
-                      onClick={() => setShowPushDialog(true)}
-                      className="w-full"
-                      variant="default"
-                    >
-                      <Upload className="mr-2 h-4 w-4" />
-                      Push to Monday.com
-                    </Button>
-                  )}
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Total Hours</span>
