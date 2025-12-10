@@ -8,9 +8,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Plus } from 'lucide-react'
+import { ArrowLeft, Plus, History } from 'lucide-react'
 import { getFlexiDesignClients, getFlexiDesignClientDetail, updateFlexiDesignClientCredit } from '@/app/actions/flexi-design'
-import { format } from 'date-fns'
+import { format, differenceInMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -63,6 +63,7 @@ function FlexiDesignPageContent() {
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [showCreditDialog, setShowCreditDialog] = useState(false)
+  const [showCreditHistoryDialog, setShowCreditHistoryDialog] = useState(false)
   const [creditHours, setCreditHours] = useState('')
   const [creditDate, setCreditDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [selectedClientForCredit, setSelectedClientForCredit] = useState<string | null>(null)
@@ -185,6 +186,47 @@ function FlexiDesignPageContent() {
     return 'text-foreground'
   }
 
+  // Calculate average hours per month
+  const calculateAvgHoursPerMonth = () => {
+    if (!clientDetail) return 0
+    
+    // Get the earliest date from projects or credit transactions
+    const allDates: Date[] = []
+    
+    // Add project creation dates
+    clientDetail.projects.forEach(p => {
+      if (p.created_at) allDates.push(parseISO(p.created_at))
+    })
+    
+    // Add completed project dates
+    clientDetail.completed_projects?.forEach(p => {
+      if (p.completed_date) {
+        allDates.push(parseISO(p.completed_date))
+      } else if (p.created_at) {
+        allDates.push(parseISO(p.created_at))
+      }
+    })
+    
+    // Add credit transaction dates
+    clientDetail.credit_transactions?.forEach(tx => {
+      if (tx.transaction_date) allDates.push(parseISO(tx.transaction_date))
+    })
+    
+    if (allDates.length === 0) return 0
+    
+    const earliestDate = new Date(Math.min(...allDates.map(d => d.getTime())))
+    const now = new Date()
+    const monthsDiff = differenceInMonths(now, earliestDate)
+    
+    // Ensure at least 1 month to avoid division by zero
+    const months = Math.max(1, monthsDiff + 1)
+    
+    // Total quoted hours from all projects
+    const totalQuoted = (clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)
+    
+    return totalQuoted / months
+  }
+
   if (clientDetail) {
     // Show client detail view
     return (
@@ -204,10 +246,19 @@ function FlexiDesignPageContent() {
                 <p className="text-sm text-muted-foreground">Flexi-Design Client Details</p>
               </div>
             </div>
-            <Button onClick={() => handleAddCredit(clientDetail.client_name)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Credit
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowCreditHistoryDialog(true)}
+              >
+                <History className="mr-2 h-4 w-4" />
+                Credit History
+              </Button>
+              <Button onClick={() => handleAddCredit(clientDetail.client_name)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Credit
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -218,8 +269,9 @@ function FlexiDesignPageContent() {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Summary Stats */}
+              {/* Summary Stats - 4 boxes */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* Box 1: Remaining Hours */}
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -231,44 +283,18 @@ function FlexiDesignPageContent() {
                       "text-3xl font-bold",
                       getCreditStatusColor(
                         clientDetail.remaining_hours, 
-                        clientDetail.quoted_hours_used || 0
+                        (clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)
                       )
                     )}>
-                      {clientDetail.remaining_hours.toFixed(1)}
+                      {clientDetail.remaining_hours.toFixed(1)}h
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Credit added - Total quoted hours
+                    </p>
                   </CardContent>
                 </Card>
 
-                <Card className="border-2 border-primary/20 bg-primary/5">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-semibold">
-                      Quoted Hours (From Monday)
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Total estimated hours that affect credit
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-4xl font-bold text-primary">
-                      {(clientDetail.quoted_hours_used || 0).toFixed(1)}h
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Logged Hours (Performance)
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Actual time logged for tracking
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-medium text-muted-foreground">{clientDetail.hours_used.toFixed(1)}h</div>
-                  </CardContent>
-                </Card>
-
+                {/* Box 2: Total Projects */}
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -277,146 +303,133 @@ function FlexiDesignPageContent() {
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold">{clientDetail.total_projects}</div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {clientDetail.projects.length} active / {clientDetail.completed_projects?.length || 0} completed
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {/* Box 3: Total Hours Used */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Total Hours Used
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold">
+                      {((clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)).toFixed(1)}h
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {(clientDetail.hours_used || 0) + (clientDetail.completed_logged_hours || 0)}h logged
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {/* Box 4: Avg Hours Per Month */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Avg Hours Per Month
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold">
+                      {calculateAvgHoursPerMonth().toFixed(1)}h
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Based on quoted hours
+                    </p>
                   </CardContent>
                 </Card>
               </div>
 
-              {/* Credit Transactions List */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Credit Transactions</CardTitle>
-                  <CardDescription>History of all credit additions</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {!clientDetail.credit_transactions || clientDetail.credit_transactions.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No credit transactions yet
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {clientDetail.credit_transactions.map((transaction) => (
-                        <div
-                          key={transaction.id}
-                          className="flex items-center justify-between p-3 border rounded-lg"
-                        >
-                          <div className="flex-1">
-                            <div className="font-medium text-green-600">
-                              +{transaction.hours.toFixed(1)} hours
+              {/* Projects in Two Columns */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Left: Active Projects */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Active Projects</CardTitle>
+                    <CardDescription>Current projects for this client</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {clientDetail.projects.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No active projects found
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {clientDetail.projects.map((project) => (
+                          <div
+                            key={project.id}
+                            className="flex items-center justify-between p-3 border rounded-lg hover:bg-accent/50 transition-colors"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium truncate">{project.name}</div>
+                              <div className="text-xs text-muted-foreground mt-0.5">
+                                {format(new Date(project.created_at), 'MMM d, yyyy')}
+                                {project.total_logged_hours > 0 && (
+                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)}h logged</span>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-sm text-muted-foreground mt-0.5">
-                              {format(new Date(transaction.transaction_date), 'MMM d, yyyy')}
-                            </div>
+                            {project.quoted_hours && (
+                              <div className="ml-4 text-right">
+                                <div className="text-lg font-bold text-primary">
+                                  {project.quoted_hours.toFixed(1)}h
+                                </div>
+                              </div>
+                            )}
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            Added {format(new Date(transaction.created_at), 'MMM d, yyyy')}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
 
-              {/* Completed Projects */}
-              {clientDetail.completed_projects && clientDetail.completed_projects.length > 0 && (
+                {/* Right: Completed Projects */}
                 <Card>
                   <CardHeader>
                     <CardTitle>Completed Projects</CardTitle>
-                    <CardDescription>
-                      Projects from the completed board
-                      {clientDetail.completed_quoted_hours !== undefined && (
-                        <span className="ml-2">
-                          • Total Quoted: {clientDetail.completed_quoted_hours.toFixed(1)}h
-                          {' • '}
-                          Total Logged: {clientDetail.completed_logged_hours?.toFixed(1) || 0}h
-                        </span>
-                      )}
-                    </CardDescription>
+                    <CardDescription>Projects from the completed board</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-2">
-                      {clientDetail.completed_projects.map((project) => (
-                        <div
-                          key={project.id}
-                          className="flex items-center justify-between p-4 border rounded-lg bg-muted/30"
-                        >
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <div className="font-medium">{project.name}</div>
-                              <Badge variant="secondary">Completed</Badge>
+                    {!clientDetail.completed_projects || clientDetail.completed_projects.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No completed projects found
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {clientDetail.completed_projects.map((project) => (
+                          <div
+                            key={project.id}
+                            className="flex items-center justify-between p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium truncate">{project.name}</div>
+                              <div className="text-xs text-muted-foreground mt-0.5">
+                                {project.completed_date
+                                  ? format(new Date(project.completed_date), 'MMM d, yyyy')
+                                  : format(new Date(project.created_at), 'MMM d, yyyy')}
+                                {project.total_logged_hours > 0 && (
+                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)}h logged</span>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-sm text-muted-foreground mt-1">
-                              {project.completed_date
-                                ? `Completed: ${format(new Date(project.completed_date), 'MMM d, yyyy')}`
-                                : `Created: ${format(new Date(project.created_at), 'MMM d, yyyy')}`}
-                            </div>
-                          </div>
-                          <div className="text-right space-y-2">
                             {project.quoted_hours && (
-                              <div className="border-l-2 border-primary pl-3">
-                                <div className="text-lg font-bold text-primary">{project.quoted_hours.toFixed(1)}h</div>
-                                <div className="text-xs font-medium">Quoted (Monday)</div>
+                              <div className="ml-4 text-right">
+                                <div className="text-lg font-bold text-primary">
+                                  {project.quoted_hours.toFixed(1)}h
+                                </div>
                               </div>
                             )}
-                            <div className="text-muted-foreground">
-                              <div className="text-sm">{project.total_logged_hours.toFixed(1)}h</div>
-                              <div className="text-xs">Logged</div>
-                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
-              )}
-
-              {/* Active Projects List */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Active Projects</CardTitle>
-                  <CardDescription>Current projects for this client</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {clientDetail.projects.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No active projects found for this client
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {clientDetail.projects.map((project) => (
-                        <div
-                          key={project.id}
-                          className="flex items-center justify-between p-4 border rounded-lg"
-                        >
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <div className="font-medium">{project.name}</div>
-                              <Badge variant={project.status === 'active' ? 'default' : 'secondary'}>
-                                {project.status}
-                              </Badge>
-                            </div>
-                            <div className="text-sm text-muted-foreground mt-1">
-                              Created: {format(new Date(project.created_at), 'MMM d, yyyy')}
-                            </div>
-                          </div>
-                          <div className="text-right space-y-2">
-                            {project.quoted_hours && (
-                              <div className="border-l-2 border-primary pl-3">
-                                <div className="text-lg font-bold text-primary">{project.quoted_hours.toFixed(1)}h</div>
-                                <div className="text-xs font-medium">Quoted (Monday)</div>
-                              </div>
-                            )}
-                            <div className="text-muted-foreground">
-                              <div className="text-sm">{project.total_logged_hours.toFixed(1)}h</div>
-                              <div className="text-xs">Logged</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              </div>
             </div>
           )}
         </div>
@@ -487,6 +500,51 @@ function FlexiDesignPageContent() {
               </Button>
               <Button onClick={handleSaveCredit}>
                 Add Credit
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Credit History Dialog */}
+        <Dialog open={showCreditHistoryDialog} onOpenChange={setShowCreditHistoryDialog}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Credit History</DialogTitle>
+              <DialogDescription>
+                History of all credit additions for {clientDetail.client_name}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              {!clientDetail.credit_transactions || clientDetail.credit_transactions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No credit transactions yet
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                  {clientDetail.credit_transactions.map((transaction) => (
+                    <div
+                      key={transaction.id}
+                      className="flex items-center justify-between p-3 border rounded-lg"
+                    >
+                      <div className="flex-1">
+                        <div className="font-medium text-green-600">
+                          +{transaction.hours.toFixed(1)} hours
+                        </div>
+                        <div className="text-sm text-muted-foreground mt-0.5">
+                          Transaction Date: {format(new Date(transaction.transaction_date), 'MMM d, yyyy')}
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Added {format(new Date(transaction.created_at), 'MMM d, yyyy')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowCreditHistoryDialog(false)}>
+                Close
               </Button>
             </DialogFooter>
           </DialogContent>
