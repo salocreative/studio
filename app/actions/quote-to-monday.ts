@@ -14,6 +14,7 @@ interface CreateQuoteToMondayParams {
     hours: number
     isDays: boolean
   }>
+  subtotal: number
 }
 
 /**
@@ -53,35 +54,45 @@ export async function createQuoteToMonday(params: CreateQuoteToMondayParams) {
 
     const leadsBoardId = leadsBoardResult.board.monday_board_id
 
-    // Get quoted_hours column mapping for the Leads board
-    // Try board-specific first, then global, then try to find from any other board (for inheritance)
-    const { data: allColumnMappings } = await supabase
-      .from('monday_column_mappings')
-      .select('monday_column_id, column_type, board_id')
-      .eq('column_type', 'quoted_hours')
+    // Helper function to get column mapping with fallback logic
+    const getColumnMapping = async (columnType: string): Promise<string | undefined> => {
+      const { data: allMappings } = await supabase
+        .from('monday_column_mappings')
+        .select('monday_column_id, column_type, board_id')
+        .eq('column_type', columnType)
 
-    let quotedHoursColumnId: string | undefined
-
-    if (allColumnMappings) {
-      // First, try board-specific mapping
-      const boardSpecificMapping = allColumnMappings.find(m => m.board_id === leadsBoardId)
-      if (boardSpecificMapping) {
-        quotedHoursColumnId = boardSpecificMapping.monday_column_id
-      } else {
-        // Try global mapping (board_id is null)
-        const globalMapping = allColumnMappings.find(m => !m.board_id)
-        if (globalMapping) {
-          quotedHoursColumnId = globalMapping.monday_column_id
-        } else if (allColumnMappings.length > 0) {
-          // Fallback: use any quoted_hours mapping (for boards that share column structure)
-          quotedHoursColumnId = allColumnMappings[0].monday_column_id
-        }
+      if (!allMappings || allMappings.length === 0) {
+        return undefined
       }
+
+      // First, try board-specific mapping
+      const boardSpecificMapping = allMappings.find(m => m.board_id === leadsBoardId)
+      if (boardSpecificMapping) {
+        return boardSpecificMapping.monday_column_id
+      }
+
+      // Try global mapping (board_id is null)
+      const globalMapping = allMappings.find(m => !m.board_id)
+      if (globalMapping) {
+        return globalMapping.monday_column_id
+      }
+
+      // Fallback: use any mapping (for boards that share column structure)
+      if (allMappings.length > 0) {
+        return allMappings[0].monday_column_id
+      }
+
+      return undefined
     }
 
+    // Get quoted_hours column mapping for subtasks
+    const quotedHoursColumnId = await getColumnMapping('quoted_hours')
     if (!quotedHoursColumnId) {
       return { error: 'Quoted hours column not mapped. Please configure it in Settings → Monday.com Configuration → Column Mappings for the Leads board or globally.' }
     }
+
+    // Get quote_value column mapping for main item (optional)
+    const quoteValueColumnId = await getColumnMapping('quote_value')
 
     // First, create the main item (project)
     // Column values need to be a JSON string for Monday.com API
@@ -98,6 +109,15 @@ export async function createQuoteToMonday(params: CreateQuoteToMondayParams) {
       }
     `
 
+    // Build column values for the main item
+    const mainItemColumnValues: Record<string, any> = {}
+    
+    // Add quote value if column is mapped
+    if (quoteValueColumnId && params.subtotal) {
+      // For number columns in Monday.com, pass as string
+      mainItemColumnValues[quoteValueColumnId] = params.subtotal.toFixed(2)
+    }
+
     const createItemResponse = await fetch(MONDAY_API_URL, {
       method: 'POST',
       headers: {
@@ -109,7 +129,7 @@ export async function createQuoteToMonday(params: CreateQuoteToMondayParams) {
         variables: {
           boardId: leadsBoardId,
           itemName: params.projectTitle,
-          columnValues: JSON.stringify({}), // Empty column values for the main item
+          columnValues: JSON.stringify(mainItemColumnValues),
         },
       }),
     })

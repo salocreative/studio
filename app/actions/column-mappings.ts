@@ -413,7 +413,7 @@ export async function getColumnMappings(boardId?: string) {
  * Save column mapping
  */
 export async function saveColumnMapping(
-  columnType: 'client' | 'quoted_hours' | 'timeline',
+  columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value',
   columnId: string,
   boardId?: string,
   workspaceId?: string

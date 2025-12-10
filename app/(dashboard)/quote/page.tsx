@@ -221,6 +221,7 @@ export default function QuotePage() {
           hours: item.hours,
           isDays: item.isDays,
         })),
+        subtotal: quoteSubtotal,
       })
 
       if (result.error) {
