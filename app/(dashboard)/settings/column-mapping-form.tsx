@@ -483,6 +483,12 @@ function BoardMappingCard({
                 <p className="text-xs text-muted-foreground">Timeline Column</p>
                 <p className="text-sm font-medium">{getColumnTitle(board.mappings.timeline || '', true)}</p>
               </div>
+              {board.mappings.quote_value && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Quote Value Column</p>
+                  <p className="text-sm font-medium">{getColumnTitle(board.mappings.quote_value || '', false)}</p>
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -502,6 +508,11 @@ function BoardMappingCard({
               {board.mappings.timeline && (
                 <p className="text-muted-foreground">
                   ✓ Timeline: {getColumnTitle(board.mappings.timeline, true)}
+                </p>
+              )}
+              {board.mappings.quote_value && (
+                <p className="text-muted-foreground">
+                  ✓ Quote Value: {getColumnTitle(board.mappings.quote_value, false)}
                 </p>
               )}
             </div>
