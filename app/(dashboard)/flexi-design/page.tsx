@@ -219,7 +219,7 @@ function FlexiDesignPageContent() {
           ) : (
             <div className="space-y-6">
               {/* Summary Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -239,15 +239,18 @@ function FlexiDesignPageContent() {
                   </CardContent>
                 </Card>
 
-                <Card>
+                <Card className="border-2 border-primary/20 bg-primary/5">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Quoted Hours (Credit)
+                    <CardTitle className="text-sm font-semibold">
+                      Quoted Hours (From Monday)
                     </CardTitle>
+                    <CardDescription className="text-xs">
+                      Total estimated hours that affect credit
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-3xl font-bold">
-                      {(clientDetail.quoted_hours_used || 0).toFixed(1)}
+                    <div className="text-4xl font-bold text-primary">
+                      {(clientDetail.quoted_hours_used || 0).toFixed(1)}h
                     </div>
                   </CardContent>
                 </Card>
@@ -255,11 +258,14 @@ function FlexiDesignPageContent() {
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Logged Hours (Tracking)
+                      Logged Hours (Performance)
                     </CardTitle>
+                    <CardDescription className="text-xs">
+                      Actual time logged for tracking
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-3xl font-bold">{clientDetail.hours_used.toFixed(1)}</div>
+                    <div className="text-2xl font-medium text-muted-foreground">{clientDetail.hours_used.toFixed(1)}h</div>
                   </CardContent>
                 </Card>
 
