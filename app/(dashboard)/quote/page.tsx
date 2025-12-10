@@ -39,6 +39,10 @@ export default function QuotePage() {
   const [loading, setLoading] = useState(true)
   const [newItemTitle, setNewItemTitle] = useState('')
   const [newItemHours, setNewItemHours] = useState<number>(0)
+  const [newItemIsDays, setNewItemIsDays] = useState<boolean>(false)
+  const [editingIsDays, setEditingIsDays] = useState<boolean>(false)
+  const [includeVAT, setIncludeVAT] = useState<boolean>(false)
+  const VAT_RATE = 0.20 // 20% VAT
 
   useEffect(() => {
     loadQuoteRates()
@@ -95,8 +99,12 @@ export default function QuotePage() {
   }, [quoteSubtotal, vatAmount])
 
   const totalHours = useMemo(() => {
-    return quoteItems.reduce((sum, item) => sum + item.hours, 0)
-  }, [quoteItems])
+    if (!currentRate) return 0
+    return quoteItems.reduce((sum, item) => {
+      // If item was entered as days, convert to hours
+      return sum + (item.isDays ? item.hours * currentRate.hours_per_day : item.hours)
+    }, 0)
+  }, [quoteItems, currentRate])
 
   const totalDays = useMemo(() => {
     if (!currentRate || currentRate.hours_per_day === 0) return 0
@@ -109,7 +117,7 @@ export default function QuotePage() {
       return
     }
     if (newItemHours <= 0) {
-      toast.error('Hours must be greater than 0')
+      toast.error(newItemIsDays ? 'Days must be greater than 0' : 'Hours must be greater than 0')
       return
     }
 
@@ -117,11 +125,13 @@ export default function QuotePage() {
       id: Date.now().toString(),
       title: newItemTitle.trim(),
       hours: newItemHours,
+      isDays: newItemIsDays,
     }
 
     setQuoteItems([...quoteItems, newItem])
     setNewItemTitle('')
     setNewItemHours(0)
+    setNewItemIsDays(false)
     toast.success('Item added to quote')
   }
 
@@ -129,6 +139,7 @@ export default function QuotePage() {
     setEditingItemId(item.id)
     setEditingTitle(item.title)
     setEditingHours(item.hours)
+    setEditingIsDays(item.isDays)
   }
 
   function handleSaveEdit() {
@@ -138,14 +149,14 @@ export default function QuotePage() {
       return
     }
     if (editingHours <= 0) {
-      toast.error('Hours must be greater than 0')
+      toast.error(editingIsDays ? 'Days must be greater than 0' : 'Hours must be greater than 0')
       return
     }
 
     setQuoteItems(items =>
       items.map(item =>
         item.id === editingItemId
-          ? { ...item, title: editingTitle.trim(), hours: editingHours }
+          ? { ...item, title: editingTitle.trim(), hours: editingHours, isDays: editingIsDays }
           : item
       )
     )
@@ -153,6 +164,7 @@ export default function QuotePage() {
     setEditingItemId(null)
     setEditingTitle('')
     setEditingHours(0)
+    setEditingIsDays(false)
     toast.success('Item updated')
   }
 
@@ -160,6 +172,7 @@ export default function QuotePage() {
     setEditingItemId(null)
     setEditingTitle('')
     setEditingHours(0)
+    setEditingIsDays(false)
   }
 
   function handleDeleteItem(id: string) {
@@ -346,11 +359,11 @@ export default function QuotePage() {
                         />
                       </div>
                       <div>
-                        <Label htmlFor="new-item-hours">Hours</Label>
+                        <Label htmlFor="new-item-hours">{newItemIsDays ? 'Days' : 'Hours'}</Label>
                         <Input
                           id="new-item-hours"
                           type="number"
-                          step="0.5"
+                          step={newItemIsDays ? "0.5" : "0.5"}
                           min="0"
                           placeholder="0"
                           value={newItemHours || ''}
@@ -362,6 +375,16 @@ export default function QuotePage() {
                           }}
                         />
                       </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="new-item-days-toggle"
+                        checked={newItemIsDays}
+                        onCheckedChange={setNewItemIsDays}
+                      />
+                      <Label htmlFor="new-item-days-toggle" className="cursor-pointer">
+                        Quote in days instead of hours
+                      </Label>
                     </div>
                     <Button onClick={handleAddItem} className="w-full">
                       <Plus className="mr-2 h-4 w-4" />
@@ -530,12 +553,45 @@ export default function QuotePage() {
                       <span className="text-muted-foreground">Items</span>
                       <span className="font-medium">{quoteItems.length}</span>
                     </div>
-                    <div className="border-t pt-3 mt-3">
+                    <div className="border-t pt-3 mt-3 space-y-2">
                       <div className="flex justify-between items-center">
-                        <span className="text-lg font-semibold">Total Quote</span>
-                        <span className="text-2xl font-bold text-primary">
-                          £{quoteTotal.toFixed(2)}
+                        <span className="text-sm font-medium">Subtotal</span>
+                        <span className="text-lg font-semibold">
+                          £{quoteSubtotal.toFixed(2)}
                         </span>
+                      </div>
+                      
+                      {/* VAT Toggle */}
+                      <div className="flex items-center justify-between pt-2">
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="vat-toggle"
+                            checked={includeVAT}
+                            onCheckedChange={setIncludeVAT}
+                          />
+                          <Label htmlFor="vat-toggle" className="cursor-pointer text-sm">
+                            Include VAT (20%)
+                          </Label>
+                        </div>
+                      </div>
+
+                      {includeVAT && (
+                        <div className="flex justify-between text-sm text-muted-foreground">
+                          <span>VAT (20%)</span>
+                          <span>£{vatAmount.toFixed(2)}</span>
+                        </div>
+                      )}
+
+                      <div className="border-t pt-3 mt-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-lg font-semibold">Total Quote</span>
+                          <span className="text-2xl font-bold text-primary">
+                            £{quoteTotal.toFixed(2)}
+                          </span>
+                        </div>
+                        {includeVAT && (
+                          <p className="text-xs text-muted-foreground mt-1">Including VAT</p>
+                        )}
                       </div>
                     </div>
                   </div>
