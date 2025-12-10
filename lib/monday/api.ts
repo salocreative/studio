@@ -419,7 +419,8 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
 export async function getMondayTasks(
   accessToken: string,
   projectId: string,
-  boardId?: string
+  boardId?: string,
+  boardName?: string
 ): Promise<MondayTask[]> {
   // Get column mappings for subtasks (quoted_hours, timeline)
   const supabase = await createClient()
@@ -438,6 +439,23 @@ export async function getMondayTasks(
     if (boardMappings.length > 0) {
       quotedHoursColumnId = boardMappings.find(m => m.column_type === 'quoted_hours')?.monday_column_id
       timelineColumnId = boardMappings.find(m => m.column_type === 'timeline')?.monday_column_id
+    }
+  }
+  
+  // If no board-specific mapping and this is a Flexi-Design board, try to inherit from other Flexi-Design boards
+  if ((!quotedHoursColumnId || !timelineColumnId) && boardName?.toLowerCase().includes('flexi')) {
+    // Find mappings from any other Flexi-Design board that has mappings
+    for (const mapping of allMappings || []) {
+      if (mapping.board_id && mapping.board_id !== boardId) {
+        // If we find a mapping from another board, use it (assuming Flexi-Design boards share structure)
+        if (!quotedHoursColumnId && mapping.column_type === 'quoted_hours') {
+          quotedHoursColumnId = mapping.monday_column_id
+        }
+        if (!timelineColumnId && mapping.column_type === 'timeline') {
+          timelineColumnId = mapping.monday_column_id
+        }
+        if (quotedHoursColumnId && timelineColumnId) break
+      }
     }
   }
   
