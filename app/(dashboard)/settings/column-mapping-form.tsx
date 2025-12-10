@@ -593,6 +593,61 @@ function BoardMappingEditor({
         </p>
       </div>
 
+      {/* Quote Value Column */}
+      <div className="space-y-2">
+        <Label htmlFor="quote-value-column">Quote Value Column (from parent/main task)</Label>
+        {mappings.quote_value ? (
+          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <p className="font-medium text-green-900">
+                {parentColumns.find(c => c.id === mappings.quote_value)?.title || mappings.quote_value}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onMappingChange({ ...mappings, quote_value: '' })}
+              disabled={saving}
+            >
+              <Edit2 className="h-4 w-4 mr-1" />
+              Change
+            </Button>
+          </div>
+        ) : (
+          <Select
+            value={mappings.quote_value || ''}
+            onValueChange={(value) => onSave('quote_value', value)}
+            disabled={saving || parentColumns.length === 0}
+          >
+            <SelectTrigger id="quote-value-column">
+              <SelectValue placeholder="Select Monday.com column" />
+            </SelectTrigger>
+            <SelectContent>
+              {parentColumns
+                .filter((col) => 
+                  col.type?.toLowerCase().includes('number') || 
+                  col.type?.toLowerCase().includes('numeric') ||
+                  col.type === 'numeric_rating' ||
+                  col.type === 'formula' ||
+                  col.type === 'currency' ||
+                  col.type === 'rating' ||
+                  col.id?.toLowerCase().includes('value') ||
+                  col.title?.toLowerCase().includes('value')
+                )
+                .map((column) => (
+                  <SelectItem key={column.id} value={column.id}>
+                    {column.title} {column.type && `(${column.type})`}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Select a number/currency column from the main/parent task items. This will store the quote subtotal when pushing quotes to Monday.com.
+        </p>
+      </div>
+
       {/* Quoted Hours Column */}
       <div className="space-y-2">
         <Label htmlFor="quoted-hours-column">Quoted Hours Column (from subtasks)</Label>
@@ -718,61 +773,6 @@ function BoardMappingEditor({
           {subtaskColumns.length === 0 
             ? "⚠️ No subtask columns found. Make sure the board has items with subtasks."
             : "Select a timeline/date column from subtask items (not parent tasks)"}
-        </p>
-      </div>
-
-      {/* Quote Value Column */}
-      <div className="space-y-2">
-        <Label htmlFor="quote-value-column">Quote Value Column (from parent/main task)</Label>
-        {mappings.quote_value ? (
-          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <p className="font-medium text-green-900">
-                {parentColumns.find(c => c.id === mappings.quote_value)?.title || mappings.quote_value}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onMappingChange({ ...mappings, quote_value: '' })}
-              disabled={saving}
-            >
-              <Edit2 className="h-4 w-4 mr-1" />
-              Change
-            </Button>
-          </div>
-        ) : (
-          <Select
-            value={mappings.quote_value || ''}
-            onValueChange={(value) => onSave('quote_value', value)}
-            disabled={saving || parentColumns.length === 0}
-          >
-            <SelectTrigger id="quote-value-column">
-              <SelectValue placeholder="Select Monday.com column" />
-            </SelectTrigger>
-            <SelectContent>
-              {parentColumns
-                .filter((col) => 
-                  col.type?.toLowerCase().includes('number') || 
-                  col.type?.toLowerCase().includes('numeric') ||
-                  col.type === 'numeric_rating' ||
-                  col.type === 'formula' ||
-                  col.type === 'currency' ||
-                  col.type === 'rating' ||
-                  col.id?.toLowerCase().includes('value') ||
-                  col.title?.toLowerCase().includes('value')
-                )
-                .map((column) => (
-                  <SelectItem key={column.id} value={column.id}>
-                    {column.title} {column.type && `(${column.type})`}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Select a number/currency column from the main/parent task items. This will store the quote subtotal when pushing quotes to Monday.com.
         </p>
       </div>
     </div>
