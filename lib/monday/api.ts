@@ -249,10 +249,45 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     }
   })
   
-  // Helper to get column ID for a board (prioritize board-specific, fallback to global)
-  function getColumnId(boardId: string, columnType: string): string | undefined {
+  // Build a cache of Flexi-Design board mappings (for inheritance)
+  // We'll populate this as we process boards from the API response
+  const flexiDesignBoardMappings = new Map<string, string>() // column_type -> column_id
+  
+  // Helper to get column ID for a board (prioritize board-specific, fallback to other Flexi-Design boards, then global)
+  function getColumnId(boardId: string, columnType: string, boardName?: string): string | undefined {
+    // First, try board-specific mappings
     const boardMappings = columnMappingsByBoard.get(boardId)
-    return boardMappings?.get(columnType) || globalMappings.get(columnType)
+    if (boardMappings?.get(columnType)) {
+      // If this is a Flexi-Design board, cache the mapping for inheritance
+      if (boardName?.toLowerCase().includes('flexi')) {
+        flexiDesignBoardMappings.set(columnType, boardMappings.get(columnType)!)
+      }
+      return boardMappings.get(columnType)
+    }
+    
+    // If no board-specific mapping and this is a Flexi-Design board, try to inherit from cached Flexi-Design mappings
+    if (boardName?.toLowerCase().includes('flexi')) {
+      const cachedMapping = flexiDesignBoardMappings.get(columnType)
+      if (cachedMapping) {
+        return cachedMapping
+      }
+      
+      // If not cached yet, find mappings from any other Flexi-Design board that has mappings
+      // (This handles the case where we haven't processed a Flexi-Design board yet)
+      for (const [otherBoardId, mappings] of columnMappingsByBoard.entries()) {
+        if (otherBoardId !== boardId) {
+          const mapping = mappings.get(columnType)
+          if (mapping) {
+            // Cache it for future use
+            flexiDesignBoardMappings.set(columnType, mapping)
+            return mapping
+          }
+        }
+      }
+    }
+    
+    // Fallback to global mappings
+    return globalMappings.get(columnType)
   }
 
   // Build a query to get items from all boards
