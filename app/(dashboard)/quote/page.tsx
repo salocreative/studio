@@ -657,6 +657,19 @@ export default function QuotePage() {
                       </p>
                     </div>
                   )}
+
+                  {quoteItems.length > 0 && (
+                    <div className="pt-4 border-t">
+                      <Button
+                        onClick={() => setShowPushDialog(true)}
+                        className="w-full"
+                        variant="default"
+                      >
+                        <Upload className="mr-2 h-4 w-4" />
+                        Push to Monday.com
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
