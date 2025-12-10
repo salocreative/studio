@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertTriangle, Trash2, Loader2, Plus, Mail } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
 import { CompletedBoardsForm } from './completed-boards-form'
@@ -39,7 +40,7 @@ import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
-import { getUsers, createUser, updateUserRole, deleteUser } from '@/app/actions/users'
+import { getUsers, createUser, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
 import { toast } from 'sonner'
 
 interface User {
@@ -47,6 +48,7 @@ interface User {
   email: string
   full_name: string | null
   role: 'admin' | 'designer' | 'manager'
+  exclude_from_utilization?: boolean
   created_at: string
 }
 
@@ -141,6 +143,21 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Error deleting user:', error)
       toast.error('Failed to remove user')
+    }
+  }
+
+  async function handleToggleUtilizationExclusion(userId: string, exclude: boolean) {
+    try {
+      const result = await updateUserUtilizationExclusion(userId, exclude)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        await loadUsers()
+        toast.success(exclude ? 'User excluded from utilization calculations' : 'User included in utilization calculations')
+      }
+    } catch (error) {
+      console.error('Error updating utilization exclusion:', error)
+      toast.error('Failed to update utilization exclusion')
     }
   }
 
@@ -280,7 +297,7 @@ export default function SettingsPage() {
                     <div>
                       <CardTitle>All Team Members</CardTitle>
                       <CardDescription>
-                        Manage roles and remove team members from the platform
+                        Manage roles, exclude from utilization calculations, and remove team members from the platform
                       </CardDescription>
                     </div>
                     <Button onClick={() => setShowAddForm(!showAddForm)}>
@@ -300,6 +317,7 @@ export default function SettingsPage() {
                             <TableHead>Name</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Role</TableHead>
+                            <TableHead>Exclude from Utilization</TableHead>
                             <TableHead>Joined</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
@@ -307,7 +325,7 @@ export default function SettingsPage() {
                         <TableBody>
                           {users.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={5} className="text-center text-muted-foreground">
+                              <TableCell colSpan={6} className="text-center text-muted-foreground">
                                 No users found
                               </TableCell>
                             </TableRow>
@@ -339,6 +357,19 @@ export default function SettingsPage() {
                                       <SelectItem value="manager">Manager</SelectItem>
                                     </SelectContent>
                                   </Select>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center space-x-2">
+                                    <Switch
+                                      checked={user.exclude_from_utilization || false}
+                                      onCheckedChange={(checked) =>
+                                        handleToggleUtilizationExclusion(user.id, checked)
+                                      }
+                                    />
+                                    <span className="text-sm text-muted-foreground">
+                                      {user.exclude_from_utilization ? 'Excluded' : 'Included'}
+                                    </span>
+                                  </div>
                                 </TableCell>
                                 <TableCell>
                                   {new Date(user.created_at).toLocaleDateString()}

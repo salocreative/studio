@@ -15,6 +15,7 @@ export interface Database {
           email: string
           full_name: string | null
           role: 'admin' | 'designer' | 'employee'
+          exclude_from_utilization: boolean
           created_at: string
           updated_at: string
         }
@@ -23,6 +24,7 @@ export interface Database {
           email: string
           full_name?: string | null
           role?: 'admin' | 'designer' | 'employee'
+          exclude_from_utilization?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -31,6 +33,7 @@ export interface Database {
           email?: string
           full_name?: string | null
           role?: 'admin' | 'designer' | 'employee'
+          exclude_from_utilization?: boolean
           created_at?: string
           updated_at?: string
         }

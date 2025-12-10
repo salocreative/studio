@@ -255,6 +255,51 @@ export async function updateUserRole(
 }
 
 /**
+ * Update user's exclusion from utilization calculations
+ */
+export async function updateUserUtilizationExclusion(
+  userId: string,
+  excludeFromUtilization: boolean
+) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  // Use admin client to update (bypasses RLS)
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
+  try {
+    const { error } = await adminClient
+      .from('users')
+      .update({ exclude_from_utilization: excludeFromUtilization })
+      .eq('id', userId)
+
+    if (error) throw error
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating user utilization exclusion:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to update user utilization exclusion' }
+  }
+}
+
+/**
  * Delete user
  */
 export async function deleteUser(userId: string) {
