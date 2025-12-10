@@ -47,6 +47,9 @@ interface ClientDetail {
     created_at: string
     created_by: string | null
   }>
+  completed_projects?: FlexiDesignProject[]
+  completed_quoted_hours?: number
+  completed_logged_hours?: number
 }
 
 function FlexiDesignPageContent() {

@@ -34,6 +34,7 @@ import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
 import { CompletedBoardsForm } from './completed-boards-form'
 import { LeadsBoardForm } from './leads-board-form'
+import { FlexiDesignCompletedBoardForm } from './flexi-design-completed-board-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, updateUserRole, deleteUser } from '@/app/actions/users'
@@ -442,6 +443,18 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <LeadsBoardForm />
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Flexi-Design Completed Board</CardTitle>
+                    <CardDescription>
+                      Configure the Monday.com board that contains completed Flexi-Design projects. Completed projects from this board will be shown on each client's detail page with their estimated and used hours.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <FlexiDesignCompletedBoardForm />
                   </CardContent>
                 </Card>
 

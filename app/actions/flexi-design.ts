@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
+import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
 
 interface FlexiDesignClient {
   id: string
@@ -25,9 +26,20 @@ interface ClientDetail {
   id: string
   client_name: string
   remaining_hours: number
-  hours_used: number
+  hours_used: number // logged hours for internal tracking
+  quoted_hours_used?: number // quoted hours for credit deduction
   total_projects: number
   projects: FlexiDesignProject[]
+  credit_transactions?: Array<{
+    id: string
+    hours: number
+    transaction_date: string
+    created_at: string
+    created_by: string | null
+  }>
+  completed_projects?: FlexiDesignProject[]
+  completed_quoted_hours?: number
+  completed_logged_hours?: number
 }
 
 /**
@@ -367,6 +379,65 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       }
     }
 
+    // Get completed projects from the completed board
+    let completedProjectsWithHours: FlexiDesignProject[] = []
+    let totalCompletedQuotedHours = 0
+    let totalCompletedLoggedHours = 0
+    
+    const completedBoardResult = await getFlexiDesignCompletedBoard()
+    if (completedBoardResult.success && completedBoardResult.board) {
+      const completedBoardId = completedBoardResult.board.monday_board_id
+      
+      // Get completed projects for this client from the completed board
+      const { data: completedProjects, error: completedProjectsError } = await supabase
+        .from('monday_projects')
+        .select('id, name, status, created_at, quoted_hours, completed_date')
+        .eq('monday_board_id', completedBoardId)
+        .eq('client_name', clientName)
+        .in('status', ['active', 'archived', 'locked'])
+        .order('completed_date', { ascending: false })
+        .order('created_at', { ascending: false })
+
+      if (!completedProjectsError && completedProjects && completedProjects.length > 0) {
+        // Get time entries for completed projects
+        const completedProjectIds = completedProjects.map(p => p.id)
+        let completedTimeEntriesByProject: Record<string, number> = {}
+        
+        if (completedProjectIds.length > 0) {
+          const { data: completedTimeEntries, error: completedTimeEntriesError } = await supabase
+            .from('time_entries')
+            .select('project_id, hours')
+            .in('project_id', completedProjectIds)
+
+          if (!completedTimeEntriesError && completedTimeEntries) {
+            completedTimeEntries.forEach((entry: any) => {
+              const hours = Number(entry.hours)
+              completedTimeEntriesByProject[entry.project_id] = 
+                (completedTimeEntriesByProject[entry.project_id] || 0) + hours
+              totalCompletedLoggedHours += hours
+            })
+          }
+        }
+
+        // Calculate total quoted hours for completed projects
+        completedProjects.forEach((project: any) => {
+          const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
+          totalCompletedQuotedHours += quotedHours
+        })
+
+        // Build completed projects with hours
+        completedProjectsWithHours = completedProjects.map((project: any) => ({
+          id: project.id,
+          name: project.name,
+          status: project.status,
+          total_logged_hours: completedTimeEntriesByProject[project.id] || 0,
+          quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
+          created_at: project.created_at,
+          completed_date: project.completed_date,
+        }))
+      }
+    }
+
     const clientDetail: ClientDetail = {
       id: clientData?.id || '',
       client_name: clientName,
@@ -376,6 +447,9 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       total_projects: projectsWithHours.length,
       projects: projectsWithHours,
       credit_transactions: creditTransactions,
+      completed_projects: completedProjectsWithHours,
+      completed_quoted_hours: totalCompletedQuotedHours,
+      completed_logged_hours: totalCompletedLoggedHours,
     }
 
     return { success: true, client: clientDetail }
