@@ -15,11 +15,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Plus, Trash2, Edit2, Loader2, Calculator } from 'lucide-react'
+import { Plus, Trash2, Edit2, Loader2, Calculator, Upload } from 'lucide-react'
 import { getQuoteRates, getQuoteRateByType, type QuoteRate } from '@/app/actions/quote-rates'
+import { createQuoteToMonday } from '@/app/actions/quote-to-monday'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/switch'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 interface QuoteItem {
   id: string
@@ -41,6 +50,9 @@ export default function QuotePage() {
   const [newItemIsDays, setNewItemIsDays] = useState<boolean>(false)
   const [editingIsDays, setEditingIsDays] = useState<boolean>(false)
   const [includeVAT, setIncludeVAT] = useState<boolean>(false)
+  const [showPushDialog, setShowPushDialog] = useState(false)
+  const [projectTitle, setProjectTitle] = useState('')
+  const [pushingToMonday, setPushingToMonday] = useState(false)
   const VAT_RATE = 0.20 // 20% VAT
 
   useEffect(() => {
@@ -535,6 +547,16 @@ export default function QuotePage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {quoteItems.length > 0 && (
+                    <Button
+                      onClick={() => setShowPushDialog(true)}
+                      className="w-full"
+                      variant="default"
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      Push to Monday.com
+                    </Button>
+                  )}
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Total Hours</span>
@@ -611,6 +633,73 @@ export default function QuotePage() {
           </div>
         </div>
       </div>
+
+      {/* Push to Monday.com Dialog */}
+      <Dialog open={showPushDialog} onOpenChange={setShowPushDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Push Quote to Monday.com</DialogTitle>
+            <DialogDescription>
+              This will create a new project in the Leads board with subtasks for each quote item.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="project-title">Project Title *</Label>
+              <Input
+                id="project-title"
+                placeholder="e.g., Website Redesign, Brand Identity"
+                value={projectTitle}
+                onChange={(e) => setProjectTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && projectTitle.trim() && !pushingToMonday) {
+                    handlePushToMonday()
+                  }
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                This will be the name of the project in Monday.com
+              </p>
+            </div>
+            <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
+              <p className="text-sm font-medium">What will be created:</p>
+              <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                <li>1 project item: "{projectTitle || '[Project Title]'}"</li>
+                <li>{quoteItems.length} subtask{quoteItems.length !== 1 ? 's' : ''} with quoted hours</li>
+                <li>Board: Leads board (configured in Settings)</li>
+              </ul>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowPushDialog(false)
+                setProjectTitle('')
+              }}
+              disabled={pushingToMonday}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handlePushToMonday}
+              disabled={!projectTitle.trim() || pushingToMonday || quoteItems.length === 0}
+            >
+              {pushingToMonday ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Pushing...
+                </>
+              ) : (
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Push to Monday.com
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
