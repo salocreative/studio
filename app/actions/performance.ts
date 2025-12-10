@@ -62,8 +62,15 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
 
   try {
     // Default to current month if no dates provided
-    const periodStart = startDate ? new Date(startDate) : startOfMonth(new Date())
-    const periodEnd = endDate ? new Date(endDate) : endOfMonth(new Date())
+    const today = new Date()
+    const periodStart = startDate ? new Date(startDate) : startOfMonth(today)
+    let periodEnd = endDate ? new Date(endDate) : endOfMonth(today)
+    
+    // If the period end is in the future (for current month), cap it at today
+    // This ensures we only calculate utilization up to today, not including future days
+    if (periodEnd > today) {
+      periodEnd = today
+    }
 
     // Get all users using admin client (bypasses RLS)
     const { data: users, error: usersError } = await adminClient
@@ -78,6 +85,7 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
     }
 
     // Calculate available working days (excluding weekends)
+    // Only count days from periodStart up to periodEnd (which may be today for current month)
     const workingDays = eachDayOfInterval({
       start: periodStart,
       end: periodEnd,
