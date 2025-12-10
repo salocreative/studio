@@ -176,6 +176,33 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       return sum + (lead.quoted_hours ? Number(lead.quoted_hours) : 0)
     }, 0) || 0
 
+    // Get client hours breakdown for the period
+    const { data: timeEntriesWithProjects, error: clientHoursError } = await supabase
+      .from('time_entries')
+      .select(`
+        hours,
+        project:monday_projects(client_name)
+      `)
+      .gte('date', startDateStr)
+      .lte('date', endDateStr)
+
+    const clientHours: Record<string, number> = {}
+    if (timeEntriesWithProjects && !clientHoursError) {
+      timeEntriesWithProjects.forEach((entry: any) => {
+        const clientName = entry.project?.client_name || 'Unassigned'
+        const hours = Number(entry.hours) || 0
+        clientHours[clientName] = (clientHours[clientName] || 0) + hours
+      })
+    }
+
+    // Convert to array and sort by hours (descending)
+    const clientHoursArray = Object.entries(clientHours)
+      .map(([clientName, hours]) => ({
+        clientName,
+        hours: Number(hours.toFixed(2)),
+      }))
+      .sort((a, b) => b.hours - a.hours)
+
     // Build daily breakdown (excluding weekends)
     const allDays = eachDayOfInterval({
       start: periodStart,
@@ -238,6 +265,7 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
         leadsCount: leads?.length || 0,
       },
       dailyBreakdown,
+      clientHours: clientHoursArray,
     }
   } catch (error) {
     console.error('Error fetching team utilization:', error)
