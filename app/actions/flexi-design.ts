@@ -61,7 +61,7 @@ export async function getFlexiDesignClients() {
       return { success: true, clients: [] }
     }
 
-    // Get all Flexi-Design projects with quoted_hours
+    // Get all Flexi-Design projects with quoted_hours (from active boards)
     const { data: allProjects, error: projectsError } = await supabase
       .from('monday_projects')
       .select('id, name, client_name, status, created_at, quoted_hours')
@@ -71,8 +71,27 @@ export async function getFlexiDesignClients() {
 
     if (projectsError) throw projectsError
 
-    // Get all time entries for Flexi-Design projects
-    const projectIds = (allProjects || []).map(p => p.id)
+    // Get completed projects from the completed board
+    let completedProjects: any[] = []
+    const completedBoardResult = await getFlexiDesignCompletedBoard()
+    if (completedBoardResult.success && completedBoardResult.board) {
+      const completedBoardId = completedBoardResult.board.monday_board_id
+      const { data: completed, error: completedError } = await supabase
+        .from('monday_projects')
+        .select('id, name, client_name, status, created_at, quoted_hours')
+        .eq('monday_board_id', completedBoardId)
+        .in('status', ['active', 'archived', 'locked'])
+
+      if (!completedError && completed) {
+        completedProjects = completed
+      }
+    }
+
+    // Combine all projects (active + completed)
+    const allProjectsIncludingCompleted = [...(allProjects || []), ...completedProjects]
+
+    // Get all time entries for Flexi-Design projects (active + completed)
+    const projectIds = allProjectsIncludingCompleted.map(p => p.id)
     let timeEntriesByProject: Record<string, number> = {}
     
     if (projectIds.length > 0) {
@@ -129,7 +148,8 @@ export async function getFlexiDesignClients() {
       quotedHoursUsed: number // quoted hours for credit deduction
     }>()
 
-    allProjects?.forEach((project: any) => {
+    // Process all projects (active + completed) to calculate quoted hours for credit
+    allProjectsIncludingCompleted.forEach((project: any) => {
       if (!project.client_name) return
       
       if (!clientsMap.has(project.client_name)) {
@@ -143,7 +163,7 @@ export async function getFlexiDesignClients() {
       const client = clientsMap.get(project.client_name)!
       client.projects.push(project)
       client.hoursUsed += timeEntriesByProject[project.id] || 0
-      // Use quoted_hours for credit deduction
+      // Use quoted_hours (estimated hours) for credit deduction
       const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
       client.quotedHoursUsed += quotedHours
     })
@@ -179,7 +199,8 @@ export async function getFlexiDesignClients() {
       const totalProjects = clientProjects?.projects.length || 0
       const totalDeposited = creditTransactions[client.client_name] || 0
       
-      // Calculate remaining hours: total deposited - total quoted hours
+      // Calculate remaining hours: Total Hours Credited - Total Hours Estimated (quoted)
+      // This includes both active and completed projects' quoted hours
       const remainingHours = totalDeposited - quotedHoursUsed
 
       clients.push({
