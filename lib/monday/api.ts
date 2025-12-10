@@ -789,7 +789,7 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
 
       if (projectRecord) {
         const isProjectLocked = projectRecord.status === 'locked'
-        const mondayTasks = await getMondayTasks(accessToken, project.id, project.board_id)
+        const mondayTasks = await getMondayTasks(accessToken, project.id, project.board_id, project.board_name)
 
         // Get existing tasks to preserve quoted_hours for locked projects
         const { data: existingTasks } = await supabase
