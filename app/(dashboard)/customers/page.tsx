@@ -1,4 +1,8 @@
-export default function CustomersPage() {
+import { requireAdmin } from '@/app/actions/auth'
+
+export default async function CustomersPage() {
+  await requireAdmin() // Redirect if not admin
+  
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-background">

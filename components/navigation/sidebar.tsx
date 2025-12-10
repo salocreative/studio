@@ -56,19 +56,19 @@ export const navigation: NavItem[] = [
     title: 'Forecast',
     href: '/forecast',
     icon: Calendar,
-    roles: ['admin', 'designer', 'manager'],
+    roles: ['admin'], // Admin only
   },
   {
     title: 'Scorecard',
     href: '/scorecard',
     icon: Trophy,
-    roles: ['admin', 'designer', 'manager'], // Managers can see scorecard
+    roles: ['admin'], // Admin only
   },
   {
     title: 'Customers',
     href: '/customers',
     icon: Users,
-    roles: ['admin', 'designer', 'manager'], // Managers can see customers
+    roles: ['admin'], // Admin only
   },
   {
     title: 'Settings',

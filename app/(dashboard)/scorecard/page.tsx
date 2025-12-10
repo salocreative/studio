@@ -1,4 +1,8 @@
-export default function ScorecardPage() {
+import { requireAdmin } from '@/app/actions/auth'
+
+export default async function ScorecardPage() {
+  await requireAdmin() // Redirect if not admin
+  
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-background">
