@@ -200,6 +200,46 @@ export default function QuotePage() {
     toast.success('Quote cleared')
   }
 
+  async function handlePushToMonday() {
+    if (quoteItems.length === 0) {
+      toast.error('Please add items to the quote before pushing to Monday.com')
+      return
+    }
+
+    if (!projectTitle.trim()) {
+      toast.error('Please enter a project title')
+      return
+    }
+
+    setPushingToMonday(true)
+    try {
+      const result = await createQuoteToMonday({
+        projectTitle: projectTitle.trim(),
+        customerType,
+        items: quoteItems.map(item => ({
+          title: item.title,
+          hours: item.hours,
+          isDays: item.isDays,
+        })),
+      })
+
+      if (result.error) {
+        toast.error('Error pushing to Monday.com', { description: result.error })
+      } else {
+        toast.success(result.message || 'Quote pushed to Monday.com successfully')
+        setShowPushDialog(false)
+        setProjectTitle('')
+      }
+    } catch (error) {
+      console.error('Error pushing quote to Monday.com:', error)
+      toast.error('Failed to push quote to Monday.com', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setPushingToMonday(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col h-full">
