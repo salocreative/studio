@@ -310,16 +310,69 @@ function FlexiDesignPageContent() {
                 </CardContent>
               </Card>
 
-              {/* Projects List */}
+              {/* Completed Projects */}
+              {clientDetail.completed_projects && clientDetail.completed_projects.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Completed Projects</CardTitle>
+                    <CardDescription>
+                      Projects from the completed board
+                      {clientDetail.completed_quoted_hours !== undefined && (
+                        <span className="ml-2">
+                          • Total Quoted: {clientDetail.completed_quoted_hours.toFixed(1)}h
+                          {' • '}
+                          Total Logged: {clientDetail.completed_logged_hours?.toFixed(1) || 0}h
+                        </span>
+                      )}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {clientDetail.completed_projects.map((project) => (
+                        <div
+                          key={project.id}
+                          className="flex items-center justify-between p-4 border rounded-lg bg-muted/30"
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="font-medium">{project.name}</div>
+                              <Badge variant="secondary">Completed</Badge>
+                            </div>
+                            <div className="text-sm text-muted-foreground mt-1">
+                              {project.completed_date
+                                ? `Completed: ${format(new Date(project.completed_date), 'MMM d, yyyy')}`
+                                : `Created: ${format(new Date(project.created_at), 'MMM d, yyyy')}`}
+                            </div>
+                          </div>
+                          <div className="text-right space-y-1">
+                            {project.quoted_hours && (
+                              <div>
+                                <div className="font-medium">{project.quoted_hours.toFixed(1)}h</div>
+                                <div className="text-xs text-muted-foreground">Quoted</div>
+                              </div>
+                            )}
+                            <div>
+                              <div className="font-medium">{project.total_logged_hours.toFixed(1)}h</div>
+                              <div className="text-xs text-muted-foreground">Logged</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Active Projects List */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Projects</CardTitle>
-                  <CardDescription>All projects for this client</CardDescription>
+                  <CardTitle>Active Projects</CardTitle>
+                  <CardDescription>Current projects for this client</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {clientDetail.projects.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
-                      No projects found for this client
+                      No active projects found for this client
                     </div>
                   ) : (
                     <div className="space-y-2">
