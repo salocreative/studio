@@ -54,17 +54,33 @@ export async function createQuoteToMonday(params: CreateQuoteToMondayParams) {
     const leadsBoardId = leadsBoardResult.board.monday_board_id
 
     // Get quoted_hours column mapping for the Leads board
-    const { data: columnMappings } = await supabase
+    // Try board-specific first, then global, then try to find from any other board (for inheritance)
+    const { data: allColumnMappings } = await supabase
       .from('monday_column_mappings')
       .select('monday_column_id, column_type, board_id')
       .eq('column_type', 'quoted_hours')
-      .or(`board_id.eq.${leadsBoardId},board_id.is.null`)
-      .order('board_id', { ascending: false, nullsLast: false }) // Prefer board-specific over global
 
-    const quotedHoursColumnId = columnMappings?.[0]?.monday_column_id
+    let quotedHoursColumnId: string | undefined
+
+    if (allColumnMappings) {
+      // First, try board-specific mapping
+      const boardSpecificMapping = allColumnMappings.find(m => m.board_id === leadsBoardId)
+      if (boardSpecificMapping) {
+        quotedHoursColumnId = boardSpecificMapping.monday_column_id
+      } else {
+        // Try global mapping (board_id is null)
+        const globalMapping = allColumnMappings.find(m => !m.board_id)
+        if (globalMapping) {
+          quotedHoursColumnId = globalMapping.monday_column_id
+        } else if (allColumnMappings.length > 0) {
+          // Fallback: use any quoted_hours mapping (for boards that share column structure)
+          quotedHoursColumnId = allColumnMappings[0].monday_column_id
+        }
+      }
+    }
 
     if (!quotedHoursColumnId) {
-      return { error: 'Quoted hours column not mapped for Leads board. Please configure it in Settings → Monday.com Configuration → Column Mappings.' }
+      return { error: 'Quoted hours column not mapped. Please configure it in Settings → Monday.com Configuration → Column Mappings for the Leads board or globally.' }
     }
 
     // First, create the main item (project)
