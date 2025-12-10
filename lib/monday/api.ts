@@ -534,6 +534,14 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
     
     const leadsBoardId = leadsBoard?.monday_board_id || null
     
+    // Get Flexi-Design completed board ID
+    const { data: flexiDesignCompletedBoard } = await supabase
+      .from('flexi_design_completed_board')
+      .select('monday_board_id')
+      .maybeSingle()
+    
+    const flexiDesignCompletedBoardId = flexiDesignCompletedBoard?.monday_board_id || null
+    
     // Get column mappings to determine active boards
     const { data: allMappings } = await supabase
       .from('monday_column_mappings')
