@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export interface NavItem {
   title: string
@@ -154,7 +154,12 @@ export function MobileNav({ userRole = 'manager' }: MobileNavProps) {
   const router = useRouter()
   const supabase = createClient()
   const [open, setOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const filteredNav = navigation.filter((item) => item.roles.includes(userRole))
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -165,6 +170,16 @@ export function MobileNav({ userRole = 'manager' }: MobileNavProps) {
 
   const handleNavClick = () => {
     setOpen(false)
+  }
+
+  // Prevent hydration mismatch by only rendering Sheet on client
+  if (!mounted) {
+    return (
+      <Button variant="ghost" size="icon" className="md:hidden" disabled>
+        <Menu className="h-6 w-6" />
+        <span className="sr-only">Toggle menu</span>
+      </Button>
+    )
   }
 
   return (
