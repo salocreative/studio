@@ -4,8 +4,17 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Loader2, TrendingUp, DollarSign, AlertCircle, Link2 } from 'lucide-react'
-import { startOfMonth, endOfMonth, format, subMonths, addMonths } from 'date-fns'
+import { Loader2, TrendingUp, DollarSign, AlertCircle, Link2, ExternalLink } from 'lucide-react'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { format } from 'date-fns'
+import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
 import { getLeads } from '@/app/actions/leads'
@@ -303,10 +312,11 @@ export default function ForecastPageClient() {
             <CardHeader>
               <CardTitle>Leads Overview</CardTitle>
               <CardDescription>
-                Potential future revenue from leads and prospects
+                Potential future revenue from leads and prospects from Monday.com
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-6">
+              {/* Summary Stats */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <div className="text-sm text-muted-foreground">Total Leads</div>
@@ -317,15 +327,109 @@ export default function ForecastPageClient() {
                   <div className="text-2xl font-bold">{totalLeadsHours.toFixed(1)}h</div>
                 </div>
                 <div>
-                  <div className="text-sm text-muted-foreground">Potential Revenue</div>
+                  <div className="text-sm text-muted-foreground">Total Value</div>
                   <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                    £{potentialRevenue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    £{leads.reduce((sum, lead) => sum + (lead.quote_value || lead.quoted_hours ? (lead.quoted_hours || 0) * estimatedHourlyRate : 0), 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    (Est. at £{estimatedHourlyRate}/hour)
+                    {leads.some(l => l.quote_value) 
+                      ? 'From Monday.com values'
+                      : `Est. at £${estimatedHourlyRate}/hour`}
                   </div>
                 </div>
               </div>
+
+              {/* Detailed Leads Table */}
+              {leads.length > 0 && (
+                <div className="border-t pt-6">
+                  <h3 className="text-lg font-semibold mb-4">All Leads</h3>
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Project Name</TableHead>
+                          <TableHead>Client</TableHead>
+                          <TableHead className="text-right">Quoted Hours</TableHead>
+                          <TableHead className="text-right">Quote Value</TableHead>
+                          <TableHead className="text-right">Est. Value</TableHead>
+                          <TableHead>Timeline</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {leads.map((lead) => {
+                          const estimatedValue = lead.quoted_hours ? lead.quoted_hours * estimatedHourlyRate : 0
+                          const displayValue = lead.quote_value || estimatedValue
+                          const isEstimated = !lead.quote_value
+
+                          return (
+                            <TableRow key={lead.id}>
+                              <TableCell className="font-medium">{lead.name}</TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {lead.client_name || '—'}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {lead.quoted_hours ? `${lead.quoted_hours.toFixed(1)}h` : '—'}
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {lead.quote_value ? (
+                                  `£${lead.quote_value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </TableCell>
+                              <TableCell className={cn(
+                                "text-right",
+                                isEstimated && "text-muted-foreground"
+                              )}>
+                                {estimatedValue > 0 ? (
+                                  <>
+                                    £{estimatedValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    {isEstimated && lead.quote_value === null && (
+                                      <span className="text-xs ml-1">(est.)</span>
+                                    )}
+                                  </>
+                                ) : (
+                                  '—'
+                                )}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {lead.timeline_start || lead.timeline_end ? (
+                                  <div>
+                                    {lead.timeline_start && (
+                                      <div>{format(new Date(lead.timeline_start), 'MMM d, yyyy')}</div>
+                                    )}
+                                    {lead.timeline_start && lead.timeline_end && (
+                                      <div className="text-xs">to</div>
+                                    )}
+                                    {lead.timeline_end && (
+                                      <div>{format(new Date(lead.timeline_end), 'MMM d, yyyy')}</div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  '—'
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                        <TableRow className="font-semibold bg-muted/50">
+                          <TableCell colSpan={2}>Total</TableCell>
+                          <TableCell className="text-right">
+                            {totalLeadsHours.toFixed(1)}h
+                          </TableCell>
+                          <TableCell className="text-right">
+                            £{leads.reduce((sum, lead) => sum + (lead.quote_value || 0), 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            £{potentialRevenue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell></TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 

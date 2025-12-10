@@ -7,6 +7,7 @@ interface Lead {
   name: string
   client_name: string | null
   quoted_hours: number | null
+  quote_value: number | null
   timeline_start: string | null
   timeline_end: string | null
 }
@@ -23,31 +24,87 @@ export async function getLeads() {
   }
 
   try {
+    // Get quote_value column mapping for leads board
+    const { data: quoteValueMappings } = await supabase
+      .from('monday_column_mappings')
+      .select('monday_column_id, board_id')
+      .eq('column_type', 'quote_value')
+
+    // Get leads board ID
+    const { data: leadsBoard } = await supabase
+      .from('monday_leads_board')
+      .select('monday_board_id')
+      .maybeSingle()
+
+    const leadsBoardId = leadsBoard?.monday_board_id || null
+
+    // Find the quote_value column ID to look for in monday_data
+    let quoteValueColumnId: string | null = null
+    if (quoteValueMappings && leadsBoardId) {
+      // Try board-specific mapping first
+      const boardMapping = quoteValueMappings.find(m => m.board_id === leadsBoardId)
+      if (boardMapping) {
+        quoteValueColumnId = boardMapping.monday_column_id
+      } else {
+        // Try global mapping (board_id is null)
+        const globalMapping = quoteValueMappings.find(m => !m.board_id)
+        if (globalMapping) {
+          quoteValueColumnId = globalMapping.monday_column_id
+        } else if (quoteValueMappings.length > 0) {
+          // Fallback to any mapping
+          quoteValueColumnId = quoteValueMappings[0].monday_column_id
+        }
+      }
+    }
+
     // Get all leads (projects with status 'lead')
     const { data: leads, error: leadsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, monday_data')
+      .select('id, name, client_name, quoted_hours, monday_data, monday_board_id')
       .eq('status', 'lead')
       .order('name', { ascending: true })
 
     if (leadsError) throw leadsError
 
-    // Extract timeline from monday_data if available
-    const leadsWithTimeline: Lead[] = (leads || []).map((lead: any) => {
+    // Extract timeline and quote_value from monday_data if available
+    const leadsWithData: Lead[] = (leads || []).map((lead: any) => {
       let timeline_start: string | null = null
       let timeline_end: string | null = null
+      let quote_value: number | null = null
 
-      // Extract timeline from monday_data if available
+      // Extract data from monday_data if available
       if (lead.monday_data) {
-        // Look for timeline column values in monday_data
-        // The exact structure depends on how Monday.com stores timeline data
-        // This is a placeholder - you may need to adjust based on actual data structure
+        // Extract timeline
         const timelineColumn = Object.values(lead.monday_data).find((cv: any) => 
           cv?.type === 'timeline' || cv?.type === 'date-range'
         ) as any
         if (timelineColumn?.value) {
           timeline_start = timelineColumn.value?.from || null
           timeline_end = timelineColumn.value?.to || null
+        }
+
+        // Extract quote_value if column ID is known
+        if (quoteValueColumnId && lead.monday_data[quoteValueColumnId]) {
+          const valueColumn = lead.monday_data[quoteValueColumnId]
+          // Monday.com number columns store value in different formats
+          // Try to extract the numeric value
+          if (valueColumn.value !== null && valueColumn.value !== undefined) {
+            const numValue = typeof valueColumn.value === 'number' 
+              ? valueColumn.value 
+              : typeof valueColumn.value === 'string' 
+                ? parseFloat(valueColumn.value) 
+                : parseFloat(String(valueColumn.value))
+            
+            if (!isNaN(numValue)) {
+              quote_value = numValue
+            }
+          } else if (valueColumn.text) {
+            // Fallback to text value
+            const numValue = parseFloat(valueColumn.text.replace(/[£,$,\s]/g, ''))
+            if (!isNaN(numValue)) {
+              quote_value = numValue
+            }
+          }
         }
       }
 
@@ -56,12 +113,13 @@ export async function getLeads() {
         name: lead.name,
         client_name: lead.client_name,
         quoted_hours: lead.quoted_hours ? Number(lead.quoted_hours) : null,
+        quote_value,
         timeline_start,
         timeline_end,
       }
     })
 
-    return { success: true, leads: leadsWithTimeline }
+    return { success: true, leads: leadsWithData }
   } catch (error) {
     console.error('Error fetching leads:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch leads' }
