@@ -19,11 +19,14 @@ import { Plus, Trash2, Edit2, Loader2, Calculator } from 'lucide-react'
 import { getQuoteRates, getQuoteRateByType, type QuoteRate } from '@/app/actions/quote-rates'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 
 interface QuoteItem {
   id: string
   title: string
   hours: number
+  isDays: boolean // Track if this item was entered as days
 }
 
 export default function QuotePage() {
@@ -74,11 +77,22 @@ export default function QuotePage() {
     return currentRate.day_rate_gbp / currentRate.hours_per_day
   }, [currentRate])
 
+  const quoteSubtotal = useMemo(() => {
+    if (!hourlyRate || !currentRate) return 0
+    return quoteItems.reduce((sum, item) => {
+      // If item was entered as days, use day rate, otherwise use hourly rate
+      const itemHours = item.isDays ? item.hours * currentRate.hours_per_day : item.hours
+      return sum + (itemHours * hourlyRate)
+    }, 0)
+  }, [quoteItems, hourlyRate, currentRate])
+
+  const vatAmount = useMemo(() => {
+    return includeVAT ? quoteSubtotal * VAT_RATE : 0
+  }, [quoteSubtotal, includeVAT, VAT_RATE])
+
   const quoteTotal = useMemo(() => {
-    if (!hourlyRate) return 0
-    const totalHours = quoteItems.reduce((sum, item) => sum + item.hours, 0)
-    return totalHours * hourlyRate
-  }, [quoteItems, hourlyRate])
+    return quoteSubtotal + vatAmount
+  }, [quoteSubtotal, vatAmount])
 
   const totalHours = useMemo(() => {
     return quoteItems.reduce((sum, item) => sum + item.hours, 0)
@@ -366,7 +380,9 @@ export default function QuotePage() {
                     <div className="space-y-2">
                       {quoteItems.map((item) => {
                         const isEditing = editingItemId === item.id
-                        const itemCost = item.hours * hourlyRate
+                        // Calculate item cost: if days, use day rate, otherwise hourly
+                        const itemHours = item.isDays ? item.hours * (currentRate?.hours_per_day || 6) : item.hours
+                        const itemCost = itemHours * hourlyRate
 
                         return (
                           <div
@@ -395,7 +411,7 @@ export default function QuotePage() {
                                     />
                                   </div>
                                   <div>
-                                    <Label htmlFor={`edit-hours-${item.id}`}>Hours</Label>
+                                    <Label htmlFor={`edit-hours-${item.id}`}>{editingIsDays ? 'Days' : 'Hours'}</Label>
                                     <Input
                                       id={`edit-hours-${item.id}`}
                                       type="number"
@@ -413,6 +429,16 @@ export default function QuotePage() {
                                     />
                                   </div>
                                 </div>
+                                <div className="flex items-center space-x-2">
+                                  <Switch
+                                    id={`edit-days-toggle-${item.id}`}
+                                    checked={editingIsDays}
+                                    onCheckedChange={setEditingIsDays}
+                                  />
+                                  <Label htmlFor={`edit-days-toggle-${item.id}`} className="cursor-pointer text-sm">
+                                    Quote in days instead of hours
+                                  </Label>
+                                </div>
                                 <div className="flex gap-2">
                                   <Button size="sm" onClick={handleSaveEdit}>
                                     Save
@@ -427,9 +453,25 @@ export default function QuotePage() {
                                 <div className="flex-1">
                                   <h4 className="font-medium">{item.title}</h4>
                                   <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                                    <span>{item.hours}h</span>
-                                    <span>×</span>
-                                    <span>£{hourlyRate.toFixed(2)}/h</span>
+                                    <span>
+                                      {item.isDays ? (
+                                        <>{item.hours} day{item.hours !== 1 ? 's' : ''} ({itemHours.toFixed(1)}h)</>
+                                      ) : (
+                                        <>{item.hours}h</>
+                                      )}
+                                    </span>
+                                    {!item.isDays && (
+                                      <>
+                                        <span>×</span>
+                                        <span>£{hourlyRate.toFixed(2)}/h</span>
+                                      </>
+                                    )}
+                                    {item.isDays && currentRate && (
+                                      <>
+                                        <span>×</span>
+                                        <span>£{currentRate.day_rate_gbp.toFixed(2)}/day</span>
+                                      </>
+                                    )}
                                     <span>=</span>
                                     <span className="font-semibold text-foreground">£{itemCost.toFixed(2)}</span>
                                   </div>
