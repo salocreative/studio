@@ -230,6 +230,35 @@ export interface Database {
           updated_at?: string
         }
       }
+      monday_sync_settings: {
+        Row: {
+          id: string
+          enabled: boolean
+          interval_minutes: number
+          last_sync_at: string | null
+          next_sync_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          enabled?: boolean
+          interval_minutes?: number
+          last_sync_at?: string | null
+          next_sync_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          enabled?: boolean
+          interval_minutes?: number
+          last_sync_at?: string | null
+          next_sync_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

@@ -36,6 +36,7 @@ import { CompletedBoardsForm } from './completed-boards-form'
 import { LeadsBoardForm } from './leads-board-form'
 import { FlexiDesignCompletedBoardForm } from './flexi-design-completed-board-form'
 import { XeroConnectionForm } from './xero-connection-form'
+import { AutomaticSyncForm } from './automatic-sync-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, updateUserRole, deleteUser } from '@/app/actions/users'
 import { toast } from 'sonner'
@@ -388,14 +389,8 @@ export default function SettingsPage() {
                       <SyncButton />
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">Automatic Sync</p>
-                        <p className="text-sm text-muted-foreground">
-                          Automatically sync projects and tasks on a schedule
-                        </p>
-                      </div>
-                      <Button variant="outline">Configure</Button>
+                    <div className="space-y-4 pt-4 border-t">
+                      <AutomaticSyncForm />
                     </div>
                   </CardContent>
                 </Card>
