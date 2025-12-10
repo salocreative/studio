@@ -342,10 +342,7 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       created_at: project.created_at,
     }))
 
-    // Calculate remaining hours: total deposited - total quoted hours
-    const remainingHours = totalDeposited - totalQuotedHours
-
-    // Get credit transactions for this client
+    // Get credit transactions for this client (needed before calculating remaining hours)
     let creditTransactions: Array<{
       id: string
       hours: number
@@ -438,12 +435,17 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       }
     }
 
+    // Calculate remaining hours: total deposited (credited) - total quoted hours (estimated)
+    // Include both active and completed projects in the quoted hours total
+    const totalEstimatedHours = totalQuotedHours + totalCompletedQuotedHours
+    const remainingHours = totalDeposited - totalEstimatedHours
+
     const clientDetail: ClientDetail = {
       id: clientData?.id || '',
       client_name: clientName,
       remaining_hours: remainingHours,
-      hours_used: totalHoursUsed, // logged hours for internal tracking
-      quoted_hours_used: totalQuotedHours, // quoted hours for credit deduction
+      hours_used: totalHoursUsed, // logged hours for internal tracking (performance only)
+      quoted_hours_used: totalEstimatedHours, // total quoted hours (estimated) for credit deduction
       total_projects: projectsWithHours.length,
       projects: projectsWithHours,
       credit_transactions: creditTransactions,
