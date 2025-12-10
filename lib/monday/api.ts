@@ -140,17 +140,80 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
       }
     }
     
-    // Also include Flexi-Design completed board if configured (it needs column mappings too)
+    // Also include Flexi-Design completed board if configured
     const { data: flexiDesignCompletedBoard } = await supabase
       .from('flexi_design_completed_board')
-      .select('monday_board_id')
+      .select('monday_board_id, board_name')
       .maybeSingle()
     
     if (flexiDesignCompletedBoard?.monday_board_id) {
-      // Only include if it has column mappings
-      const hasMappings = allMappings?.some(m => m.board_id === flexiDesignCompletedBoard.monday_board_id)
-      if (hasMappings) {
-        mappedBoardIds.add(flexiDesignCompletedBoard.monday_board_id)
+      const completedBoardId = flexiDesignCompletedBoard.monday_board_id
+      
+      // Check if it has its own column mappings
+      const hasOwnMappings = allMappings?.some(m => m.board_id === completedBoardId)
+      
+      if (hasOwnMappings) {
+        // Has its own mappings, include it
+        mappedBoardIds.add(completedBoardId)
+      } else {
+        // No own mappings - check if it's a Flexi-Design board (by name) and inherit from other Flexi-Design boards
+        const isFlexiDesignBoard = flexiDesignCompletedBoard.board_name?.toLowerCase().includes('flexi') ?? false
+        
+        if (isFlexiDesignBoard) {
+          // Find any Flexi-Design board that has mappings to inherit from
+          // We need to fetch board names from Monday.com API to identify Flexi-Design boards with mappings
+          const mondayApiToken = process.env.MONDAY_API_TOKEN
+          if (mondayApiToken) {
+            try {
+              // Get all board IDs that have mappings
+              const boardIdsWithMappings = Array.from(new Set(
+                allMappings?.filter(m => m.board_id).map((m: any) => m.board_id) || []
+              ))
+              
+              if (boardIdsWithMappings.length > 0) {
+                // Fetch board names to identify Flexi-Design boards
+                const MONDAY_API_URL = 'https://api.monday.com/v2'
+                const query = `
+                  query($boardIds: [ID!]) {
+                    boards(ids: $boardIds) {
+                      id
+                      name
+                    }
+                  }
+                `
+                
+                const response = await fetch(MONDAY_API_URL, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: mondayApiToken,
+                  },
+                  body: JSON.stringify({ query, variables: { boardIds: boardIdsWithMappings } }),
+                })
+                
+                if (response.ok) {
+                  const result = await response.json()
+                  if (!result.errors && result.data?.boards) {
+                    // Find a Flexi-Design board that has mappings
+                    const flexiBoardWithMappings = result.data.boards.find(
+                      (board: { id: string; name: string }) => 
+                        board.name.toLowerCase().includes('flexi') && 
+                        boardIdsWithMappings.includes(board.id)
+                    )
+                    
+                    if (flexiBoardWithMappings) {
+                      // Found a Flexi-Design board with mappings - include completed board
+                      // Mappings will be inherited in the column lookup function
+                      mappedBoardIds.add(completedBoardId)
+                    }
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Error checking Flexi-Design board mappings:', error)
+            }
+          }
+        }
       }
     }
   }
@@ -245,7 +308,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
 
   for (const board of data.boards || []) {
     // Get client column ID for this board (from parent items)
-    const clientColumnId = getColumnId(board.id, 'client')
+    const clientColumnId = getColumnId(board.id, 'client', board.name)
 
     for (const item of board.items_page.items || []) {
       // Find client name from column values using the mapped column
