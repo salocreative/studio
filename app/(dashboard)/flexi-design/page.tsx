@@ -399,16 +399,16 @@ function FlexiDesignPageContent() {
                               Created: {format(new Date(project.created_at), 'MMM d, yyyy')}
                             </div>
                           </div>
-                          <div className="text-right space-y-1">
+                          <div className="text-right space-y-2">
                             {project.quoted_hours && (
-                              <div>
-                                <div className="font-medium">{project.quoted_hours.toFixed(1)}h</div>
-                                <div className="text-xs text-muted-foreground">Quoted</div>
+                              <div className="border-l-2 border-primary pl-3">
+                                <div className="text-lg font-bold text-primary">{project.quoted_hours.toFixed(1)}h</div>
+                                <div className="text-xs font-medium">Quoted (Monday)</div>
                               </div>
                             )}
-                            <div>
-                              <div className="font-medium">{project.total_logged_hours.toFixed(1)}h</div>
-                              <div className="text-xs text-muted-foreground">Logged</div>
+                            <div className="text-muted-foreground">
+                              <div className="text-sm">{project.total_logged_hours.toFixed(1)}h</div>
+                              <div className="text-xs">Logged</div>
                             </div>
                           </div>
                         </div>
