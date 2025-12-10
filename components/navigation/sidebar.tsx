@@ -12,7 +12,8 @@ import {
   LogOut,
   Palette,
   TrendingUp,
-  Menu
+  Menu,
+  Calculator
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -45,6 +46,12 @@ export const navigation: NavItem[] = [
     href: '/flexi-design',
     icon: Palette,
     roles: ['admin', 'designer', 'manager'], // Admins, designers, and managers can see Flexi-Design
+  },
+  {
+    title: 'Quote',
+    href: '/quote',
+    icon: Calculator,
+    roles: ['admin', 'designer', 'manager'], // All authenticated users can create quotes
   },
   {
     title: 'Performance',

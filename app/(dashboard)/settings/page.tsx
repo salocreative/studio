@@ -37,6 +37,7 @@ import { LeadsBoardForm } from './leads-board-form'
 import { FlexiDesignCompletedBoardForm } from './flexi-design-completed-board-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
+import { QuoteRatesForm } from './quote-rates-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, updateUserRole, deleteUser } from '@/app/actions/users'
 import { toast } from 'sonner'
@@ -535,6 +536,26 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <XeroConnectionForm />
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Quote Rates</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Configure day rates and hours per day for different customer types used in the Quote calculator
+                  </p>
+                </div>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Day Rates</CardTitle>
+                    <CardDescription>
+                      Set day rates and hours per day for partner and client customer types. These rates are used when building quotes.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <QuoteRatesForm />
                   </CardContent>
                 </Card>
               </div>

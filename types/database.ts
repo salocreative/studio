@@ -259,6 +259,32 @@ export interface Database {
           updated_at?: string
         }
       }
+      quote_rates: {
+        Row: {
+          id: string
+          customer_type: 'partner' | 'client'
+          day_rate_gbp: number
+          hours_per_day: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          customer_type: 'partner' | 'client'
+          day_rate_gbp: number
+          hours_per_day?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          customer_type?: 'partner' | 'client'
+          day_rate_gbp?: number
+          hours_per_day?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
