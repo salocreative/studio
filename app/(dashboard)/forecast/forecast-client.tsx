@@ -92,8 +92,8 @@ export default function ForecastPageClient() {
       // Check Xero connection status
       const xeroStatus = await getXeroStatus()
       
-      // Handle connection status - match the logic from Settings page exactly
-      // Settings page uses: result.connected || false
+      // Determine connection status
+      let isConnected = false
       if (xeroStatus.error) {
         console.error('Error checking Xero status:', xeroStatus.error)
         // Only show error toast for non-table-missing errors
@@ -102,7 +102,7 @@ export default function ForecastPageClient() {
         }
       } else {
         // Use the same logic as Settings page: result.connected || false
-        const isConnected = xeroStatus.connected || false
+        isConnected = xeroStatus.connected || false
         setXeroConnected(isConnected)
         
         // Load financial data if Xero is connected
