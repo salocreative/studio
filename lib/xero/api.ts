@@ -647,6 +647,7 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
     
     if (revenue === 0 && expenses === 0) {
       console.warn('Could not find Total Income or Total Expenses summary rows. Report structure:', JSON.stringify({ rowCount: rows.length, firstRowType: rows[0]?.RowType }, null, 2))
+    }
     
     const profit = revenue - expenses
     
