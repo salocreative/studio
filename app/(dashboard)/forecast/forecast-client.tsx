@@ -384,70 +384,87 @@ export default function ForecastPageClient() {
                             <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Trend
                             </td>
-                            {monthlySummary.months.map((monthData, index) => {
-                              // Calculate chart dimensions
-                              const chartHeight = 40
-                              const chartWidth = 120
-                              const padding = 8
-                              const width = chartWidth - padding * 2
-                              const height = chartHeight - padding * 2
-                              
-                              // Get all values to scale the chart
-                              const allValues = monthlySummary.months.map(m => m.totalValue)
-                              const maxValue = Math.max(...allValues, 1)
-                              const minValue = Math.min(...allValues.filter(v => v > 0), 0)
-                              const valueRange = maxValue - minValue || 1
-                              
-                              // Calculate points for the line
-                              const points = monthlySummary.months.map((m, i) => {
-                                const x = (i / (monthlySummary.months.length - 1 || 1)) * width
-                                const normalizedValue = m.totalValue > 0 ? (m.totalValue - minValue) / valueRange : 0
-                                const y = height - (normalizedValue * height)
-                                return `${x},${y}`
-                              }).join(' ')
-                              
-                              // Current month's position in the line
-                              const currentX = (index / (monthlySummary.months.length - 1 || 1)) * width
-                              const normalizedCurrentValue = monthData.totalValue > 0 ? (monthData.totalValue - minValue) / valueRange : 0
-                              const currentY = height - (normalizedCurrentValue * height)
-                              
-                              return (
-                                <td key={monthData.month} className="p-2 align-middle">
-                                  {allValues.some(v => v > 0) ? (
-                                    <div className="flex items-center justify-center h-[40px]">
-                                      <svg width={chartWidth} height={chartHeight} className="overflow-visible">
-                                        <defs>
-                                          <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.3" />
-                                            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="1" />
-                                          </linearGradient>
-                                        </defs>
-                                        <polyline
-                                          points={points}
-                                          fill="none"
-                                          stroke="url(#lineGradient)"
-                                          strokeWidth="2"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          transform={`translate(${padding}, ${padding})`}
-                                        />
-                                        {/* Current point indicator */}
-                                        {monthData.totalValue > 0 && (
+                            <td 
+                              colSpan={monthlySummary.months.length} 
+                              className="p-0 relative"
+                              style={{ height: '60px' }}
+                            >
+                              {(() => {
+                                // Get all values to scale the chart
+                                const allValues = monthlySummary.months.map(m => m.totalValue)
+                                const hasData = allValues.some(v => v > 0)
+                                
+                                if (!hasData) {
+                                  return (
+                                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                                      —
+                                    </div>
+                                  )
+                                }
+                                
+                                const maxValue = Math.max(...allValues, 1)
+                                const minValue = Math.min(...allValues.filter(v => v > 0), 0)
+                                const valueRange = maxValue - minValue || 1
+                                
+                                // Get the total width of all month columns
+                                const columnWidth = 130 // min-w-[130px] from month columns
+                                const totalWidth = monthlySummary.months.length * columnWidth
+                                const padding = 16
+                                const chartWidth = totalWidth - padding * 2
+                                const chartHeight = 40
+                                const height = chartHeight - padding * 2
+                                
+                                // Calculate points for the line
+                                const points = monthlySummary.months.map((m, i) => {
+                                  const x = (i / (monthlySummary.months.length - 1 || 1)) * chartWidth
+                                  const normalizedValue = m.totalValue > 0 ? (m.totalValue - minValue) / valueRange : 0
+                                  const y = height - (normalizedValue * height)
+                                  return `${x},${y}`
+                                }).join(' ')
+                                
+                                return (
+                                  <div className="relative h-full w-full">
+                                    <svg 
+                                      width={totalWidth} 
+                                      height={chartHeight + padding * 2} 
+                                      className="absolute inset-0"
+                                      style={{ left: padding, top: padding }}
+                                    >
+                                      <defs>
+                                        <linearGradient id="trendLineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                          <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.4" />
+                                          <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="1" />
+                                        </linearGradient>
+                                      </defs>
+                                      <polyline
+                                        points={points}
+                                        fill="none"
+                                        stroke="url(#trendLineGradient)"
+                                        strokeWidth="2.5"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                      {/* Data points */}
+                                      {monthlySummary.months.map((m, i) => {
+                                        if (m.totalValue <= 0) return null
+                                        const x = (i / (monthlySummary.months.length - 1 || 1)) * chartWidth
+                                        const normalizedValue = (m.totalValue - minValue) / valueRange
+                                        const y = height - (normalizedValue * height)
+                                        return (
                                           <circle
-                                            cx={currentX + padding}
-                                            cy={currentY + padding}
+                                            key={m.month}
+                                            cx={x}
+                                            cy={y}
                                             r="3"
                                             fill="hsl(var(--primary))"
                                           />
-                                        )}
-                                      </svg>
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </td>
-                              )
-                            })}
+                                        )
+                                      })}
+                                    </svg>
+                                  </div>
+                                )
+                              })()}
+                            </td>
                           </tr>
                           {/* Total Billable Work Row */}
                           <tr className="hover:bg-muted/50 border-b transition-colors">
