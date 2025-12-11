@@ -72,6 +72,17 @@ export async function getLeads() {
       let timeline_end: string | null = null
       let quote_value: number | null = null
 
+      // Use quote_value from database column if available, otherwise extract from monday_data
+      if (lead.quote_value !== null && lead.quote_value !== undefined) {
+        quote_value = typeof lead.quote_value === 'number' 
+          ? lead.quote_value 
+          : parseFloat(String(lead.quote_value))
+        
+        if (isNaN(quote_value)) {
+          quote_value = null
+        }
+      }
+
       // Extract data from monday_data if available
       if (lead.monday_data) {
         // Extract timeline
@@ -83,8 +94,8 @@ export async function getLeads() {
           timeline_end = timelineColumn.value?.to || null
         }
 
-        // Extract quote_value if column ID is known
-        if (quoteValueColumnId && lead.monday_data[quoteValueColumnId]) {
+        // Fallback: Extract quote_value from monday_data if column is not set (backward compatibility)
+        if (!quote_value && quoteValueColumnId && lead.monday_data[quoteValueColumnId]) {
           const valueColumn = lead.monday_data[quoteValueColumnId]
           // Monday.com number columns store value in different formats
           // Try to extract the numeric value
