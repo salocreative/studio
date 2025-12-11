@@ -17,6 +17,7 @@ import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from
 import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
 import { getMonthlySummary } from '@/app/actions/monthly-summary'
+import { getLeads } from '@/app/actions/leads'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -38,6 +39,7 @@ export default function ForecastPageClient() {
   const [period, setPeriod] = useState<'current' | 'last' | 'next'>('current')
   const [financialData, setFinancialData] = useState<FinancialData | null>(null)
   const [loadingFinancial, setLoadingFinancial] = useState(false)
+  const [leads, setLeads] = useState<any[]>([])
   const [monthlySummary, setMonthlySummary] = useState<{
     months: Array<{
       month: string
@@ -91,6 +93,14 @@ export default function ForecastPageClient() {
         if (isConnected) {
           await loadFinancialData()
         }
+      }
+
+      // Load leads data for future projections
+      const leadsResult = await getLeads()
+      if (leadsResult.error) {
+        console.error('Error loading leads:', leadsResult.error)
+      } else {
+        setLeads(leadsResult.leads || [])
       }
 
       // Load monthly summary data
@@ -351,154 +361,287 @@ export default function ForecastPageClient() {
             <CardHeader>
               <CardTitle>Monthly Summary</CardTitle>
               <CardDescription>
-                Overview of completed project work by month over the last 12 months
+                Completed project work and projected future work from leads. Historical data shows completed projects, projected data (in italics) shows leads by their timeline.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {monthlySummary && monthlySummary.months.length > 0 ? (
-                <TooltipProvider>
-                  <div className="rounded-lg border overflow-hidden">
-                    <div ref={tableScrollRef} className="overflow-x-auto relative">
-                      <table className="w-full caption-bottom text-sm border-collapse">
-                        <thead className="[&_tr]:border-b">
-                          <tr className="hover:bg-muted/50 border-b transition-colors">
-                            <th className="sticky left-0 z-30 bg-background border-r text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                              Metric
-                            </th>
-                            {monthlySummary.months
-                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
-                              .map((monthData) => {
+              {(() => {
+                // Combine completed months with future months from leads
+                const completedMonths = monthlySummary?.months || []
+                const now = new Date()
+                const currentMonth = format(now, 'yyyy-MM')
+                
+                // Process leads to group by month
+                const futureMonthsMap = new Map<string, {
+                  totalValue: number
+                  totalQuotedHours: number
+                  projectCount: number
+                  clientBreakdown: Record<string, number>
+                  isProjected: boolean
+                }>()
+                
+                leads.forEach((lead) => {
+                  if (!lead.timeline_start && !lead.timeline_end) return
+                  
+                  // Use timeline_start if available, otherwise timeline_end
+                  const startDate = lead.timeline_start ? new Date(lead.timeline_start) : (lead.timeline_end ? new Date(lead.timeline_end) : null)
+                  const endDate = lead.timeline_end ? new Date(lead.timeline_end) : (lead.timeline_start ? new Date(lead.timeline_start) : null)
+                  
+                  if (!startDate) return
+                  
+                  // Get all months this lead spans
+                  const months: string[] = []
+                  let current = startOfMonth(startDate)
+                  const end = endDate ? endOfMonth(endDate) : startOfMonth(startDate)
+                  
+                  while (current <= end) {
+                    const monthKey = format(current, 'yyyy-MM')
+                    // Only include future months (including current month)
+                    if (monthKey >= currentMonth) {
+                      months.push(monthKey)
+                    }
+                    current = addMonths(current, 1)
+                  }
+                  
+                  // Distribute lead value/hours across months
+                  const value = lead.quote_value || 0
+                  const hours = lead.quoted_hours || 0
+                  const clientName = lead.client_name || 'Unknown'
+                  
+                  months.forEach((monthKey) => {
+                    if (!futureMonthsMap.has(monthKey)) {
+                      futureMonthsMap.set(monthKey, {
+                        totalValue: 0,
+                        totalQuotedHours: 0,
+                        projectCount: 0,
+                        clientBreakdown: {},
+                        isProjected: true,
+                      })
+                    }
+                    
+                    const monthData = futureMonthsMap.get(monthKey)!
+                    // Distribute evenly across months, or assign to first month
+                    const monthsCount = months.length
+                    monthData.totalValue += value / monthsCount
+                    monthData.totalQuotedHours += hours / monthsCount
+                    monthData.projectCount += 1 / monthsCount // Will round when displayed
+                    
+                    if (!monthData.clientBreakdown[clientName]) {
+                      monthData.clientBreakdown[clientName] = 0
+                    }
+                    monthData.clientBreakdown[clientName] += value / monthsCount
+                  })
+                })
+                
+                // Combine completed and future months
+                const allMonthsMap = new Map<string, {
+                  totalValue: number
+                  totalQuotedHours: number
+                  projectCount: number
+                  clientBreakdown: Array<{ clientName: string; value: number }> | Record<string, number>
+                  isProjected: boolean
+                }>()
+                
+                // Add completed months
+                completedMonths.forEach((month) => {
+                  allMonthsMap.set(month.month, {
+                    ...month,
+                    isProjected: false,
+                  })
+                })
+                
+                // Add future months (merge if month already exists)
+                futureMonthsMap.forEach((futureData, monthKey) => {
+                  if (allMonthsMap.has(monthKey)) {
+                    // Merge with existing completed data
+                    const existing = allMonthsMap.get(monthKey)!
+                    existing.totalValue += futureData.totalValue
+                    existing.totalQuotedHours += futureData.totalQuotedHours
+                    existing.projectCount += futureData.projectCount
+                    // Merge client breakdown
+                    if (Array.isArray(existing.clientBreakdown)) {
+                      const breakdownMap: Record<string, number> = {}
+                      existing.clientBreakdown.forEach(c => {
+                        breakdownMap[c.clientName] = c.value
+                      })
+                      Object.entries(futureData.clientBreakdown).forEach(([client, value]) => {
+                        breakdownMap[client] = (breakdownMap[client] || 0) + value
+                      })
+                      existing.clientBreakdown = Object.entries(breakdownMap).map(([clientName, value]) => ({
+                        clientName,
+                        value,
+                      }))
+                    }
+                  } else {
+                    // New future month
+                    allMonthsMap.set(monthKey, {
+                      ...futureData,
+                      clientBreakdown: Object.entries(futureData.clientBreakdown).map(([clientName, value]) => ({
+                        clientName,
+                        value,
+                      })),
+                    })
+                  }
+                })
+                
+                // Sort months chronologically
+                const allMonths = Array.from(allMonthsMap.entries())
+                  .map(([month, data]) => ({
+                    month,
+                    ...data,
+                  }))
+                  .sort((a, b) => a.month.localeCompare(b.month))
+                
+                // Filter out months with no data
+                const monthsWithData = allMonths.filter(
+                  m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0
+                )
+                
+                if (monthsWithData.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p className="mb-2">No monthly summary data available</p>
+                      <p className="text-sm">
+                        This could be because:
+                      </p>
+                      <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
+                        <li>No completed projects have quote_value set</li>
+                        <li>Completed projects don't have completed_date configured</li>
+                        <li>No leads have timeline dates configured</li>
+                        <li>All projects are from Flexi-Design boards (excluded from this table)</li>
+                      </ul>
+                    </div>
+                  )
+                }
+                
+                return (
+                  <TooltipProvider>
+                    <div className="rounded-lg border overflow-hidden">
+                      <div ref={tableScrollRef} className="overflow-x-auto relative">
+                        <table className="w-full caption-bottom text-sm border-collapse">
+                          <thead className="[&_tr]:border-b">
+                            <tr className="hover:bg-muted/50 border-b transition-colors">
+                              <th className="sticky left-0 z-30 bg-background border-r text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                Metric
+                              </th>
+                              {monthsWithData.map((monthData) => {
                                 const monthDate = parseISO(`${monthData.month}-01`)
+                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
                                 return (
-                                  <th key={monthData.month} className="text-right text-foreground h-10 px-2 align-middle font-medium whitespace-nowrap min-w-[130px]">
+                                  <th key={monthData.month} className={cn(
+                                    "text-right text-foreground h-10 px-2 align-middle font-medium whitespace-nowrap min-w-[130px]",
+                                    isFuture && "italic text-muted-foreground"
+                                  )}>
                                     {format(monthDate, 'MMM yyyy')}
+                                    {isFuture && <span className="text-xs ml-1">(proj.)</span>}
                                   </th>
                                 )
                               })}
-                          </tr>
-                        </thead>
-                        <tbody className="[&_tr:last-child]:border-0">
-                          {/* Total Billable Work Row */}
-                          <tr className="hover:bg-muted/50 border-b transition-colors">
-                            <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                              Total Billable Work
-                            </td>
-                            {monthlySummary.months
-                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
-                              .map((monthData) => (
-                                <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
-                                  {monthData.clientBreakdown.length > 0 ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="cursor-help underline decoration-dotted">
-                                          £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" className="max-w-[300px]">
-                                        <div className="space-y-1">
-                                          <div className="font-semibold mb-2">Client Breakdown:</div>
-                                          {monthData.clientBreakdown.map((client) => (
-                                            <div key={client.clientName} className="flex justify-between gap-4 text-sm">
-                                              <span>{client.clientName}:</span>
-                                              <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </tr>
+                          </thead>
+                          <tbody className="[&_tr:last-child]:border-0">
+                            {/* Total Billable Work Row */}
+                            <tr className="hover:bg-muted/50 border-b transition-colors">
+                              <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                Total Billable Work
+                              </td>
+                              {monthsWithData.map((monthData) => {
+                                const clientBreakdown = Array.isArray(monthData.clientBreakdown) 
+                                  ? monthData.clientBreakdown 
+                                  : Object.entries(monthData.clientBreakdown).map(([clientName, value]) => ({
+                                      clientName,
+                                      value: typeof value === 'number' ? value : 0,
+                                    }))
+                                const hasData = clientBreakdown.length > 0 || monthData.totalValue > 0
+                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
+                                
+                                return (
+                                  <td key={monthData.month} className={cn(
+                                    "text-right p-2 align-middle whitespace-nowrap",
+                                    isFuture && "italic"
+                                  )}>
+                                    {hasData ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className={cn(
+                                            "cursor-help underline decoration-dotted",
+                                            isFuture && "text-muted-foreground"
+                                          )}>
+                                            £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="max-w-[300px]">
+                                          <div className="space-y-1">
+                                            <div className="font-semibold mb-2">
+                                              {isFuture ? 'Projected Client Breakdown:' : 'Client Breakdown:'}
                                             </div>
-                                          ))}
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </td>
-                              ))}
-                          </tr>
-                          {/* Hours Quoted Row */}
-                          <tr className="hover:bg-muted/50 border-b transition-colors">
-                            <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                              Hours Quoted
-                            </td>
-                            {monthlySummary.months
-                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
-                              .map((monthData) => (
-                                <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
-                                  {monthData.totalQuotedHours > 0 ? (
-                                    `${monthData.totalQuotedHours.toFixed(1)}h`
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </td>
-                              ))}
-                          </tr>
-                          {/* Number of Projects Row */}
-                          <tr className="hover:bg-muted/50 border-b transition-colors">
-                            <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                              Number of Projects
-                            </td>
-                            {monthlySummary.months
-                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
-                              .map((monthData) => (
-                                <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
-                                  {monthData.projectCount > 0 ? (
-                                    monthData.projectCount
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </td>
-                              ))}
-                          </tr>
-                        </tbody>
-                      </table>
+                                            {clientBreakdown.map((client) => (
+                                              <div key={client.clientName} className="flex justify-between gap-4 text-sm">
+                                                <span>{client.clientName}:</span>
+                                                <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                            {/* Hours Quoted Row */}
+                            <tr className="hover:bg-muted/50 border-b transition-colors">
+                              <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                Hours Quoted
+                              </td>
+                              {monthsWithData.map((monthData) => {
+                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
+                                return (
+                                  <td key={monthData.month} className={cn(
+                                    "text-right p-2 align-middle whitespace-nowrap",
+                                    isFuture && "italic text-muted-foreground"
+                                  )}>
+                                    {monthData.totalQuotedHours > 0 ? (
+                                      `${monthData.totalQuotedHours.toFixed(1)}h`
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                            {/* Number of Projects Row */}
+                            <tr className="hover:bg-muted/50 border-b transition-colors">
+                              <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                Number of Projects
+                              </td>
+                              {monthsWithData.map((monthData) => {
+                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
+                                return (
+                                  <td key={monthData.month} className={cn(
+                                    "text-right p-2 align-middle whitespace-nowrap",
+                                    isFuture && "italic text-muted-foreground"
+                                  )}>
+                                    {Math.round(monthData.projectCount) > 0 ? (
+                                      Math.round(monthData.projectCount)
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
-                </TooltipProvider>
-              ) : (
-                <div className="text-center py-12 text-muted-foreground">
-                  <p className="mb-2">No monthly summary data available</p>
-                  <p className="text-sm">
-                    This could be because:
-                  </p>
-                  <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
-                    <li>No completed projects have quote_value set</li>
-                    <li>Completed projects don't have completed_date configured</li>
-                    <li>All projects are from Flexi-Design boards (excluded from this table)</li>
-                  </ul>
-                </div>
-              )}
+                  </TooltipProvider>
+                )
+              })()}
             </CardContent>
           </Card>
-
-          {/* Forecast Summary */}
-          {xeroConnected && financialData && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Forecast Summary</CardTitle>
-                <CardDescription>
-                  Projected financial outlook based on current data for the selected period
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 border rounded-lg">
-                    <div>
-                      <div className="text-sm font-medium">Current Period ({period === 'current' ? 'This Month' : period === 'last' ? 'Last Month' : 'Next Month'})</div>
-                      <div className="text-xs text-muted-foreground">
-                        {financialData.period.start} to {financialData.period.end}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className={cn(
-                        "text-2xl font-bold",
-                        financialData.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
-                      )}>
-                        £{financialData.profit.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </div>
-                      <div className="text-xs text-muted-foreground">Profit</div>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
 
           {!xeroConnected && (
             <Card>
