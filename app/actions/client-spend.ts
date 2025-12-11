@@ -94,17 +94,10 @@ export async function getClientSpendByMonth(
 
     if (filteredProjects && filteredProjects.length > 0) {
       filteredProjects.forEach((project: any) => {
-        // Skip projects without client_name or completed_date (needed for month grouping)
-        if (!project.client_name || !project.completed_date) return
+        // Skip projects without client_name
+        if (!project.client_name) return
 
-        // Only include projects within the date range
-        if (project.completed_date < startDateStr) return
-
-        const clientName = project.client_name
-        const completedDate = new Date(project.completed_date)
-        const monthKey = format(completedDate, 'yyyy-MM')
-
-        // Extract quote_value from monday_data if available
+        // Extract quote_value first - skip if no value
         let projectValue: number | null = null
 
         if (project.monday_data && quoteValueColumnId && project.monday_data[quoteValueColumnId]) {
@@ -131,6 +124,24 @@ export async function getClientSpendByMonth(
         if (!projectValue || isNaN(projectValue)) {
           return
         }
+
+        // Use completed_date if available, otherwise use updated_at as fallback
+        let dateForGrouping: Date | null = null
+        if (project.completed_date) {
+          dateForGrouping = new Date(project.completed_date)
+        } else if (project.updated_at) {
+          dateForGrouping = new Date(project.updated_at)
+        } else {
+          // Skip if no date available for grouping
+          return
+        }
+
+        // Only include projects within the date range
+        const dateStr = format(dateForGrouping, 'yyyy-MM-dd')
+        if (dateStr < startDateStr) return
+
+        const clientName = project.client_name
+        const monthKey = format(startOfMonth(dateForGrouping), 'yyyy-MM')
 
         const finalValue = projectValue
 
