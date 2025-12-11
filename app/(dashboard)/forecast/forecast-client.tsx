@@ -17,7 +17,8 @@ import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from
 import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
 import { getLeads } from '@/app/actions/leads'
-import { getClientSpendByMonth } from '@/app/actions/client-spend'
+import { getMonthlySummary } from '@/app/actions/monthly-summary'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
@@ -39,13 +40,17 @@ export default function ForecastPageClient() {
   const [financialData, setFinancialData] = useState<FinancialData | null>(null)
   const [leads, setLeads] = useState<any[]>([])
   const [loadingFinancial, setLoadingFinancial] = useState(false)
-  const [clientSpend, setClientSpend] = useState<{
-    clients: Array<{
-      clientName: string
-      monthlySpend: Record<string, number>
-      totalSpend: number
+  const [monthlySummary, setMonthlySummary] = useState<{
+    months: Array<{
+      month: string
+      totalValue: number
+      totalQuotedHours: number
+      projectCount: number
+      clientBreakdown: Array<{
+        clientName: string
+        value: number
+      }>
     }>
-    months: string[]
   } | null>(null)
 
   useEffect(() => {
@@ -85,14 +90,13 @@ export default function ForecastPageClient() {
         setLeads(leadsResult.leads || [])
       }
 
-      // Load client spend data
-      const clientSpendResult = await getClientSpendByMonth(12)
-      if (clientSpendResult.error) {
-        console.error('Error loading client spend:', clientSpendResult.error)
-      } else if (clientSpendResult.success) {
-        setClientSpend({
-          clients: clientSpendResult.clients || [],
-          months: clientSpendResult.months || [],
+      // Load monthly summary data
+      const monthlySummaryResult = await getMonthlySummary(12)
+      if (monthlySummaryResult.error) {
+        console.error('Error loading monthly summary:', monthlySummaryResult.error)
+      } else if (monthlySummaryResult.success) {
+        setMonthlySummary({
+          months: monthlySummaryResult.months || [],
         })
       }
     } catch (error) {
@@ -326,6 +330,109 @@ export default function ForecastPageClient() {
             </div>
           )}
 
+          {/* Monthly Summary Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Monthly Summary</CardTitle>
+              <CardDescription>
+                Overview of completed project work by month over the last 12 months
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {monthlySummary && monthlySummary.months.length > 0 ? (
+                <TooltipProvider>
+                  <div className="rounded-lg border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-[150px]">Metric</TableHead>
+                          {monthlySummary.months.map((monthData) => {
+                            const monthDate = parseISO(`${monthData.month}-01`)
+                            return (
+                              <TableHead key={monthData.month} className="text-right min-w-[130px] whitespace-nowrap">
+                                {format(monthDate, 'MMM yyyy')}
+                              </TableHead>
+                            )
+                          })}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {/* Total Billable Work Row */}
+                        <TableRow>
+                          <TableCell className="font-medium">Total Billable Work</TableCell>
+                          {monthlySummary.months.map((monthData) => (
+                            <TableCell key={monthData.month} className="text-right">
+                              {monthData.clientBreakdown.length > 0 ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="cursor-help underline decoration-dotted">
+                                      £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[300px]">
+                                    <div className="space-y-1">
+                                      <div className="font-semibold mb-2">Client Breakdown:</div>
+                                      {monthData.clientBreakdown.map((client) => (
+                                        <div key={client.clientName} className="flex justify-between gap-4 text-sm">
+                                          <span>{client.clientName}:</span>
+                                          <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                        {/* Hours Quoted Row */}
+                        <TableRow>
+                          <TableCell className="font-medium">Hours Quoted</TableCell>
+                          {monthlySummary.months.map((monthData) => (
+                            <TableCell key={monthData.month} className="text-right">
+                              {monthData.totalQuotedHours > 0 ? (
+                                `${monthData.totalQuotedHours.toFixed(1)}h`
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                        {/* Number of Projects Row */}
+                        <TableRow>
+                          <TableCell className="font-medium">Number of Projects</TableCell>
+                          {monthlySummary.months.map((monthData) => (
+                            <TableCell key={monthData.month} className="text-right">
+                              {monthData.projectCount > 0 ? (
+                                monthData.projectCount
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                </TooltipProvider>
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p className="mb-2">No monthly summary data available</p>
+                  <p className="text-sm">
+                    This could be because:
+                  </p>
+                  <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
+                    <li>No completed projects have quote_value set</li>
+                    <li>Completed projects don't have completed_date configured</li>
+                    <li>All projects are from Flexi-Design boards (excluded from this table)</li>
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Leads Summary */}
           <Card>
             <CardHeader>
@@ -515,101 +622,6 @@ export default function ForecastPageClient() {
             </Card>
           )}
 
-          {/* Client Spend Table */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Client Spend by Month</CardTitle>
-              <CardDescription>
-                Total project spend by client over the last 12 months from completed projects. Based on completed_date field.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              {clientSpend && clientSpend.clients.length > 0 ? (
-                <div className="relative">
-                  {/* Table container with fixed height and scrolling */}
-                  <div className="overflow-auto max-h-[600px] relative">
-                    <div className="min-w-full">
-                      <Table>
-                        <TableHeader className="sticky top-0 z-30 bg-background border-b">
-                          <TableRow>
-                            <TableHead className="sticky left-0 z-40 bg-background border-r border-b min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                              Client
-                            </TableHead>
-                            {clientSpend.months.map((month) => {
-                              const monthDate = parseISO(`${month}-01`)
-                              return (
-                                <TableHead key={month} className="text-right min-w-[130px] whitespace-nowrap border-l border-b">
-                                  {format(monthDate, 'MMM yyyy')}
-                                </TableHead>
-                              )
-                            })}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {clientSpend.clients.map((client) => (
-                            <TableRow key={client.clientName}>
-                              <TableCell className="sticky left-0 z-20 bg-background border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                <div>
-                                  <div className="font-medium">{client.clientName}</div>
-                                  <div className="text-xs text-muted-foreground mt-1">
-                                    Total: £{client.totalSpend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </div>
-                                </div>
-                              </TableCell>
-                              {clientSpend.months.map((month) => {
-                                const spend = client.monthlySpend[month] || 0
-                                return (
-                                  <TableCell key={month} className="text-right whitespace-nowrap border-l">
-                                    {spend > 0 ? (
-                                      `£${spend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                    ) : (
-                                      <span className="text-muted-foreground">—</span>
-                                    )}
-                                  </TableCell>
-                                )
-                              })}
-                            </TableRow>
-                          ))}
-                          {/* Totals Row - inside the same table for column alignment */}
-                          <TableRow className="sticky bottom-0 z-30 bg-muted/50 font-semibold border-t">
-                            <TableCell className="sticky left-0 z-40 bg-muted/50 border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                              Total
-                            </TableCell>
-                            {clientSpend.months.map((month) => {
-                              const monthTotal = clientSpend.clients.reduce(
-                                (sum, client) => sum + (client.monthlySpend[month] || 0),
-                                0
-                              )
-                              return (
-                                <TableCell key={month} className="text-right whitespace-nowrap border-l">
-                                  £{monthTotal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </TableCell>
-                              )
-                            })}
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-12 text-muted-foreground px-6">
-                  <p className="mb-2">No client spend data available</p>
-                  <p className="text-sm">
-                    This could be because:
-                  </p>
-                  <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
-                    <li>No completed projects have quote_value set</li>
-                    <li>Completed projects don't have completed_date configured</li>
-                    <li>All projects are from Flexi-Design boards (excluded from this table)</li>
-                  </ul>
-                  <p className="text-sm mt-4">
-                    Make sure you've configured the completed_date column mapping and run a sync to populate the data.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>
