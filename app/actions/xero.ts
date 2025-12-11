@@ -91,6 +91,18 @@ export async function disconnectXero() {
   }
 
   try {
+    // Clear financial cache when disconnecting
+    // This ensures fresh data will be fetched after reconnection
+    const { error: cacheError } = await supabase
+      .from('xero_financial_cache')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000')
+    
+    if (cacheError) {
+      console.warn('Error clearing financial cache on disconnect:', cacheError)
+      // Don't fail the disconnect if cache clearing fails
+    }
+
     const { error } = await supabase
       .from('xero_connection')
       .delete()
