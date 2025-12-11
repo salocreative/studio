@@ -10,6 +10,8 @@ interface Lead {
   quote_value: number | null
   timeline_start: string | null
   timeline_end: string | null
+  due_date: string | null
+  status: string | null
 }
 
 /**
@@ -60,75 +62,116 @@ export async function getLeads() {
     // Get all leads (projects with status 'lead')
     const { data: leads, error: leadsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, quote_value, monday_data, monday_board_id')
+      .select('id, name, client_name, quoted_hours, quote_value, due_date, monday_data, monday_board_id')
       .eq('status', 'lead')
       .order('name', { ascending: true })
 
     if (leadsError) throw leadsError
 
-    // Extract timeline and quote_value from monday_data if available
-    const leadsWithData: Lead[] = (leads || []).map((lead: any) => {
-      let timeline_start: string | null = null
-      let timeline_end: string | null = null
-      let quote_value: number | null = null
+    // Get leads status config to filter by status
+    const { getLeadsStatusConfig } = await import('./leads-status-config')
+    const statusConfig = await getLeadsStatusConfig()
+    const includedStatuses = statusConfig.success ? statusConfig.includedStatuses : []
+    const excludedStatuses = statusConfig.success ? statusConfig.excludedStatuses : []
 
-      // Use quote_value from database column if available, otherwise extract from monday_data
-      if (lead.quote_value !== null && lead.quote_value !== undefined) {
-        quote_value = typeof lead.quote_value === 'number' 
-          ? lead.quote_value 
-          : parseFloat(String(lead.quote_value))
-        
-        if (isNaN(quote_value)) {
-          quote_value = null
-        }
-      }
+    // Extract data from monday_data
+    const leadsWithData: Lead[] = (leads || [])
+      .map((lead: any) => {
+        let timeline_start: string | null = null
+        let timeline_end: string | null = null
+        let quote_value: number | null = null
+        let due_date: string | null = lead.due_date || null
+        let status: string | null = null
 
-      // Extract data from monday_data if available
-      if (lead.monday_data) {
-        // Extract timeline
-        const timelineColumn = Object.values(lead.monday_data).find((cv: any) => 
-          cv?.type === 'timeline' || cv?.type === 'date-range'
-        ) as any
-        if (timelineColumn?.value) {
-          timeline_start = timelineColumn.value?.from || null
-          timeline_end = timelineColumn.value?.to || null
+        // Use quote_value from database column if available
+        if (lead.quote_value !== null && lead.quote_value !== undefined) {
+          quote_value = typeof lead.quote_value === 'number' 
+            ? lead.quote_value 
+            : parseFloat(String(lead.quote_value))
+          
+          if (isNaN(quote_value)) {
+            quote_value = null
+          }
         }
 
-        // Fallback: Extract quote_value from monday_data if column is not set (backward compatibility)
-        if (!quote_value && quoteValueColumnId && lead.monday_data[quoteValueColumnId]) {
-          const valueColumn = lead.monday_data[quoteValueColumnId]
-          // Monday.com number columns store value in different formats
-          // Try to extract the numeric value
-          if (valueColumn.value !== null && valueColumn.value !== undefined) {
-            const numValue = typeof valueColumn.value === 'number' 
-              ? valueColumn.value 
-              : typeof valueColumn.value === 'string' 
-                ? parseFloat(valueColumn.value) 
-                : parseFloat(String(valueColumn.value))
-            
-            if (!isNaN(numValue)) {
-              quote_value = numValue
+        // Extract data from monday_data if available
+        if (lead.monday_data) {
+          // Extract timeline
+          const timelineColumn = Object.values(lead.monday_data).find((cv: any) => 
+            cv?.type === 'timeline' || cv?.type === 'date-range'
+          ) as any
+          if (timelineColumn?.value) {
+            timeline_start = timelineColumn.value?.from || null
+            timeline_end = timelineColumn.value?.to || null
+          }
+
+          // Extract due_date from mapped column
+          if (dueDateColumnId && lead.monday_data[dueDateColumnId]) {
+            const dateColumn = lead.monday_data[dueDateColumnId]
+            if (dateColumn.date) {
+              due_date = dateColumn.date
+            } else if (dateColumn.value) {
+              due_date = dateColumn.value
             }
-          } else if (valueColumn.text) {
-            // Fallback to text value
-            const numValue = parseFloat(valueColumn.text.replace(/[£,$,\s]/g, ''))
-            if (!isNaN(numValue)) {
-              quote_value = numValue
+          }
+
+          // Extract status from mapped column
+          if (statusColumnId && lead.monday_data[statusColumnId]) {
+            const statusColumn = lead.monday_data[statusColumnId]
+            status = statusColumn.text || statusColumn.label || statusColumn.value || null
+          }
+
+          // Fallback: Extract quote_value from monday_data if column is not set
+          if (!quote_value && quoteValueColumnId && lead.monday_data[quoteValueColumnId]) {
+            const valueColumn = lead.monday_data[quoteValueColumnId]
+            if (valueColumn.value !== null && valueColumn.value !== undefined) {
+              const numValue = typeof valueColumn.value === 'number' 
+                ? valueColumn.value 
+                : typeof valueColumn.value === 'string' 
+                  ? parseFloat(valueColumn.value) 
+                  : parseFloat(String(valueColumn.value))
+              
+              if (!isNaN(numValue)) {
+                quote_value = numValue
+              }
+            } else if (valueColumn.text) {
+              const numValue = parseFloat(valueColumn.text.replace(/[£,$,\s]/g, ''))
+              if (!isNaN(numValue)) {
+                quote_value = numValue
+              }
             }
           }
         }
-      }
 
-      return {
-        id: lead.id,
-        name: lead.name,
-        client_name: lead.client_name,
-        quoted_hours: lead.quoted_hours ? Number(lead.quoted_hours) : null,
-        quote_value,
-        timeline_start,
-        timeline_end,
-      }
-    })
+        return {
+          id: lead.id,
+          name: lead.name,
+          client_name: lead.client_name,
+          quoted_hours: lead.quoted_hours ? Number(lead.quoted_hours) : null,
+          quote_value,
+          timeline_start,
+          timeline_end,
+          due_date,
+          status,
+        }
+      })
+      .filter((lead: Lead) => {
+        // Filter by status configuration
+        if (!lead.status) return true // Include leads without status if config allows
+
+        // If included_statuses is set, only include those statuses
+        if (includedStatuses.length > 0) {
+          return includedStatuses.includes(lead.status)
+        }
+
+        // If excluded_statuses is set, exclude those statuses
+        if (excludedStatuses.length > 0) {
+          return !excludedStatuses.includes(lead.status)
+        }
+
+        // If no config, include all
+        return true
+      })
 
     return { success: true, leads: leadsWithData }
   } catch (error) {

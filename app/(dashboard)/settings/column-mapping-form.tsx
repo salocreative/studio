@@ -350,7 +350,7 @@ export function ColumnMappingForm() {
     setEditingMappings({})
   }
 
-  async function handleSave(columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date', columnId: string) {
+  async function handleSave(columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) {
     if (!editingBoardType) return
     
     const config = boardConfigs[editingBoardType]
@@ -394,7 +394,7 @@ export function ColumnMappingForm() {
       type: 'main',
       title: 'Main Projects',
       description: 'Active project boards for ongoing work',
-      requiredParentColumns: ['client', 'quote_value', 'due_date'],
+      requiredParentColumns: ['client', 'quote_value', 'due_date', 'status'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.main,
     },
@@ -426,7 +426,7 @@ export function ColumnMappingForm() {
       type: 'leads',
       title: 'Leads',
       description: 'Board for potential projects and leads',
-      requiredParentColumns: ['client', 'quote_value', 'due_date'],
+      requiredParentColumns: ['client', 'quote_value', 'due_date', 'status'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.leads,
     },
@@ -659,7 +659,7 @@ function BoardMappingEditor({
   parentColumns: Column[]
   subtaskColumns: Column[]
   mappings: Record<string, string>
-  onSave: (columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value', columnId: string) => Promise<void>
+  onSave: (columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) => Promise<void>
   onMappingChange: (mappings: Record<string, string>) => void
   saving: boolean
   requiredParentColumns: string[]
@@ -771,6 +771,15 @@ function BoardMappingEditor({
             col.type === 'datetime' ||
             col.title?.toLowerCase().includes('due') ||
             col.title?.toLowerCase().includes('deadline'),
+          true
+        )}
+
+        {requiredParentColumns.includes('status') && renderColumnMapping(
+          'status',
+          'Status Column',
+          'Select the status column for filtering leads',
+          parentColumns,
+          (col) => col.type === 'status' || col.type === 'dropdown',
           true
         )}
 

@@ -381,56 +381,42 @@ export default function ForecastPageClient() {
                 }>()
                 
                 leads.forEach((lead) => {
-                  if (!lead.timeline_start && !lead.timeline_end) return
+                  // Use due_date instead of timeline
+                  if (!lead.due_date) return
                   
-                  // Use timeline_start if available, otherwise timeline_end
-                  const startDate = lead.timeline_start ? new Date(lead.timeline_start) : (lead.timeline_end ? new Date(lead.timeline_end) : null)
-                  const endDate = lead.timeline_end ? new Date(lead.timeline_end) : (lead.timeline_start ? new Date(lead.timeline_start) : null)
+                  const dueDate = new Date(lead.due_date)
+                  if (isNaN(dueDate.getTime())) return
                   
-                  if (!startDate) return
+                  // Get the month of the due date
+                  const monthKey = format(startOfMonth(dueDate), 'yyyy-MM')
                   
-                  // Get all months this lead spans
-                  const months: string[] = []
-                  let current = startOfMonth(startDate)
-                  const end = endDate ? endOfMonth(endDate) : startOfMonth(startDate)
+                  // Only include future months (including current month)
+                  if (monthKey < currentMonth) return
                   
-                  while (current <= end) {
-                    const monthKey = format(current, 'yyyy-MM')
-                    // Only include future months (including current month)
-                    if (monthKey >= currentMonth) {
-                      months.push(monthKey)
-                    }
-                    current = addMonths(current, 1)
+                  // Assign lead to its due date month
+                  if (!futureMonthsMap.has(monthKey)) {
+                    futureMonthsMap.set(monthKey, {
+                      totalValue: 0,
+                      totalQuotedHours: 0,
+                      projectCount: 0,
+                      clientBreakdown: {},
+                      isProjected: true,
+                    })
                   }
                   
-                  // Distribute lead value/hours across months
+                  const monthData = futureMonthsMap.get(monthKey)!
                   const value = lead.quote_value || 0
                   const hours = lead.quoted_hours || 0
                   const clientName = lead.client_name || 'Unknown'
                   
-                  months.forEach((monthKey) => {
-                    if (!futureMonthsMap.has(monthKey)) {
-                      futureMonthsMap.set(monthKey, {
-                        totalValue: 0,
-                        totalQuotedHours: 0,
-                        projectCount: 0,
-                        clientBreakdown: {},
-                        isProjected: true,
-                      })
-                    }
-                    
-                    const monthData = futureMonthsMap.get(monthKey)!
-                    // Distribute evenly across months, or assign to first month
-                    const monthsCount = months.length
-                    monthData.totalValue += value / monthsCount
-                    monthData.totalQuotedHours += hours / monthsCount
-                    monthData.projectCount += 1 / monthsCount // Will round when displayed
-                    
-                    if (!monthData.clientBreakdown[clientName]) {
-                      monthData.clientBreakdown[clientName] = 0
-                    }
-                    monthData.clientBreakdown[clientName] += value / monthsCount
-                  })
+                  monthData.totalValue += value
+                  monthData.totalQuotedHours += hours
+                  monthData.projectCount += 1
+                  
+                  if (!monthData.clientBreakdown[clientName]) {
+                    monthData.clientBreakdown[clientName] = 0
+                  }
+                  monthData.clientBreakdown[clientName] += value
                 })
                 
                 // Combine completed and future months

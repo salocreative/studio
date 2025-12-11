@@ -191,7 +191,7 @@ export interface Database {
         Row: {
           id: string
           monday_column_id: string
-          column_type: 'client' | 'time' | 'quoted_hours' | 'timeline'
+          column_type: 'client' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
           board_id: string | null
           workspace_id: string | null
           created_at: string
@@ -200,7 +200,7 @@ export interface Database {
         Insert: {
           id?: string
           monday_column_id: string
-          column_type: 'client' | 'time' | 'quoted_hours' | 'timeline'
+          column_type: 'client' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
           board_id?: string | null
           workspace_id?: string | null
           created_at?: string
@@ -212,6 +212,29 @@ export interface Database {
           column_type?: 'client' | 'time' | 'quoted_hours' | 'timeline'
           board_id?: string | null
           workspace_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      leads_status_config: {
+        Row: {
+          id: string
+          included_statuses: string[] | null
+          excluded_statuses: string[] | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          included_statuses?: string[] | null
+          excluded_statuses?: string[] | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          included_statuses?: string[] | null
+          excluded_statuses?: string[] | null
           created_at?: string
           updated_at?: string
         }
