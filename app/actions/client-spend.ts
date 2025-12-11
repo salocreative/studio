@@ -76,7 +76,7 @@ export async function getClientSpendByMonth(
     // We'll filter out Flexi-Design boards and projects without completed_date/quote_value client-side
     const { data: allCompletedProjects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, completed_date, monday_data, monday_board_id')
+      .select('id, name, client_name, quoted_hours, completed_date, updated_at, monday_data, monday_board_id')
       .eq('status', 'locked')
       .order('completed_date', { ascending: false, nullsLast: true })
 
