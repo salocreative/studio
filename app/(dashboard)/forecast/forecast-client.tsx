@@ -17,6 +17,7 @@ import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from
 import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
 import { getLeads } from '@/app/actions/leads'
+import { getClientSpendByMonth } from '@/app/actions/client-spend'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
@@ -38,6 +39,14 @@ export default function ForecastPageClient() {
   const [financialData, setFinancialData] = useState<FinancialData | null>(null)
   const [leads, setLeads] = useState<any[]>([])
   const [loadingFinancial, setLoadingFinancial] = useState(false)
+  const [clientSpend, setClientSpend] = useState<{
+    clients: Array<{
+      clientName: string
+      monthlySpend: Record<string, number>
+      totalSpend: number
+    }>
+    months: string[]
+  } | null>(null)
 
   useEffect(() => {
     loadData()
@@ -74,6 +83,17 @@ export default function ForecastPageClient() {
         console.error('Error loading leads:', leadsResult.error)
       } else {
         setLeads(leadsResult.leads || [])
+      }
+
+      // Load client spend data
+      const clientSpendResult = await getClientSpendByMonth(12)
+      if (clientSpendResult.error) {
+        console.error('Error loading client spend:', clientSpendResult.error)
+      } else if (clientSpendResult.success) {
+        setClientSpend({
+          clients: clientSpendResult.clients || [],
+          months: clientSpendResult.months || [],
+        })
       }
     } catch (error) {
       console.error('Error loading forecast data:', error)
@@ -490,6 +510,88 @@ export default function ForecastPageClient() {
                   <p className="text-sm">
                     Financial forecasting requires Xero integration to access real revenue and expense data.
                   </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Client Spend Table */}
+          {clientSpend && clientSpend.clients.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Client Spend by Month</CardTitle>
+                <CardDescription>
+                  Total project spend by client over the last 12 months from completed projects
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <div className="inline-block min-w-full align-middle">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="sticky left-0 z-10 bg-background min-w-[150px]">
+                            Client
+                          </TableHead>
+                          {clientSpend.months.map((month) => {
+                            const monthDate = parseISO(`${month}-01`)
+                            return (
+                              <TableHead key={month} className="text-right min-w-[120px]">
+                                {format(monthDate, 'MMM yyyy')}
+                              </TableHead>
+                            )
+                          })}
+                          <TableHead className="text-right sticky right-0 z-10 bg-background min-w-[120px]">
+                            Total
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {clientSpend.clients.map((client) => (
+                          <TableRow key={client.clientName}>
+                            <TableCell className="sticky left-0 z-10 bg-background font-medium">
+                              {client.clientName}
+                            </TableCell>
+                            {clientSpend.months.map((month) => {
+                              const spend = client.monthlySpend[month] || 0
+                              return (
+                                <TableCell key={month} className="text-right">
+                                  {spend > 0 ? (
+                                    `£${spend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </TableCell>
+                              )
+                            })}
+                            <TableCell className="text-right sticky right-0 z-10 bg-background font-semibold">
+                              £{client.totalSpend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        {/* Totals Row */}
+                        <TableRow className="bg-muted/50 font-semibold">
+                          <TableCell className="sticky left-0 z-10 bg-muted/50">
+                            Total
+                          </TableCell>
+                          {clientSpend.months.map((month) => {
+                            const monthTotal = clientSpend.clients.reduce(
+                              (sum, client) => sum + (client.monthlySpend[month] || 0),
+                              0
+                            )
+                            return (
+                              <TableCell key={month} className="text-right">
+                                £{monthTotal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                            )
+                          })}
+                          <TableCell className="text-right sticky right-0 z-10 bg-muted/50">
+                            £{clientSpend.clients.reduce((sum, client) => sum + client.totalSpend, 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
                 </div>
               </CardContent>
             </Card>
