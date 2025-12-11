@@ -72,20 +72,18 @@ export async function getClientSpendByMonth(
     const startDateStr = format(startOfMonth(startDate), 'yyyy-MM-dd')
 
     // Get all completed projects (status = 'locked' which means completed/archived)
-    // with completed_date within the range
-    // We'll filter out Flexi-Design boards client-side since Supabase doesn't have "not in"
+    // Same logic as Projects page - get all locked projects, then filter
+    // We'll filter out Flexi-Design boards and projects without completed_date/quote_value client-side
     const { data: allCompletedProjects, error: projectsError } = await supabase
       .from('monday_projects')
       .select('id, name, client_name, quoted_hours, completed_date, monday_data, monday_board_id')
       .eq('status', 'locked')
-      .not('completed_date', 'is', null)
-      .gte('completed_date', startDateStr)
-      .order('completed_date', { ascending: false })
+      .order('completed_date', { ascending: false, nullsLast: true })
 
     if (projectsError) throw projectsError
 
-    // Filter out Flexi-Design projects
-    const completedProjects = boardIdsToExclude.size > 0
+    // Filter out Flexi-Design projects (same as Projects page)
+    const filteredProjects = boardIdsToExclude.size > 0
       ? (allCompletedProjects || []).filter(
           (project: any) => !boardIdsToExclude.has(project.monday_board_id)
         )
@@ -94,9 +92,13 @@ export async function getClientSpendByMonth(
     // Group by client and month
     const clientData: Record<string, ClientSpendData> = {}
 
-    if (completedProjects && completedProjects.length > 0) {
-      completedProjects.forEach((project: any) => {
-        if (!project.completed_date || !project.client_name) return
+    if (filteredProjects && filteredProjects.length > 0) {
+      filteredProjects.forEach((project: any) => {
+        // Skip projects without client_name or completed_date (needed for month grouping)
+        if (!project.client_name || !project.completed_date) return
+
+        // Only include projects within the date range
+        if (project.completed_date < startDateStr) return
 
         const clientName = project.client_name
         const completedDate = new Date(project.completed_date)
