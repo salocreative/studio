@@ -324,12 +324,15 @@ export default function ForecastPageClient() {
                     />
                     <RechartsTooltip 
                       formatter={(value: number) => `£${value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                      labelStyle={{ color: 'hsl(var(--foreground))' }}
+                      labelStyle={{ color: '#000', fontWeight: 'bold' }}
                       contentStyle={{ 
-                        backgroundColor: 'hsl(var(--background))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '6px'
+                        backgroundColor: '#fff',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '6px',
+                        padding: '8px 12px',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                       }}
+                      itemStyle={{ color: '#000' }}
                     />
                     <Legend />
                     <Line 
