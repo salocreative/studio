@@ -681,10 +681,58 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
       }
     }
     
-    // Log all available summary rows for debugging
+    // If we still haven't found expenses, try summing expense sections as fallback
     if (expenses === 0) {
-      const allSummaryRows = collectAllSummaryRows(rows)
-      console.log('Available summary rows in P&L report:', allSummaryRows.map(r => ({ label: r.label, value: r.value })))
+      console.log('No expense summary row found, attempting to sum expense sections...')
+      
+      // Sum all expense-related sections
+      const sumExpenseSections = (rowsToSearch: any[]): number => {
+        let total = 0
+        for (const row of rowsToSearch) {
+          if (row.RowType === 'Section') {
+            const cells = row.Cells || []
+            const sectionName = cells[0]?.Value || ''
+            const sectionNameLower = sectionName.toLowerCase()
+            
+            // Check if this is an expense section (not income)
+            if (sectionNameLower.includes('expense') || 
+                sectionNameLower.includes('cost') ||
+                sectionNameLower.includes('administrative') ||
+                sectionNameLower.includes('salary') ||
+                sectionNameLower.includes('overhead') ||
+                sectionNameLower.includes('operating')) {
+              // Skip if it's clearly income-related
+              if (!sectionNameLower.includes('income') && 
+                  !sectionNameLower.includes('revenue') && 
+                  !sectionNameLower.includes('sales')) {
+                if (cells.length > 1) {
+                  const value = parseFloat(cells[1]?.Value || '0')
+                  if (!isNaN(value) && value < 0) {
+                    // Expenses in Xero are typically negative
+                    total += Math.abs(value)
+                    console.log(`Adding expense section: ${sectionName} = ${Math.abs(value)}`)
+                  }
+                }
+              }
+            }
+            
+            // Also check nested rows for sub-sections
+            if (row.Rows && Array.isArray(row.Rows)) {
+              total += sumExpenseSections(row.Rows)
+            }
+          }
+        }
+        return total
+      }
+      
+      expenses = sumExpenseSections(rows)
+      if (expenses > 0) {
+        console.log(`Calculated expenses from sections: ${expenses}`)
+      } else {
+        // Log all available summary rows for debugging
+        const allSummaryRows = collectAllSummaryRows(rows)
+        console.warn('Could not find expenses. Available summary rows in P&L report:', allSummaryRows.map(r => ({ label: r.label, value: r.value })))
+      }
     }
     
     const profit = revenue - expenses
