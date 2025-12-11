@@ -13,6 +13,7 @@ export interface MondayProject {
   board_id: string
   client_name?: string
   completed_date?: string
+  due_date?: string
   status?: string
   quoted_hours?: number
   quote_value?: number
@@ -380,36 +381,58 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         }
       }
 
-      // Find completed date from date__1 column (for completed projects)
-      let completed_date: string | undefined
-      const completedDateColumnId = 'date__1'
-      if (item.column_values) {
-        const completedDateColumn = item.column_values.find((cv) => cv.id === completedDateColumnId)
-        if (completedDateColumn) {
-          // Date columns in Monday.com return the date in ISO format in the value field
-          if (completedDateColumn.value) {
+      // Helper function to extract date from column
+      const extractDateFromColumn = (columnId: string | undefined): string | undefined => {
+        if (!columnId || !item.column_values) return undefined
+        
+        const dateColumn = item.column_values.find((cv) => cv.id === columnId)
+        if (dateColumn) {
+          if (dateColumn.value) {
             try {
-              const value = JSON.parse(completedDateColumn.value)
+              const value = JSON.parse(dateColumn.value)
               if (value?.date) {
-                completed_date = value.date
-              } else if (completedDateColumn.text) {
+                return value.date
+              } else if (dateColumn.text) {
                 // Fallback: try parsing the text if it's a valid date
-                const parsedDate = new Date(completedDateColumn.text)
+                const parsedDate = new Date(dateColumn.text)
                 if (!isNaN(parsedDate.getTime())) {
-                  completed_date = parsedDate.toISOString().split('T')[0]
+                  return parsedDate.toISOString().split('T')[0]
                 }
               }
             } catch {
               // If parsing fails, try using text directly
-              if (completedDateColumn.text) {
-                const parsedDate = new Date(completedDateColumn.text)
+              if (dateColumn.text) {
+                const parsedDate = new Date(dateColumn.text)
                 if (!isNaN(parsedDate.getTime())) {
-                  completed_date = parsedDate.toISOString().split('T')[0]
+                  return parsedDate.toISOString().split('T')[0]
                 }
               }
             }
+          } else if (dateColumn.text) {
+            // Try parsing text directly
+            const parsedDate = new Date(dateColumn.text)
+            if (!isNaN(parsedDate.getTime())) {
+              return parsedDate.toISOString().split('T')[0]
+            }
           }
         }
+        return undefined
+      }
+
+      // Extract completed date (use mapped column if available, fallback to date__1 for backwards compatibility)
+      let completed_date: string | undefined
+      if (completedDateColumnId) {
+        completed_date = extractDateFromColumn(completedDateColumnId)
+      }
+      // Fallback to hardcoded date__1 if no mapping found (backwards compatibility)
+      if (!completed_date) {
+        completed_date = extractDateFromColumn('date__1')
+      }
+
+      // Extract due date for active projects
+      let due_date: string | undefined
+      if (dueDateColumnId) {
+        due_date = extractDateFromColumn(dueDateColumnId)
       }
 
       // Extract quote_value from column values using the mapped column
@@ -469,6 +492,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         board_id: board.id,
         client_name,
         completed_date,
+        due_date,
         quote_value,
         board_name: board.name,
         column_values,
@@ -847,6 +871,7 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         name: project.name,
         client_name: project.client_name || null,
         completed_date: project.completed_date || null,
+        due_date: project.due_date || null,
         quoted_hours: finalQuotedHours,
         quote_value: project.quote_value || null,
         monday_data: project.column_values,
@@ -960,4 +985,5 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
     throw error
   }
 }
+
 

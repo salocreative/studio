@@ -46,6 +46,7 @@ export interface Database {
           name: string
           client_name: string | null
           completed_date: string | null
+          due_date: string | null
           status: 'active' | 'archived' | 'locked'
           quoted_hours: number | null
           quote_value: number | null
@@ -60,6 +61,7 @@ export interface Database {
           name: string
           client_name?: string | null
           completed_date?: string | null
+          due_date?: string | null
           status?: 'active' | 'archived' | 'locked'
           quoted_hours?: number | null
           quote_value?: number | null
@@ -74,6 +76,7 @@ export interface Database {
           name?: string
           client_name?: string | null
           completed_date?: string | null
+          due_date?: string | null
           status?: 'active' | 'archived' | 'locked'
           quoted_hours?: number | null
           quote_value?: number | null

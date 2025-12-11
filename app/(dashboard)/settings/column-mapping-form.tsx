@@ -350,7 +350,7 @@ export function ColumnMappingForm() {
     setEditingMappings({})
   }
 
-  async function handleSave(columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value', columnId: string) {
+  async function handleSave(columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date', columnId: string) {
     if (!editingBoardType) return
     
     const config = boardConfigs[editingBoardType]
@@ -394,7 +394,7 @@ export function ColumnMappingForm() {
       type: 'main',
       title: 'Main Projects',
       description: 'Active project boards for ongoing work',
-      requiredParentColumns: ['client', 'quote_value'],
+      requiredParentColumns: ['client', 'quote_value', 'due_date'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.main,
     },
@@ -402,7 +402,7 @@ export function ColumnMappingForm() {
       type: 'completed',
       title: 'Completed Projects',
       description: 'Boards where completed projects are archived',
-      requiredParentColumns: ['client', 'quote_value'],
+      requiredParentColumns: ['client', 'quote_value', 'completed_date'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.completed,
     },
@@ -410,7 +410,7 @@ export function ColumnMappingForm() {
       type: 'flexi-design',
       title: 'Flexi-Design Projects',
       description: 'Active Flexi-Design project boards',
-      requiredParentColumns: ['client'],
+      requiredParentColumns: ['client', 'due_date'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs['flexi-design'],
     },
@@ -418,7 +418,7 @@ export function ColumnMappingForm() {
       type: 'flexi-design-completed',
       title: 'Flexi-Design Completed Projects',
       description: 'Board where completed Flexi-Design projects are archived',
-      requiredParentColumns: ['client'],
+      requiredParentColumns: ['client', 'completed_date'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs['flexi-design-completed'],
     },
@@ -426,7 +426,7 @@ export function ColumnMappingForm() {
       type: 'leads',
       title: 'Leads',
       description: 'Board for potential projects and leads',
-      requiredParentColumns: ['client', 'quote_value'],
+      requiredParentColumns: ['client', 'quote_value', 'due_date'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.leads,
     },
@@ -757,6 +757,35 @@ function BoardMappingEditor({
             col.type === 'rating' ||
             col.id?.toLowerCase().includes('value') ||
             col.title?.toLowerCase().includes('value'),
+          true
+        )}
+
+        {requiredParentColumns.includes('due_date') && renderColumnMapping(
+          'due_date',
+          'Due Date Column',
+          'Select the date column that stores project due dates',
+          parentColumns,
+          (col) => 
+            col.type?.toLowerCase() === 'date' ||
+            col.type?.toLowerCase().includes('date') ||
+            col.type === 'datetime' ||
+            col.title?.toLowerCase().includes('due') ||
+            col.title?.toLowerCase().includes('deadline'),
+          true
+        )}
+
+        {requiredParentColumns.includes('completed_date') && renderColumnMapping(
+          'completed_date',
+          'Completed Date Column',
+          'Select the date column that stores when projects were completed',
+          parentColumns,
+          (col) => 
+            col.type?.toLowerCase() === 'date' ||
+            col.type?.toLowerCase().includes('date') ||
+            col.type === 'datetime' ||
+            col.title?.toLowerCase().includes('completed') ||
+            col.title?.toLowerCase().includes('done') ||
+            col.title?.toLowerCase().includes('finished'),
           true
         )}
       </div>
