@@ -2,6 +2,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { startOfMonth, format, subMonths, addMonths } from 'date-fns'
+import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
+import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
 
 interface ClientSpendData {
   clientName: string
@@ -68,7 +70,7 @@ export async function getClientSpendByMonth(
     // Group by client and month
     const clientData: Record<string, ClientSpendData> = {}
 
-    if (completedProjects) {
+    if (completedProjects && completedProjects.length > 0) {
       completedProjects.forEach((project: any) => {
         if (!project.completed_date || !project.client_name) return
 
