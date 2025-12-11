@@ -76,7 +76,7 @@ export async function getClientSpendByMonth(
     // We'll filter out Flexi-Design boards and projects without completed_date/quote_value client-side
     const { data: allCompletedProjects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, completed_date, updated_at, monday_data, monday_board_id')
+      .select('id, name, client_name, quoted_hours, completed_date, updated_at, quote_value, monday_data, monday_board_id')
       .eq('status', 'locked')
       .order('completed_date', { ascending: false, nullsLast: true })
 
@@ -97,10 +97,22 @@ export async function getClientSpendByMonth(
         // Skip projects without client_name
         if (!project.client_name) return
 
-        // Extract quote_value first - skip if no value
+        // Use quote_value from database column if available, otherwise extract from monday_data
         let projectValue: number | null = null
 
-        if (project.monday_data && quoteValueColumnId && project.monday_data[quoteValueColumnId]) {
+        // First, try the direct quote_value column (preferred - faster and more reliable)
+        if (project.quote_value !== null && project.quote_value !== undefined) {
+          projectValue = typeof project.quote_value === 'number' 
+            ? project.quote_value 
+            : parseFloat(String(project.quote_value))
+          
+          if (isNaN(projectValue)) {
+            projectValue = null
+          }
+        }
+
+        // Fallback to extracting from monday_data if column is not set (for backward compatibility)
+        if (!projectValue && project.monday_data && quoteValueColumnId && project.monday_data[quoteValueColumnId]) {
           const valueColumn = project.monday_data[quoteValueColumnId]
           if (valueColumn.value !== null && valueColumn.value !== undefined) {
             const numValue = typeof valueColumn.value === 'number' 

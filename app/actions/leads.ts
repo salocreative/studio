@@ -60,7 +60,7 @@ export async function getLeads() {
     // Get all leads (projects with status 'lead')
     const { data: leads, error: leadsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, monday_data, monday_board_id')
+      .select('id, name, client_name, quoted_hours, quote_value, monday_data, monday_board_id')
       .eq('status', 'lead')
       .order('name', { ascending: true })
 

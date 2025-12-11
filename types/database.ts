@@ -48,6 +48,7 @@ export interface Database {
           completed_date: string | null
           status: 'active' | 'archived' | 'locked'
           quoted_hours: number | null
+          quote_value: number | null
           monday_data: Json | null
           created_at: string
           updated_at: string
@@ -61,6 +62,7 @@ export interface Database {
           completed_date?: string | null
           status?: 'active' | 'archived' | 'locked'
           quoted_hours?: number | null
+          quote_value?: number | null
           monday_data?: Json | null
           created_at?: string
           updated_at?: string
@@ -74,6 +76,7 @@ export interface Database {
           completed_date?: string | null
           status?: 'active' | 'archived' | 'locked'
           quoted_hours?: number | null
+          quote_value?: number | null
           monday_data?: Json | null
           created_at?: string
           updated_at?: string

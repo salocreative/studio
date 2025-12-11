@@ -15,6 +15,7 @@ export interface MondayProject {
   completed_date?: string
   status?: string
   quoted_hours?: number
+  quote_value?: number
   column_values?: Record<string, any>
   board_name?: string
 }
@@ -344,6 +345,8 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
   for (const board of data.boards || []) {
     // Get client column ID for this board (from parent items)
     const clientColumnId = getColumnId(board.id, 'client', board.name)
+    // Get quote_value column ID for this board (from parent items)
+    const quoteValueColumnId = getColumnId(board.id, 'quote_value', board.name)
 
     for (const item of board.items_page.items || []) {
       // Find client name from column values using the mapped column
@@ -388,6 +391,47 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         }
       }
 
+      // Extract quote_value from column values using the mapped column
+      let quote_value: number | undefined
+      if (item.column_values && quoteValueColumnId) {
+        const quoteValueColumn = item.column_values.find((cv) => cv.id === quoteValueColumnId)
+        if (quoteValueColumn) {
+          // Number/currency columns in Monday.com have the value in the value field
+          if (quoteValueColumn.value) {
+            try {
+              const value = JSON.parse(quoteValueColumn.value)
+              // Monday.com numbers/currency can be stored as a number directly or in an object
+              if (typeof value === 'number') {
+                quote_value = value
+              } else if (value?.value !== null && value?.value !== undefined) {
+                const numValue = typeof value.value === 'number' 
+                  ? value.value 
+                  : typeof value.value === 'string' 
+                    ? parseFloat(value.value) 
+                    : parseFloat(String(value.value))
+                if (!isNaN(numValue)) {
+                  quote_value = numValue
+                }
+              }
+            } catch {
+              // If parsing fails, try using text directly
+              if (quoteValueColumn.text) {
+                const numValue = parseFloat(quoteValueColumn.text.replace(/[£,$,\s]/g, ''))
+                if (!isNaN(numValue)) {
+                  quote_value = numValue
+                }
+              }
+            }
+          } else if (quoteValueColumn.text) {
+            // Fallback: try parsing the text if value is not available
+            const numValue = parseFloat(quoteValueColumn.text.replace(/[£,$,\s]/g, ''))
+            if (!isNaN(numValue)) {
+              quote_value = numValue
+            }
+          }
+        }
+      }
+
       // Convert column_values to a more usable format
       const column_values: Record<string, any> = {}
       item.column_values?.forEach((cv) => {
@@ -404,6 +448,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         board_id: board.id,
         client_name,
         completed_date,
+        quote_value,
         board_name: board.name,
         column_values,
       })
@@ -782,6 +827,7 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         client_name: project.client_name || null,
         completed_date: project.completed_date || null,
         quoted_hours: finalQuotedHours,
+        quote_value: project.quote_value || null,
         monday_data: project.column_values,
         status: finalStatus,
         updated_at: new Date().toISOString(),
