@@ -90,10 +90,8 @@ export async function debugQuoteValueMapping() {
               parsedValue = null
             }
           } else if (columnData.text) {
-            parsedValue = parseFloat(columnData.text.replace(/[£,$,\s]/g, ''))
-            if (isNaN(parsedValue)) {
-              parsedValue = null
-            }
+            const textValue = parseFloat(columnData.text.replace(/[£,$,\s]/g, ''))
+            parsedValue = isNaN(textValue) ? null : textValue
           }
 
           analysis.extraction.parsedValue = parsedValue
