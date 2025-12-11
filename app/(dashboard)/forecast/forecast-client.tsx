@@ -368,14 +368,16 @@ export default function ForecastPageClient() {
                             <th className="sticky left-0 z-30 bg-background border-r text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Metric
                             </th>
-                            {monthlySummary.months.map((monthData) => {
-                              const monthDate = parseISO(`${monthData.month}-01`)
-                              return (
-                                <th key={monthData.month} className="text-right text-foreground h-10 px-2 align-middle font-medium whitespace-nowrap min-w-[130px]">
-                                  {format(monthDate, 'MMM yyyy')}
-                                </th>
-                              )
-                            })}
+                            {monthlySummary.months
+                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
+                              .map((monthData) => {
+                                const monthDate = parseISO(`${monthData.month}-01`)
+                                return (
+                                  <th key={monthData.month} className="text-right text-foreground h-10 px-2 align-middle font-medium whitespace-nowrap min-w-[130px]">
+                                    {format(monthDate, 'MMM yyyy')}
+                                  </th>
+                                )
+                              })}
                           </tr>
                         </thead>
                         <tbody className="[&_tr:last-child]:border-0">
@@ -384,149 +386,163 @@ export default function ForecastPageClient() {
                             <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Trend
                             </td>
-                            <td 
-                              colSpan={monthlySummary.months.length} 
-                              className="p-0 relative"
-                              style={{ height: '60px' }}
-                            >
-                              {(() => {
-                                // Get all values to scale the chart
-                                const allValues = monthlySummary.months.map(m => m.totalValue)
-                                const hasData = allValues.some(v => v > 0)
-                                
-                                if (!hasData) {
-                                  return (
-                                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                                      —
-                                    </div>
-                                  )
-                                }
-                                
-                                const maxValue = Math.max(...allValues, 1)
-                                const minValue = Math.min(...allValues.filter(v => v > 0), 0)
-                                const valueRange = maxValue - minValue || 1
-                                
-                                // Get the total width of all month columns
-                                const columnWidth = 130 // min-w-[130px] from month columns
-                                const totalWidth = monthlySummary.months.length * columnWidth
-                                const padding = 16
-                                const chartWidth = totalWidth - padding * 2
-                                const chartHeight = 40
-                                const height = chartHeight - padding * 2
-                                
-                                // Calculate points for the line
-                                const points = monthlySummary.months.map((m, i) => {
-                                  const x = (i / (monthlySummary.months.length - 1 || 1)) * chartWidth
-                                  const normalizedValue = m.totalValue > 0 ? (m.totalValue - minValue) / valueRange : 0
-                                  const y = height - (normalizedValue * height)
-                                  return `${x},${y}`
-                                }).join(' ')
-                                
+                            {(() => {
+                              const monthsWithData = monthlySummary.months.filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
+                              
+                              if (monthsWithData.length === 0) {
                                 return (
-                                  <div className="relative h-full w-full">
-                                    <svg 
-                                      width={totalWidth} 
-                                      height={chartHeight + padding * 2} 
-                                      className="absolute inset-0"
-                                      style={{ left: padding, top: padding }}
-                                    >
-                                      <defs>
-                                        <linearGradient id="trendLineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                          <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.4" />
-                                          <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="1" />
-                                        </linearGradient>
-                                      </defs>
-                                      <polyline
-                                        points={points}
-                                        fill="none"
-                                        stroke="url(#trendLineGradient)"
-                                        strokeWidth="2.5"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                      {/* Data points */}
-                                      {monthlySummary.months.map((m, i) => {
-                                        if (m.totalValue <= 0) return null
-                                        const x = (i / (monthlySummary.months.length - 1 || 1)) * chartWidth
-                                        const normalizedValue = (m.totalValue - minValue) / valueRange
-                                        const y = height - (normalizedValue * height)
-                                        return (
-                                          <circle
-                                            key={m.month}
-                                            cx={x}
-                                            cy={y}
-                                            r="3"
-                                            fill="hsl(var(--primary))"
-                                          />
-                                        )
-                                      })}
-                                    </svg>
-                                  </div>
+                                  <td className="p-2 align-middle text-center text-muted-foreground">
+                                    —
+                                  </td>
                                 )
-                              })()}
-                            </td>
+                              }
+                              
+                              return (
+                                <td 
+                                  colSpan={monthsWithData.length} 
+                                  className="p-0 relative"
+                                  style={{ height: '60px' }}
+                                >
+                                  {(() => {
+                                    // Get all values to scale the chart
+                                    const allValues = monthsWithData.map(m => m.totalValue)
+                                    const hasData = allValues.some(v => v > 0)
+                                    
+                                    if (!hasData) {
+                                      return (
+                                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                                          —
+                                        </div>
+                                      )
+                                    }
+                                    
+                                    const maxValue = Math.max(...allValues, 1)
+                                    const minValue = Math.min(...allValues.filter(v => v > 0), 0)
+                                    const valueRange = maxValue - minValue || 1
+                                    
+                                    // Get the total width of all month columns
+                                    const columnWidth = 130 // min-w-[130px] from month columns
+                                    const totalWidth = monthsWithData.length * columnWidth
+                                    const padding = 16
+                                    const chartWidth = totalWidth - padding * 2
+                                    const chartHeight = 40
+                                    const height = chartHeight - padding * 2
+                                    
+                                    // Calculate points for the line
+                                    const points = monthsWithData.map((m, i) => {
+                                      const x = (i / (monthsWithData.length - 1 || 1)) * chartWidth
+                                      const normalizedValue = m.totalValue > 0 ? (m.totalValue - minValue) / valueRange : 0
+                                      const y = height - (normalizedValue * height)
+                                      return `${x},${y}`
+                                    }).join(' ')
+                                    
+                                    return (
+                                      <div className="relative h-full w-full">
+                                        <svg 
+                                          width={totalWidth} 
+                                          height={chartHeight + padding * 2} 
+                                          className="absolute inset-0"
+                                          style={{ left: padding, top: padding }}
+                                        >
+                                          <polyline
+                                            points={points}
+                                            fill="none"
+                                            stroke="hsl(var(--primary))"
+                                            strokeWidth="2.5"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+                                          {/* Data points */}
+                                          {monthsWithData.map((m, i) => {
+                                            if (m.totalValue <= 0) return null
+                                            const x = (i / (monthsWithData.length - 1 || 1)) * chartWidth
+                                            const normalizedValue = (m.totalValue - minValue) / valueRange
+                                            const y = height - (normalizedValue * height)
+                                            return (
+                                              <circle
+                                                key={m.month}
+                                                cx={x}
+                                                cy={y}
+                                                r="3"
+                                                fill="hsl(var(--primary))"
+                                              />
+                                            )
+                                          })}
+                                        </svg>
+                                      </div>
+                                    )
+                                  })()}
+                                </td>
+                              )
+                            })()}
                           </tr>
                           {/* Total Billable Work Row */}
                           <tr className="hover:bg-muted/50 border-b transition-colors">
                             <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Total Billable Work
                             </td>
-                            {monthlySummary.months.map((monthData) => (
-                              <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
-                                {monthData.clientBreakdown.length > 0 ? (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="cursor-help underline decoration-dotted">
-                                        £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-[300px]">
-                                      <div className="space-y-1">
-                                        <div className="font-semibold mb-2">Client Breakdown:</div>
-                                        {monthData.clientBreakdown.map((client) => (
-                                          <div key={client.clientName} className="flex justify-between gap-4 text-sm">
-                                            <span>{client.clientName}:</span>
-                                            <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </td>
-                            ))}
+                            {monthlySummary.months
+                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
+                              .map((monthData) => (
+                                <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
+                                  {monthData.clientBreakdown.length > 0 ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="cursor-help underline decoration-dotted">
+                                          £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" className="max-w-[300px]">
+                                        <div className="space-y-1">
+                                          <div className="font-semibold mb-2">Client Breakdown:</div>
+                                          {monthData.clientBreakdown.map((client) => (
+                                            <div key={client.clientName} className="flex justify-between gap-4 text-sm">
+                                              <span>{client.clientName}:</span>
+                                              <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </td>
+                              ))}
                           </tr>
                           {/* Hours Quoted Row */}
                           <tr className="hover:bg-muted/50 border-b transition-colors">
                             <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Hours Quoted
                             </td>
-                            {monthlySummary.months.map((monthData) => (
-                              <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
-                                {monthData.totalQuotedHours > 0 ? (
-                                  `${monthData.totalQuotedHours.toFixed(1)}h`
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </td>
-                            ))}
+                            {monthlySummary.months
+                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
+                              .map((monthData) => (
+                                <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
+                                  {monthData.totalQuotedHours > 0 ? (
+                                    `${monthData.totalQuotedHours.toFixed(1)}h`
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </td>
+                              ))}
                           </tr>
                           {/* Number of Projects Row */}
                           <tr className="hover:bg-muted/50 border-b transition-colors">
                             <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Number of Projects
                             </td>
-                            {monthlySummary.months.map((monthData) => (
-                              <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
-                                {monthData.projectCount > 0 ? (
-                                  monthData.projectCount
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </td>
-                            ))}
+                            {monthlySummary.months
+                              .filter(m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0)
+                              .map((monthData) => (
+                                <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
+                                  {monthData.projectCount > 0 ? (
+                                    monthData.projectCount
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </td>
+                              ))}
                           </tr>
                         </tbody>
                       </table>
