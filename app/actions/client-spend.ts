@@ -50,6 +50,22 @@ export async function getClientSpendByMonth(
       quoteValueColumnId = globalMapping?.monday_column_id || quoteValueMappings[0].monday_column_id
     }
 
+    // Get Flexi-Design board IDs to exclude
+    const flexiDesignBoardIds = await getFlexiDesignBoardIds()
+    
+    // Also get Flexi-Design completed board ID to exclude
+    let flexiDesignCompletedBoardId: string | null = null
+    const completedBoardResult = await getFlexiDesignCompletedBoard()
+    if (completedBoardResult.success && completedBoardResult.board) {
+      flexiDesignCompletedBoardId = completedBoardResult.board.monday_board_id
+    }
+    
+    // Build set of board IDs to exclude
+    const boardIdsToExclude = new Set(Array.from(flexiDesignBoardIds))
+    if (flexiDesignCompletedBoardId) {
+      boardIdsToExclude.add(flexiDesignCompletedBoardId)
+    }
+
     // Calculate date range (from numberOfMonths ago to now)
     const endDate = new Date()
     const startDate = subMonths(endDate, numberOfMonths - 1)
@@ -57,15 +73,23 @@ export async function getClientSpendByMonth(
 
     // Get all completed projects (status = 'locked' which means completed/archived)
     // with completed_date within the range
-    const { data: completedProjects, error: projectsError } = await supabase
+    // We'll filter out Flexi-Design boards client-side since Supabase doesn't have "not in"
+    const { data: allCompletedProjects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, completed_date, monday_data')
+      .select('id, name, client_name, quoted_hours, completed_date, monday_data, monday_board_id')
       .eq('status', 'locked')
       .not('completed_date', 'is', null)
       .gte('completed_date', startDateStr)
       .order('completed_date', { ascending: false })
 
     if (projectsError) throw projectsError
+
+    // Filter out Flexi-Design projects
+    const completedProjects = boardIdsToExclude.size > 0
+      ? (allCompletedProjects || []).filter(
+          (project: any) => !boardIdsToExclude.has(project.monday_board_id)
+        )
+      : (allCompletedProjects || [])
 
     // Group by client and month
     const clientData: Record<string, ClientSpendData> = {}
