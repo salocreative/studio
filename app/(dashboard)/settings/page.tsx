@@ -33,9 +33,6 @@ import { AlertTriangle, Trash2, Loader2, Plus, Mail } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
-import { CompletedBoardsForm } from './completed-boards-form'
-import { LeadsBoardForm } from './leads-board-form'
-import { FlexiDesignCompletedBoardForm } from './flexi-design-completed-board-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
@@ -451,39 +448,16 @@ export default function SettingsPage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Completed Boards</CardTitle>
+                    <CardTitle>Debug Quote Value Mapping</CardTitle>
                     <CardDescription>
-                      Configure which Monday.com boards contain completed projects. Projects moved to these boards will be archived instead of deleted, preserving time tracking data.
+                      Check if quote_value column mappings are configured correctly and if values are being extracted from Monday.com
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <CompletedBoardsForm />
+                    <QuoteValueDebugger />
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Leads Board</CardTitle>
-                    <CardDescription>
-                      Configure the Monday.com board that contains lead/prospect projects. These projects will be used for forecasting and resource planning to show future capacity.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <LeadsBoardForm />
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Flexi-Design Completed Board</CardTitle>
-                    <CardDescription>
-                      Configure the Monday.com board that contains completed Flexi-Design projects. Completed projects from this board will be shown on each client's detail page with their estimated and used hours.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <FlexiDesignCompletedBoardForm />
-                  </CardContent>
-                </Card>
 
                 <Card>
                   <CardHeader>

@@ -6,9 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { getMondayBoardsAndColumns, getColumnMappings, saveColumnMapping, getMondayWorkspaces } from '@/app/actions/column-mappings'
-import { getCompletedBoards } from '@/app/actions/completed-boards'
-import { getLeadsBoard } from '@/app/actions/leads-board'
-import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
+import { getCompletedBoards, addCompletedBoard } from '@/app/actions/completed-boards'
+import { getLeadsBoard, setLeadsBoard } from '@/app/actions/leads-board'
+import { getFlexiDesignCompletedBoard, setFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
 import { Loader2, CheckCircle2, Edit2, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -233,6 +233,47 @@ export function ColumnMappingForm() {
       console.error('Error loading mappings:', error)
     }
     return {}
+  }
+
+  async function configureBoardForType(boardType: BoardType, boardId: string, boardName: string) {
+    try {
+      switch (boardType) {
+        case 'completed':
+          const addResult = await addCompletedBoard(boardId, boardName)
+          if (addResult.error) {
+            toast.error('Error configuring completed board', { description: addResult.error })
+          } else {
+            toast.success('Completed board configured')
+          }
+          break
+        case 'leads':
+          const leadsResult = await setLeadsBoard(boardId, boardName)
+          if (leadsResult.error) {
+            toast.error('Error configuring leads board', { description: leadsResult.error })
+          } else {
+            toast.success('Leads board configured')
+          }
+          break
+        case 'flexi-design-completed':
+          const flexiResult = await setFlexiDesignCompletedBoard(boardId, boardName)
+          if (flexiResult.error) {
+            toast.error('Error configuring Flexi-Design completed board', { description: flexiResult.error })
+          } else {
+            toast.success('Flexi-Design completed board configured')
+          }
+          break
+        case 'main':
+        case 'flexi-design':
+          // These don't need special configuration - they're identified by having column mappings
+          // and not being in the other tables
+          break
+      }
+    } catch (error) {
+      console.error('Error configuring board:', error)
+      toast.error('Error configuring board', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    }
   }
 
   // Load boards when workspace is selected
@@ -503,9 +544,13 @@ export function ColumnMappingForm() {
                       {selectedWorkspace ? (
                         <Select
                           value=""
-                          onValueChange={(value) => {
+                          onValueChange={async (value) => {
                             const board = allBoards.find(b => b.id === value)
                             if (board) {
+                              // First, configure the board in the appropriate table
+                              await configureBoardForType(boardTypeConfig.type, board.id, board.name)
+                              
+                              // Update local state
                               setBoardConfigs(prev => ({
                                 ...prev,
                                 [boardTypeConfig.type]: {
@@ -516,8 +561,12 @@ export function ColumnMappingForm() {
                                   workspaceName: workspaces.find(w => w.id === selectedWorkspace)?.name || null,
                                 }
                               }))
+                              
+                              // Reload board configs to get updated state
+                              await loadAllBoardConfigs()
+                              
                               // Auto-start editing after selection
-                              setTimeout(() => startEditing(boardTypeConfig.type), 100)
+                              setTimeout(() => startEditing(boardTypeConfig.type), 300)
                             }
                           }}
                         >
