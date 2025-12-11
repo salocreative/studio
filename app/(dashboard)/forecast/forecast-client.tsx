@@ -322,7 +322,7 @@ export default function ForecastPageClient() {
                       tick={{ fontSize: 12 }}
                       tickFormatter={(value) => `£${(value / 1000).toFixed(0)}k`}
                     />
-                    <Tooltip 
+                    <RechartsTooltip 
                       formatter={(value: number) => `£${value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                       labelStyle={{ color: 'hsl(var(--foreground))' }}
                       contentStyle={{ 
