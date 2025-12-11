@@ -527,7 +527,7 @@ export default function ForecastPageClient() {
               {clientSpend && clientSpend.clients.length > 0 ? (
                 <div className="relative">
                   {/* Table container with fixed height and scrolling */}
-                  <div className="overflow-auto max-h-[600px]">
+                  <div className="overflow-auto max-h-[600px] relative">
                     <div className="min-w-full">
                       <Table>
                         <TableHeader className="sticky top-0 z-30 bg-background border-b">
@@ -570,17 +570,8 @@ export default function ForecastPageClient() {
                               })}
                             </TableRow>
                           ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                  
-                  {/* Sticky totals row at bottom */}
-                  <div className="sticky bottom-0 z-30 bg-background border-t border-b">
-                    <div className="min-w-full">
-                      <Table>
-                        <TableBody>
-                          <TableRow className="bg-muted/50 font-semibold">
+                          {/* Totals Row - inside the same table for column alignment */}
+                          <TableRow className="sticky bottom-0 z-30 bg-muted/50 font-semibold border-t">
                             <TableCell className="sticky left-0 z-40 bg-muted/50 border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Total
                             </TableCell>
