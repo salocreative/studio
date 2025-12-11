@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { debugQuoteValueMapping } from '@/app/actions/debug-quote-value'
+import { backfillQuoteValue } from '@/app/actions/backfill-quote-value'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 
 export function QuoteValueDebugger() {
   const [loading, setLoading] = useState(false)
+  const [backfilling, setBackfilling] = useState(false)
   const [results, setResults] = useState<any>(null)
 
   async function runDebug() {
@@ -41,16 +43,49 @@ export function QuoteValueDebugger() {
             This will check your quote_value column mappings and test value extraction on sample projects.
           </p>
         </div>
-        <Button onClick={runDebug} disabled={loading}>
-          {loading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Running...
-            </>
-          ) : (
-            'Run Debug'
-          )}
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={runDebug} disabled={loading || backfilling} variant="outline">
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Running...
+              </>
+            ) : (
+              'Run Debug'
+            )}
+          </Button>
+          <Button 
+            onClick={async () => {
+              setBackfilling(true)
+              try {
+                const result = await backfillQuoteValue()
+                if (result.error) {
+                  toast.error('Error backfilling', { description: result.error })
+                } else {
+                  toast.success(result.message || 'Backfill completed')
+                  // Refresh debug results
+                  await runDebug()
+                }
+              } catch (error) {
+                toast.error('Error backfilling', {
+                  description: error instanceof Error ? error.message : 'Unknown error',
+                })
+              } finally {
+                setBackfilling(false)
+              }
+            }}
+            disabled={loading || backfilling}
+          >
+            {backfilling ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Backfilling...
+              </>
+            ) : (
+              'Backfill from monday_data'
+            )}
+          </Button>
+        </div>
       </div>
 
       {results && (
