@@ -4,10 +4,14 @@ import { useEffect, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getMondayBoardsAndColumns, getColumnMappings, saveColumnMapping, getAllBoardsWithMappings } from '@/app/actions/column-mappings'
-import { Loader2, CheckCircle2, Edit2, Plus } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { getMondayBoardsAndColumns, getColumnMappings, saveColumnMapping, getMondayWorkspaces } from '@/app/actions/column-mappings'
+import { getCompletedBoards } from '@/app/actions/completed-boards'
+import { getLeadsBoard } from '@/app/actions/leads-board'
+import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
+import { Loader2, CheckCircle2, Edit2, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 
 interface Column {
   id: string
@@ -29,76 +33,206 @@ interface Workspace {
   kind: string
 }
 
-interface BoardWithMappings {
-  id: string
-  name: string
+interface BoardConfig {
+  boardId: string | null
+  boardName: string | null
+  workspaceId: string | null
+  workspaceName: string | null
   mappings: Record<string, string>
-  isFlexiDesign: boolean
+  isConfigured: boolean
+}
+
+type BoardType = 'main' | 'completed' | 'flexi-design' | 'flexi-design-completed' | 'leads'
+
+interface BoardTypeConfig {
+  type: BoardType
+  title: string
+  description: string
+  requiredParentColumns: string[]
+  requiredSubitemColumns: string[]
+  config: BoardConfig
 }
 
 export function ColumnMappingForm() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>('')
-  const [boardsWithMappings, setBoardsWithMappings] = useState<BoardWithMappings[]>([])
   const [allBoards, setAllBoards] = useState<Board[]>([])
-  const [editingBoard, setEditingBoard] = useState<string | null>(null)
-  const [editingBoardColumns, setEditingBoardColumns] = useState<{ parentColumns: Column[]; subtaskColumns: Column[] } | null>(null)
-  const [editingMappings, setEditingMappings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [loadingBoards, setLoadingBoards] = useState(false)
   const [saving, setSaving] = useState(false)
+  
+  // Board configurations for each type
+  const [boardConfigs, setBoardConfigs] = useState<Record<BoardType, BoardConfig>>({
+    main: { boardId: null, boardName: null, workspaceId: null, workspaceName: null, mappings: {}, isConfigured: false },
+    completed: { boardId: null, boardName: null, workspaceId: null, workspaceName: null, mappings: {}, isConfigured: false },
+    'flexi-design': { boardId: null, boardName: null, workspaceId: null, workspaceName: null, mappings: {}, isConfigured: false },
+    'flexi-design-completed': { boardId: null, boardName: null, workspaceId: null, workspaceName: null, mappings: {}, isConfigured: false },
+    leads: { boardId: null, boardName: null, workspaceId: null, workspaceName: null, mappings: {}, isConfigured: false },
+  })
 
-  // Initialize: Load workspaces and existing mappings
+  const [editingBoardType, setEditingBoardType] = useState<BoardType | null>(null)
+  const [editingBoardColumns, setEditingBoardColumns] = useState<{ parentColumns: Column[]; subtaskColumns: Column[] } | null>(null)
+  const [editingMappings, setEditingMappings] = useState<Record<string, string>>({})
+
+  // Initialize: Load workspaces and board configurations
   useEffect(() => {
     async function initialize() {
       setLoading(true)
       
-      // Load workspaces
       try {
-        const { getMondayWorkspaces } = await import('@/app/actions/column-mappings')
+        // Load workspaces
         const workspacesResult = await getMondayWorkspaces()
-        
         if (workspacesResult.error) {
           toast.error('Error loading workspaces', { description: workspacesResult.error })
         } else if (workspacesResult.workspaces) {
           setWorkspaces(workspacesResult.workspaces)
         }
+
+        // Load all board configurations
+        await loadAllBoardConfigs()
       } catch (error) {
-        toast.error('Error loading workspaces', {
+        toast.error('Error initializing', {
           description: error instanceof Error ? error.message : 'Unknown error',
         })
+      } finally {
+        setLoading(false)
       }
-      
-      // Load existing board mappings
-      await loadBoardMappings()
-      
-      // Restore saved workspace from localStorage
-      if (typeof window !== 'undefined') {
-        const savedWorkspace = localStorage.getItem('monday-mapping-workspace')
-        if (savedWorkspace) {
-          setSelectedWorkspace(savedWorkspace)
-        }
-      }
-      
-      setLoading(false)
     }
     
     initialize()
   }, [])
 
-  async function loadBoardMappings() {
+  async function loadAllBoardConfigs() {
     try {
-      const { getAllBoardsWithMappings } = await import('@/app/actions/column-mappings')
-      const result = await getAllBoardsWithMappings()
+      // Load all configured boards
+      const completedResult = await getCompletedBoards()
+      const leadsResult = await getLeadsBoard()
+      const flexiCompletedResult = await getFlexiDesignCompletedBoard()
       
-      if (result.error) {
-        console.error('Error loading board mappings:', result.error)
-      } else if (result.boards) {
-        setBoardsWithMappings(result.boards)
+      // Get all boards with mappings to identify main and flexi-design active boards
+      const { getAllBoardsWithMappings } = await import('@/app/actions/column-mappings')
+      const mappingsResult = await getAllBoardsWithMappings()
+      
+      if (mappingsResult.boards) {
+        const allBoardIds = new Set(mappingsResult.boards.map(b => b.id))
+        
+        // Get configured board IDs to exclude
+        const completedBoardIds = new Set((completedResult.boards || []).map(b => b.monday_board_id))
+        const leadsBoardId = leadsResult.board?.monday_board_id || null
+        const flexiCompletedBoardId = flexiCompletedResult.board?.monday_board_id || null
+
+        const mainBoards = mappingsResult.boards.filter(b => 
+          !b.isFlexiDesign && 
+          !completedBoardIds.has(b.id) && 
+          b.id !== leadsBoardId
+        )
+        const flexiBoards = mappingsResult.boards.filter(b => 
+          b.isFlexiDesign && 
+          b.id !== flexiCompletedBoardId
+        )
+
+        // Main projects: first active main board
+        if (mainBoards.length > 0) {
+          const mainBoard = mainBoards[0]
+          const mappings = await loadMappingsForBoard(mainBoard.id)
+          setBoardConfigs(prev => ({
+            ...prev,
+            main: {
+              boardId: mainBoard.id,
+              boardName: mainBoard.name,
+              workspaceId: null,
+              workspaceName: null,
+              mappings,
+              isConfigured: Object.keys(mappings).length > 0,
+            }
+          }))
+        }
+
+        // Completed projects: first completed board
+        if (completedResult.boards && completedResult.boards.length > 0) {
+          const completedBoard = completedResult.boards[0]
+          const mappings = await loadMappingsForBoard(completedBoard.monday_board_id)
+          setBoardConfigs(prev => ({
+            ...prev,
+            completed: {
+              boardId: completedBoard.monday_board_id,
+              boardName: completedBoard.board_name || 'Completed Projects',
+              workspaceId: null,
+              workspaceName: null,
+              mappings,
+              isConfigured: Object.keys(mappings).length > 0,
+            }
+          }))
+        }
+
+        // Flexi-Design projects: first active flexi board
+        if (flexiBoards.length > 0) {
+          const flexiBoard = flexiBoards[0]
+          const mappings = await loadMappingsForBoard(flexiBoard.id)
+          setBoardConfigs(prev => ({
+            ...prev,
+            'flexi-design': {
+              boardId: flexiBoard.id,
+              boardName: flexiBoard.name,
+              workspaceId: null,
+              workspaceName: null,
+              mappings,
+              isConfigured: Object.keys(mappings).length > 0,
+            }
+          }))
+        }
+
+        // Flexi-Design completed
+        if (flexiCompletedResult.board) {
+          const mappings = await loadMappingsForBoard(flexiCompletedResult.board.monday_board_id)
+          setBoardConfigs(prev => ({
+            ...prev,
+            'flexi-design-completed': {
+              boardId: flexiCompletedResult.board!.monday_board_id,
+              boardName: flexiCompletedResult.board!.board_name || 'Flexi-Design Completed',
+              workspaceId: null,
+              workspaceName: null,
+              mappings,
+              isConfigured: Object.keys(mappings).length > 0,
+            }
+          }))
+        }
+
+        // Leads
+        if (leadsResult.board) {
+          const mappings = await loadMappingsForBoard(leadsResult.board.monday_board_id)
+          setBoardConfigs(prev => ({
+            ...prev,
+            leads: {
+              boardId: leadsResult.board!.monday_board_id,
+              boardName: leadsResult.board!.board_name || 'Leads',
+              workspaceId: null,
+              workspaceName: null,
+              mappings,
+              isConfigured: Object.keys(mappings).length > 0,
+            }
+          }))
+        }
       }
     } catch (error) {
-      console.error('Error loading board mappings:', error)
+      console.error('Error loading board configs:', error)
     }
+  }
+
+  async function loadMappingsForBoard(boardId: string) {
+    try {
+      const mappingsResult = await getColumnMappings(boardId)
+      if (mappingsResult.mappings) {
+        const mappingObj: Record<string, string> = {}
+        mappingsResult.mappings.forEach((m: any) => {
+          mappingObj[m.column_type] = m.monday_column_id
+        })
+        return mappingObj
+      }
+    } catch (error) {
+      console.error('Error loading mappings:', error)
+    }
+    return {}
   }
 
   // Load boards when workspace is selected
@@ -109,17 +243,10 @@ export function ColumnMappingForm() {
         return
       }
 
-      // Save workspace to localStorage
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('monday-mapping-workspace', selectedWorkspace)
-      }
-
       setLoadingBoards(true)
       
       try {
-        const { getMondayBoardsAndColumns } = await import('@/app/actions/column-mappings')
         const boardsResult = await getMondayBoardsAndColumns(selectedWorkspace)
-
         if (boardsResult.error) {
           toast.error('Error loading boards', { description: boardsResult.error })
           setAllBoards([])
@@ -141,11 +268,18 @@ export function ColumnMappingForm() {
     loadBoardsForWorkspace()
   }, [selectedWorkspace])
 
-  async function startEditing(boardId: string) {
-    setEditingBoard(boardId)
+  async function startEditing(boardType: BoardType) {
+    const config = boardConfigs[boardType]
+    
+    if (!config.boardId) {
+      toast.error('Please select a board first')
+      return
+    }
+
+    setEditingBoardType(boardType)
     
     // Find the board in allBoards to get columns
-    const board = allBoards.find(b => b.id === boardId)
+    const board = allBoards.find(b => b.id === config.boardId)
     if (board) {
       const parentCols = board.parentColumns && board.parentColumns.length > 0 
         ? board.parentColumns 
@@ -159,50 +293,51 @@ export function ColumnMappingForm() {
         parentColumns: parentCols,
         subtaskColumns: subtaskCols,
       })
+    } else {
+      // Need to load board columns - trigger workspace/board selection
+      toast.info('Please select the workspace and board first')
+      return
     }
 
     // Load existing mappings
-    try {
-      const { getColumnMappings } = await import('@/app/actions/column-mappings')
-      const mappingsResult = await getColumnMappings(boardId)
-
-      if (mappingsResult.error) {
-        setEditingMappings({})
-      } else if (mappingsResult.mappings && mappingsResult.mappings.length > 0) {
-        const mappingObj: Record<string, string> = {}
-        mappingsResult.mappings.forEach((m: any) => {
-          mappingObj[m.column_type] = m.monday_column_id
-        })
-        setEditingMappings(mappingObj)
-      } else {
-        setEditingMappings({})
-      }
-    } catch (error) {
-      setEditingMappings({})
-    }
+    setEditingMappings(config.mappings)
   }
 
   function cancelEditing() {
-    setEditingBoard(null)
+    setEditingBoardType(null)
     setEditingBoardColumns(null)
     setEditingMappings({})
   }
 
   async function handleSave(columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value', columnId: string) {
-    if (!editingBoard) return
+    if (!editingBoardType) return
+    
+    const config = boardConfigs[editingBoardType]
+    if (!config.boardId) return
     
     setSaving(true)
     try {
-      const workspaceId = selectedWorkspace || undefined
-      const result = await saveColumnMapping(columnType, columnId, editingBoard, workspaceId)
+      const workspaceId = config.workspaceId || selectedWorkspace || undefined
+      const result = await saveColumnMapping(columnType, columnId, config.boardId, workspaceId)
       
       if (result.error) {
         toast.error('Error saving mapping', { description: result.error })
       } else {
         setEditingMappings((prev) => ({ ...prev, [columnType]: columnId }))
         toast.success('Column mapping saved')
-        // Reload board mappings to update the display
-        await loadBoardMappings()
+        
+        // Update board config
+        setBoardConfigs(prev => ({
+          ...prev,
+          [editingBoardType]: {
+            ...prev[editingBoardType],
+            mappings: { ...prev[editingBoardType].mappings, [columnType]: columnId },
+            isConfigured: true,
+          }
+        }))
+        
+        // Reload all configs to ensure consistency
+        await loadAllBoardConfigs()
       }
     } catch (error) {
       toast.error('Error saving mapping', {
@@ -213,13 +348,48 @@ export function ColumnMappingForm() {
     }
   }
 
-  const mainProjectsBoards = boardsWithMappings.filter(b => !b.isFlexiDesign)
-  const flexiDesignBoards = boardsWithMappings.filter(b => b.isFlexiDesign)
-  // Filter out "Subitems of" boards and already configured boards
-  const unconfiguredBoards = allBoards.filter(b => 
-    !boardsWithMappings.some(bwm => bwm.id === b.id) &&
-    !b.name.toLowerCase().startsWith('subitems of')
-  )
+  const boardTypeConfigs: BoardTypeConfig[] = [
+    {
+      type: 'main',
+      title: 'Main Projects',
+      description: 'Active project boards for ongoing work',
+      requiredParentColumns: ['client', 'quote_value'],
+      requiredSubitemColumns: ['quoted_hours', 'timeline'],
+      config: boardConfigs.main,
+    },
+    {
+      type: 'completed',
+      title: 'Completed Projects',
+      description: 'Boards where completed projects are archived',
+      requiredParentColumns: ['client', 'quote_value'],
+      requiredSubitemColumns: ['quoted_hours', 'timeline'],
+      config: boardConfigs.completed,
+    },
+    {
+      type: 'flexi-design',
+      title: 'Flexi-Design Projects',
+      description: 'Active Flexi-Design project boards',
+      requiredParentColumns: ['client'],
+      requiredSubitemColumns: ['quoted_hours', 'timeline'],
+      config: boardConfigs['flexi-design'],
+    },
+    {
+      type: 'flexi-design-completed',
+      title: 'Flexi-Design Completed Projects',
+      description: 'Board where completed Flexi-Design projects are archived',
+      requiredParentColumns: ['client'],
+      requiredSubitemColumns: ['quoted_hours', 'timeline'],
+      config: boardConfigs['flexi-design-completed'],
+    },
+    {
+      type: 'leads',
+      title: 'Leads',
+      description: 'Board for potential projects and leads',
+      requiredParentColumns: ['client', 'quote_value'],
+      requiredSubitemColumns: ['quoted_hours', 'timeline'],
+      config: boardConfigs.leads,
+    },
+  ]
 
   if (loading) {
     return (
@@ -230,30 +400,32 @@ export function ColumnMappingForm() {
   }
 
   // Show editing form if a board is being edited
-  if (editingBoard && editingBoardColumns) {
-    const board = allBoards.find(b => b.id === editingBoard)
-    const boardName = board?.name || boardsWithMappings.find(b => b.id === editingBoard)?.name || 'Unknown'
+  if (editingBoardType && editingBoardColumns) {
+    const boardTypeConfig = boardTypeConfigs.find(btc => btc.type === editingBoardType)
+    const config = boardConfigs[editingBoardType]
 
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold">Edit Column Mappings: {boardName}</h3>
-            <p className="text-sm text-muted-foreground">Configure column mappings for this board</p>
+            <h3 className="text-lg font-semibold">Edit Column Mappings: {boardTypeConfig?.title}</h3>
+            <p className="text-sm text-muted-foreground">{config.boardName || 'Select a board'}</p>
           </div>
           <Button variant="outline" onClick={cancelEditing}>
-            Cancel
+            Back
           </Button>
         </div>
 
         <BoardMappingEditor
-          boardName={boardName}
+          boardName={config.boardName || 'Unknown'}
           parentColumns={editingBoardColumns.parentColumns}
           subtaskColumns={editingBoardColumns.subtaskColumns}
           mappings={editingMappings}
           onSave={handleSave}
           onMappingChange={setEditingMappings}
           saving={saving}
+          requiredParentColumns={boardTypeConfig?.requiredParentColumns || []}
+          requiredSubitemColumns={boardTypeConfig?.requiredSubitemColumns || []}
         />
       </div>
     )
@@ -270,7 +442,7 @@ export function ColumnMappingForm() {
           disabled={loading}
         >
           <SelectTrigger id="workspace-select">
-            <SelectValue placeholder="Select a workspace" />
+            <SelectValue placeholder="Select a workspace to configure boards" />
           </SelectTrigger>
           <SelectContent>
             {workspaces.map((workspace) => (
@@ -285,241 +457,141 @@ export function ColumnMappingForm() {
         </p>
       </div>
 
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Main Projects Column */}
-        <div className="space-y-4">
-          <div>
-            <h3 className="text-lg font-semibold mb-2">Main Projects</h3>
-            <p className="text-sm text-muted-foreground">
-              Column mappings for main project boards
-            </p>
-          </div>
+      {/* Board Type Sections */}
+      <div className="space-y-6">
+        {boardTypeConfigs.map((boardTypeConfig) => {
+          const config = boardTypeConfig.config
+          const hasAllRequired = boardTypeConfig.requiredParentColumns.every(col => config.mappings[col]) &&
+                                 boardTypeConfig.requiredSubitemColumns.every(col => config.mappings[col])
+          
+          return (
+            <Card key={boardTypeConfig.type} className={hasAllRequired ? 'border-green-200' : ''}>
+              <CardHeader>
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      {boardTypeConfig.title}
+                      {hasAllRequired && <CheckCircle2 className="h-5 w-5 text-green-600" />}
+                    </CardTitle>
+                    <CardDescription>{boardTypeConfig.description}</CardDescription>
+                  </div>
+                  {config.boardId && (
+                    <Button variant="outline" size="sm" onClick={() => startEditing(boardTypeConfig.type)}>
+                      <Edit2 className="h-4 w-4 mr-2" />
+                      Configure
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Board Selection */}
+                <div className="space-y-2">
+                  <Label>Board</Label>
+                  {config.boardId ? (
+                    <div className="flex items-center justify-between rounded-lg border bg-muted/50 p-3">
+                      <div>
+                        <p className="font-medium">{config.boardName}</p>
+                        <p className="text-xs text-muted-foreground">Board ID: {config.boardId}</p>
+                      </div>
+                      <Badge variant={hasAllRequired ? 'default' : 'secondary'}>
+                        {hasAllRequired ? 'Configured' : 'Partial'}
+                      </Badge>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed p-4 text-center">
+                      <p className="text-sm text-muted-foreground mb-2">No board selected</p>
+                      {selectedWorkspace ? (
+                        <Select
+                          value=""
+                          onValueChange={(value) => {
+                            const board = allBoards.find(b => b.id === value)
+                            if (board) {
+                              setBoardConfigs(prev => ({
+                                ...prev,
+                                [boardTypeConfig.type]: {
+                                  ...prev[boardTypeConfig.type],
+                                  boardId: board.id,
+                                  boardName: board.name,
+                                  workspaceId: selectedWorkspace,
+                                  workspaceName: workspaces.find(w => w.id === selectedWorkspace)?.name || null,
+                                }
+                              }))
+                              // Auto-start editing after selection
+                              setTimeout(() => startEditing(boardTypeConfig.type), 100)
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a board..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allBoards
+                              .filter(b => !b.name.toLowerCase().startsWith('subitems of'))
+                              .map((board) => (
+                                <SelectItem key={board.id} value={board.id}>
+                                  {board.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Please select a workspace above</p>
+                      )}
+                    </div>
+                  )}
+                </div>
 
-          {mainProjectsBoards.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-8">
-                <p className="text-sm text-muted-foreground mb-4">No main project boards configured</p>
-                {selectedWorkspace && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      // Show board selector for main projects
-                      const availableBoards = unconfiguredBoards.filter(b => 
-                        !b.name.toLowerCase().includes('flexi')
-                      )
-                      if (availableBoards.length > 0) {
-                        // For now, just show a message - we'll implement a dialog later
-                        toast.info('Select a board from the workspace to configure mappings')
-                      }
-                    }}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Board Mapping
-                  </Button>
+                {/* Required Columns Status */}
+                {config.boardId && (
+                  <div className="space-y-3 pt-2 border-t">
+                    <div>
+                      <Label className="text-xs font-semibold mb-2 block">Parent Columns (Main Task)</Label>
+                      <div className="space-y-1">
+                        {boardTypeConfig.requiredParentColumns.map((colType) => {
+                          const isConfigured = !!config.mappings[colType]
+                          return (
+                            <div key={colType} className="flex items-center justify-between text-sm">
+                              <span className={isConfigured ? 'text-foreground' : 'text-muted-foreground'}>
+                                {colType === 'client' ? 'Client' : colType === 'quote_value' ? 'Quote Value' : colType}
+                              </span>
+                              {isConfigured ? (
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <AlertCircle className="h-4 w-4 text-amber-500" />
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs font-semibold mb-2 block">Subitem Columns (Subtasks)</Label>
+                      <div className="space-y-1">
+                        {boardTypeConfig.requiredSubitemColumns.map((colType) => {
+                          const isConfigured = !!config.mappings[colType]
+                          return (
+                            <div key={colType} className="flex items-center justify-between text-sm">
+                              <span className={isConfigured ? 'text-foreground' : 'text-muted-foreground'}>
+                                {colType === 'quoted_hours' ? 'Quoted Hours' : colType === 'timeline' ? 'Timeline' : colType}
+                              </span>
+                              {isConfigured ? (
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <AlertCircle className="h-4 w-4 text-amber-500" />
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
-          ) : (
-            mainProjectsBoards.map((board) => (
-              <BoardMappingCard
-                key={board.id}
-                board={board}
-                allBoards={allBoards}
-                onEdit={() => startEditing(board.id)}
-              />
-            ))
-          )}
-
-          {/* Show available boards to configure */}
-          {selectedWorkspace && unconfiguredBoards.filter(b => !b.name.toLowerCase().includes('flexi')).length > 0 && (
-            <Card className="border-dashed">
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Available boards to configure:</p>
-                  {unconfiguredBoards
-                    .filter(b => !b.name.toLowerCase().includes('flexi'))
-                    .map((board) => (
-                      <Button
-                        key={board.id}
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => startEditing(board.id)}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Configure {board.name}
-                      </Button>
-                    ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        {/* Flexi-Design Column */}
-        <div className="space-y-4">
-          <div>
-            <h3 className="text-lg font-semibold mb-2">Flexi-Design</h3>
-            <p className="text-sm text-muted-foreground">
-              Column mappings for Flexi-Design boards
-            </p>
-          </div>
-
-          {flexiDesignBoards.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-8">
-                <p className="text-sm text-muted-foreground mb-4">No Flexi-Design boards configured</p>
-                {selectedWorkspace && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      toast.info('Select a Flexi-Design board from the workspace to configure mappings')
-                    }}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Board Mapping
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          ) : (
-            flexiDesignBoards.map((board) => (
-              <BoardMappingCard
-                key={board.id}
-                board={board}
-                allBoards={allBoards}
-                onEdit={() => startEditing(board.id)}
-              />
-            ))
-          )}
-
-          {/* Show available Flexi-Design boards to configure */}
-          {selectedWorkspace && unconfiguredBoards.filter(b => b.name.toLowerCase().includes('flexi')).length > 0 && (
-            <Card className="border-dashed">
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Available boards to configure:</p>
-                  {unconfiguredBoards
-                    .filter(b => b.name.toLowerCase().includes('flexi'))
-                    .map((board) => (
-                      <Button
-                        key={board.id}
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => startEditing(board.id)}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Configure {board.name}
-                      </Button>
-                    ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+          )
+        })}
       </div>
     </div>
-  )
-}
-
-function BoardMappingCard({
-  board,
-  allBoards,
-  onEdit,
-}: {
-  board: BoardWithMappings
-  allBoards: Board[]
-  onEdit: () => void
-}) {
-  const hasAllMappings = board.mappings.client && board.mappings.quoted_hours && board.mappings.timeline
-  
-  // Get column titles from allBoards if available
-  const boardDetails = allBoards.find(b => b.id === board.id)
-  const getColumnTitle = (columnId: string, isSubtask: boolean = false) => {
-    if (!boardDetails) return columnId
-    
-    if (isSubtask) {
-      const col = boardDetails.subtaskColumns?.find(c => c.id === columnId) ||
-                  boardDetails.columns.find(c => c.id === columnId)
-      return col?.title || columnId
-    } else {
-      const col = boardDetails.parentColumns?.find(c => c.id === columnId) ||
-                  boardDetails.columns.find(c => c.id === columnId)
-      return col?.title || columnId
-    }
-  }
-
-  return (
-    <Card className={hasAllMappings ? 'border-green-200' : ''}>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">{board.name}</CardTitle>
-          <Button variant="ghost" size="sm" onClick={onEdit}>
-            <Edit2 className="h-4 w-4" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {hasAllMappings ? (
-          <>
-            <div className="flex items-center gap-2 text-sm">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-              <span className="text-green-700">Fully configured</span>
-            </div>
-            <div className="space-y-2 pt-2 border-t">
-              <div>
-                <p className="text-xs text-muted-foreground">Client Column</p>
-                <p className="text-sm font-medium">{getColumnTitle(board.mappings.client || '', false)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Quoted Hours Column</p>
-                <p className="text-sm font-medium">{getColumnTitle(board.mappings.quoted_hours || '', true)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Timeline Column</p>
-                <p className="text-sm font-medium">{getColumnTitle(board.mappings.timeline || '', true)}</p>
-              </div>
-              {board.mappings.quote_value && (
-                <div>
-                  <p className="text-xs text-muted-foreground">Quote Value Column</p>
-                  <p className="text-sm font-medium">{getColumnTitle(board.mappings.quote_value || '', false)}</p>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Partially configured</p>
-            <div className="space-y-1 text-xs">
-              {board.mappings.client && (
-                <p className="text-muted-foreground">
-                  ✓ Client: {getColumnTitle(board.mappings.client, false)}
-                </p>
-              )}
-              {board.mappings.quoted_hours && (
-                <p className="text-muted-foreground">
-                  ✓ Quoted Hours: {getColumnTitle(board.mappings.quoted_hours, true)}
-                </p>
-              )}
-              {board.mappings.timeline && (
-                <p className="text-muted-foreground">
-                  ✓ Timeline: {getColumnTitle(board.mappings.timeline, true)}
-                </p>
-              )}
-              {board.mappings.quote_value && (
-                <p className="text-muted-foreground">
-                  ✓ Quote Value: {getColumnTitle(board.mappings.quote_value, false)}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   )
 }
 
@@ -531,6 +603,8 @@ function BoardMappingEditor({
   onSave,
   onMappingChange,
   saving,
+  requiredParentColumns,
+  requiredSubitemColumns,
 }: {
   boardName: string
   parentColumns: Column[]
@@ -539,241 +613,149 @@ function BoardMappingEditor({
   onSave: (columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value', columnId: string) => Promise<void>
   onMappingChange: (mappings: Record<string, string>) => void
   saving: boolean
+  requiredParentColumns: string[]
+  requiredSubitemColumns: string[]
 }) {
+  
+  const renderColumnMapping = (
+    columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value',
+    label: string,
+    description: string,
+    columns: Column[],
+    filterFn?: (col: Column) => boolean,
+    isRequired: boolean = false
+  ) => {
+    const isParent = columnType === 'client' || columnType === 'quote_value'
+    const isConfigured = !!mappings[columnType]
+    
+    return (
+      <div className="space-y-2">
+        <Label htmlFor={`${columnType}-column`} className={isRequired ? 'font-semibold' : ''}>
+          {label} {isRequired && <span className="text-destructive">*</span>}
+        </Label>
+        {isConfigured ? (
+          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <p className="font-medium text-green-900">
+                {columns.find(c => c.id === mappings[columnType])?.title || mappings[columnType]}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onMappingChange({ ...mappings, [columnType]: '' })}
+              disabled={saving}
+            >
+              <Edit2 className="h-4 w-4 mr-1" />
+              Change
+            </Button>
+          </div>
+        ) : (
+          <Select
+            value={mappings[columnType] || ''}
+            onValueChange={(value) => onSave(columnType, value)}
+            disabled={saving || columns.length === 0}
+          >
+            <SelectTrigger id={`${columnType}-column`}>
+              <SelectValue placeholder={`Select ${label.toLowerCase()}...`} />
+            </SelectTrigger>
+            <SelectContent>
+              {(filterFn ? columns.filter(filterFn) : columns).map((column) => (
+                <SelectItem key={column.id} value={column.id}>
+                  {column.title} {column.type && `(${column.type})`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      {/* Client Column */}
-      <div className="space-y-2">
-        <Label htmlFor="client-column">Client Column (from parent/main task)</Label>
-        {mappings.client ? (
-          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <p className="font-medium text-green-900">
-                {parentColumns.find(c => c.id === mappings.client)?.title || mappings.client}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onMappingChange({ ...mappings, client: '' })}
-              disabled={saving}
-            >
-              <Edit2 className="h-4 w-4 mr-1" />
-              Change
-            </Button>
-          </div>
-        ) : (
-          <Select
-            value={mappings.client || ''}
-            onValueChange={(value) => onSave('client', value)}
-            disabled={saving || parentColumns.length === 0}
-          >
-            <SelectTrigger id="client-column">
-              <SelectValue placeholder="Select Monday.com column" />
-            </SelectTrigger>
-            <SelectContent>
-              {parentColumns
-                .filter((col) => 
-                  col.type === 'text' || 
-                  col.type === 'text_with_label' || 
-                  col.type === 'dropdown' || 
-                  col.type === 'status'
-                )
-                .map((column) => (
-                  <SelectItem key={column.id} value={column.id}>
-                    {column.title}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+      {/* Parent Columns */}
+      <div className="space-y-4">
+        <div>
+          <h4 className="font-semibold mb-1">Parent Columns (Main Task Items)</h4>
+          <p className="text-sm text-muted-foreground">
+            These columns are from the main/parent task items, not subtasks.
+          </p>
+        </div>
+
+        {requiredParentColumns.includes('client') && renderColumnMapping(
+          'client',
+          'Client Column',
+          'Select the column that contains the client name',
+          parentColumns,
+          (col) => ['text', 'text_with_label', 'dropdown', 'status'].includes(col.type),
+          true
         )}
-        <p className="text-xs text-muted-foreground">
-          Select a column from the main/parent task items (not subtasks)
-        </p>
+
+        {requiredParentColumns.includes('quote_value') && renderColumnMapping(
+          'quote_value',
+          'Quote Value Column',
+          'Select the number/currency column that stores project values',
+          parentColumns,
+          (col) => 
+            col.type?.toLowerCase().includes('number') || 
+            col.type?.toLowerCase().includes('numeric') ||
+            col.type === 'numeric_rating' ||
+            col.type === 'formula' ||
+            col.type === 'currency' ||
+            col.type === 'rating' ||
+            col.id?.toLowerCase().includes('value') ||
+            col.title?.toLowerCase().includes('value'),
+          true
+        )}
       </div>
 
-      {/* Quote Value Column */}
-      <div className="space-y-2">
-        <Label htmlFor="quote-value-column">Quote Value Column (from parent/main task)</Label>
-        {mappings.quote_value ? (
-          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <p className="font-medium text-green-900">
-                {parentColumns.find(c => c.id === mappings.quote_value)?.title || mappings.quote_value}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onMappingChange({ ...mappings, quote_value: '' })}
-              disabled={saving}
-            >
-              <Edit2 className="h-4 w-4 mr-1" />
-              Change
-            </Button>
-          </div>
-        ) : (
-          <Select
-            value={mappings.quote_value || ''}
-            onValueChange={(value) => onSave('quote_value', value)}
-            disabled={saving || parentColumns.length === 0}
-          >
-            <SelectTrigger id="quote-value-column">
-              <SelectValue placeholder="Select Monday.com column" />
-            </SelectTrigger>
-            <SelectContent>
-              {parentColumns
-                .filter((col) => 
-                  col.type?.toLowerCase().includes('number') || 
-                  col.type?.toLowerCase().includes('numeric') ||
-                  col.type === 'numeric_rating' ||
-                  col.type === 'formula' ||
-                  col.type === 'currency' ||
-                  col.type === 'rating' ||
-                  col.id?.toLowerCase().includes('value') ||
-                  col.title?.toLowerCase().includes('value')
-                )
-                .map((column) => (
-                  <SelectItem key={column.id} value={column.id}>
-                    {column.title} {column.type && `(${column.type})`}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Select a number/currency column from the main/parent task items. This will store the quote subtotal when pushing quotes to Monday.com.
-        </p>
-      </div>
+      {/* Subitem Columns */}
+      <div className="space-y-4">
+        <div>
+          <h4 className="font-semibold mb-1">Subitem Columns (Subtasks)</h4>
+          <p className="text-sm text-muted-foreground">
+            These columns are from subtask items, not parent tasks.
+          </p>
+        </div>
 
-      {/* Quoted Hours Column */}
-      <div className="space-y-2">
-        <Label htmlFor="quoted-hours-column">Quoted Hours Column (from subtasks)</Label>
-        {mappings.quoted_hours ? (
-          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <p className="font-medium text-green-900">
-                {subtaskColumns.find(c => c.id === mappings.quoted_hours)?.title || mappings.quoted_hours}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onMappingChange({ ...mappings, quoted_hours: '' })}
-              disabled={saving}
-            >
-              <Edit2 className="h-4 w-4 mr-1" />
-              Change
-            </Button>
-          </div>
-        ) : (
-          <Select
-            value={mappings.quoted_hours || ''}
-            onValueChange={(value) => onSave('quoted_hours', value)}
-            disabled={saving || subtaskColumns.length === 0}
-          >
-            <SelectTrigger id="quoted-hours-column">
-              <SelectValue placeholder={subtaskColumns.length === 0 ? "No subtask columns found" : "Select Monday.com column"} />
-            </SelectTrigger>
-            {subtaskColumns.length > 0 && (
-              <SelectContent>
-                {subtaskColumns
-                  .filter((col) => 
-                    col.type?.toLowerCase().includes('number') || 
-                    col.type?.toLowerCase().includes('numeric') ||
-                    col.type === 'numeric_rating' ||
-                    col.type === 'formula' ||
-                    col.type === 'rating' ||
-                    col.type === 'hour' ||
-                    col.type === 'duration' ||
-                    col.id === 'estimated' ||
-                    col.id.includes('estimat') ||
-                    col.id.includes('hour')
-                  )
-                  .map((column) => {
-                    if (!column.id || column.id.trim() === '') return null
-                    return (
-                      <SelectItem key={column.id} value={column.id}>
-                        {column.title} ({column.type})
-                      </SelectItem>
-                    )
-                  })
-                  .filter(Boolean)}
-              </SelectContent>
-            )}
-          </Select>
+        {requiredSubitemColumns.includes('quoted_hours') && renderColumnMapping(
+          'quoted_hours',
+          'Quoted Hours Column',
+          'Select the number column that stores estimated hours for subtasks',
+          subtaskColumns,
+          (col) => 
+            col.type?.toLowerCase().includes('number') || 
+            col.type?.toLowerCase().includes('numeric') ||
+            col.type === 'numeric_rating' ||
+            col.type === 'formula' ||
+            col.type === 'rating' ||
+            col.type === 'hour' ||
+            col.type === 'duration' ||
+            col.id === 'estimated' ||
+            col.id.includes('estimat') ||
+            col.id.includes('hour'),
+          true
         )}
-        <p className="text-xs text-muted-foreground">
-          {subtaskColumns.length === 0 
-            ? "⚠️ No subtask columns found. Make sure the board has items with subtasks."
-            : "Select a number column from subtask items (not parent tasks)"}
-        </p>
-      </div>
 
-      {/* Timeline Column */}
-      <div className="space-y-2">
-        <Label htmlFor="timeline-column">Timeline Column (from subtasks)</Label>
-        {mappings.timeline ? (
-          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 p-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <p className="font-medium text-green-900">
-                {subtaskColumns.find(c => c.id === mappings.timeline)?.title || mappings.timeline}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onMappingChange({ ...mappings, timeline: '' })}
-              disabled={saving}
-            >
-              <Edit2 className="h-4 w-4 mr-1" />
-              Change
-            </Button>
-          </div>
-        ) : (
-          <Select
-            value={mappings.timeline || ''}
-            onValueChange={(value) => onSave('timeline', value)}
-            disabled={saving || subtaskColumns.length === 0}
-          >
-            <SelectTrigger id="timeline-column">
-              <SelectValue placeholder={subtaskColumns.length === 0 ? "No subtask columns found" : "Select Monday.com column"} />
-            </SelectTrigger>
-            {subtaskColumns.length > 0 && (
-              <SelectContent>
-                {subtaskColumns
-                  .filter((col) => 
-                    col.type?.toLowerCase() === 'timeline' ||
-                    col.type?.toLowerCase().includes('date') ||
-                    col.type?.toLowerCase().includes('time') ||
-                    col.type === 'date_range' ||
-                    col.type === 'week' ||
-                    col.type === 'datetime' ||
-                    col.id === 'timerange_mky9t55j' ||
-                    col.id.includes('timerange')
-                  )
-                  .map((column) => {
-                    if (!column.id || column.id.trim() === '') return null
-                    return (
-                      <SelectItem key={column.id} value={column.id}>
-                        {column.title} ({column.type})
-                      </SelectItem>
-                    )
-                  })
-                  .filter(Boolean)}
-              </SelectContent>
-            )}
-          </Select>
+        {requiredSubitemColumns.includes('timeline') && renderColumnMapping(
+          'timeline',
+          'Timeline Column',
+          'Select the timeline/date column that stores task timelines',
+          subtaskColumns,
+          (col) => 
+            col.type?.toLowerCase() === 'timeline' ||
+            col.type?.toLowerCase().includes('date') ||
+            col.type?.toLowerCase().includes('time') ||
+            col.type === 'date_range' ||
+            col.type === 'week' ||
+            col.type === 'datetime' ||
+            col.id === 'timerange_mky9t55j' ||
+            col.id.includes('timerange'),
+          true
         )}
-        <p className="text-xs text-muted-foreground">
-          {subtaskColumns.length === 0 
-            ? "⚠️ No subtask columns found. Make sure the board has items with subtasks."
-            : "Select a timeline/date column from subtask items (not parent tasks)"}
-        </p>
       </div>
     </div>
   )
