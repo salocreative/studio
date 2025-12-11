@@ -369,6 +369,9 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     // For completed boards, require board-specific mapping (don't fall back to global)
     const isCompletedBoard = completedBoardIds.has(board.id)
     const quoteValueColumnId = getColumnId(board.id, 'quote_value', board.name, isCompletedBoard)
+    // Get date column IDs for this board
+    const dueDateColumnId = getColumnId(board.id, 'due_date', board.name)
+    const completedDateColumnId = getColumnId(board.id, 'completed_date', board.name)
 
     for (const item of board.items_page.items || []) {
       // Find client name from column values using the mapped column
