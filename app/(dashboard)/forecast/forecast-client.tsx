@@ -516,32 +516,32 @@ export default function ForecastPageClient() {
           )}
 
           {/* Client Spend Table */}
-          {clientSpend && clientSpend.clients.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Client Spend by Month</CardTitle>
-                <CardDescription>
-                  Total project spend by client over the last 12 months from completed projects
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
+          <Card>
+            <CardHeader>
+              <CardTitle>Client Spend by Month</CardTitle>
+              <CardDescription>
+                Total project spend by client over the last 12 months from completed projects. Based on completed_date field.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {clientSpend && clientSpend.clients.length > 0 ? (
+                <div className="overflow-x-auto -mx-6 px-6">
                   <div className="inline-block min-w-full align-middle">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="sticky left-0 z-10 bg-background min-w-[150px]">
+                          <TableHead className="sticky left-0 z-20 bg-background border-r min-w-[180px]">
                             Client
                           </TableHead>
                           {clientSpend.months.map((month) => {
                             const monthDate = parseISO(`${month}-01`)
                             return (
-                              <TableHead key={month} className="text-right min-w-[120px]">
+                              <TableHead key={month} className="text-right min-w-[130px] whitespace-nowrap">
                                 {format(monthDate, 'MMM yyyy')}
                               </TableHead>
                             )
                           })}
-                          <TableHead className="text-right sticky right-0 z-10 bg-background min-w-[120px]">
+                          <TableHead className="text-right sticky right-0 z-20 bg-background border-l min-w-[130px] font-semibold">
                             Total
                           </TableHead>
                         </TableRow>
@@ -549,13 +549,13 @@ export default function ForecastPageClient() {
                       <TableBody>
                         {clientSpend.clients.map((client) => (
                           <TableRow key={client.clientName}>
-                            <TableCell className="sticky left-0 z-10 bg-background font-medium">
+                            <TableCell className="sticky left-0 z-10 bg-background font-medium border-r min-w-[180px]">
                               {client.clientName}
                             </TableCell>
                             {clientSpend.months.map((month) => {
                               const spend = client.monthlySpend[month] || 0
                               return (
-                                <TableCell key={month} className="text-right">
+                                <TableCell key={month} className="text-right whitespace-nowrap">
                                   {spend > 0 ? (
                                     `£${spend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                   ) : (
@@ -564,14 +564,14 @@ export default function ForecastPageClient() {
                                 </TableCell>
                               )
                             })}
-                            <TableCell className="text-right sticky right-0 z-10 bg-background font-semibold">
+                            <TableCell className="text-right sticky right-0 z-10 bg-background font-semibold border-l whitespace-nowrap">
                               £{client.totalSpend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </TableCell>
                           </TableRow>
                         ))}
                         {/* Totals Row */}
                         <TableRow className="bg-muted/50 font-semibold">
-                          <TableCell className="sticky left-0 z-10 bg-muted/50">
+                          <TableCell className="sticky left-0 z-10 bg-muted border-r min-w-[180px]">
                             Total
                           </TableCell>
                           {clientSpend.months.map((month) => {
@@ -580,12 +580,12 @@ export default function ForecastPageClient() {
                               0
                             )
                             return (
-                              <TableCell key={month} className="text-right">
+                              <TableCell key={month} className="text-right whitespace-nowrap">
                                 £{monthTotal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </TableCell>
                             )
                           })}
-                          <TableCell className="text-right sticky right-0 z-10 bg-muted/50">
+                          <TableCell className="text-right sticky right-0 z-10 bg-muted border-l whitespace-nowrap">
                             £{clientSpend.clients.reduce((sum, client) => sum + client.totalSpend, 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </TableCell>
                         </TableRow>
@@ -593,9 +593,24 @@ export default function ForecastPageClient() {
                     </Table>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p className="mb-2">No client spend data available</p>
+                  <p className="text-sm">
+                    This could be because:
+                  </p>
+                  <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
+                    <li>No completed projects have quote_value set</li>
+                    <li>Completed projects don't have completed_date configured</li>
+                    <li>All projects are from Flexi-Design boards (excluded from this table)</li>
+                  </ul>
+                  <p className="text-sm mt-4">
+                    Make sure you've configured the completed_date column mapping and run a sync to populate the data.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

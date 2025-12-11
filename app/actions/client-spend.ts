@@ -74,9 +74,10 @@ export async function getClientSpendByMonth(
     // Get all completed projects (status = 'locked' which means completed/archived)
     // Same logic as Projects page - get all locked projects, then filter
     // We'll filter out Flexi-Design boards and projects without completed_date/quote_value client-side
+    // Use completed_date field (from mapped column) for grouping by month
     const { data: allCompletedProjects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, quoted_hours, completed_date, updated_at, quote_value, monday_data, monday_board_id')
+      .select('id, name, client_name, quoted_hours, completed_date, quote_value, monday_data, monday_board_id')
       .eq('status', 'locked')
       .order('completed_date', { ascending: false, nullsLast: true })
 
@@ -137,20 +138,18 @@ export async function getClientSpendByMonth(
           return
         }
 
-        // Use completed_date if available, otherwise use updated_at as fallback
-        let dateForGrouping: Date | null = null
-        if (project.completed_date) {
-          dateForGrouping = new Date(project.completed_date)
-        } else if (project.updated_at) {
-          dateForGrouping = new Date(project.updated_at)
-        } else {
-          // Skip if no date available for grouping
+        // Use completed_date field (from mapped completed_date column) for grouping
+        // This ensures we use the actual completion date from Monday.com
+        if (!project.completed_date) {
+          // Skip projects without completed_date - we need this for accurate monthly grouping
           return
         }
 
-        // Only include projects within the date range
+        const dateForGrouping = new Date(project.completed_date)
+        
+        // Only include projects within the date range (last 12 months)
         const dateStr = format(dateForGrouping, 'yyyy-MM-dd')
-        if (dateStr < startDateStr) return
+        if (dateStr < startDateStr || dateForGrouping > endDate) return
 
         const clientName = project.client_name
         const monthKey = format(startOfMonth(dateForGrouping), 'yyyy-MM')
