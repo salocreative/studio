@@ -26,11 +26,11 @@ export async function getLeads() {
   }
 
   try {
-    // Get quote_value column mapping for leads board
-    const { data: quoteValueMappings } = await supabase
+    // Get column mappings for leads board
+    const { data: allMappings } = await supabase
       .from('monday_column_mappings')
-      .select('monday_column_id, board_id')
-      .eq('column_type', 'quote_value')
+      .select('monday_column_id, board_id, column_type')
+      .in('column_type', ['quote_value', 'due_date', 'status'])
 
     // Get leads board ID
     const { data: leadsBoard } = await supabase
@@ -40,24 +40,21 @@ export async function getLeads() {
 
     const leadsBoardId = leadsBoard?.monday_board_id || null
 
-    // Find the quote_value column ID to look for in monday_data
-    let quoteValueColumnId: string | null = null
-    if (quoteValueMappings && leadsBoardId) {
-      // Try board-specific mapping first
-      const boardMapping = quoteValueMappings.find(m => m.board_id === leadsBoardId)
-      if (boardMapping) {
-        quoteValueColumnId = boardMapping.monday_column_id
-      } else {
-        // Try global mapping (board_id is null)
-        const globalMapping = quoteValueMappings.find(m => !m.board_id)
-        if (globalMapping) {
-          quoteValueColumnId = globalMapping.monday_column_id
-        } else if (quoteValueMappings.length > 0) {
-          // Fallback to any mapping
-          quoteValueColumnId = quoteValueMappings[0].monday_column_id
-        }
+    // Find column IDs for quote_value, due_date, and status
+    const findColumnId = (columnType: string): string | null => {
+      const mappings = allMappings?.filter(m => m.column_type === columnType) || []
+      if (leadsBoardId) {
+        const boardMapping = mappings.find(m => m.board_id === leadsBoardId)
+        if (boardMapping) return boardMapping.monday_column_id
+        const globalMapping = mappings.find(m => !m.board_id)
+        if (globalMapping) return globalMapping.monday_column_id
       }
+      return mappings.length > 0 ? mappings[0].monday_column_id : null
     }
+
+    const quoteValueColumnId = findColumnId('quote_value')
+    const dueDateColumnId = findColumnId('due_date')
+    const statusColumnId = findColumnId('status')
 
     // Get all leads (projects with status 'lead')
     const { data: leads, error: leadsError } = await supabase
