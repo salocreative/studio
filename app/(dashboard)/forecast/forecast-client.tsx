@@ -120,7 +120,7 @@ export default function ForecastPageClient() {
       }
 
       // Load yearly financial data for chart
-      if (xeroConnected) {
+      if (isConnected) {
         const yearlyResult = await getYearlyFinancialData()
         if (yearlyResult.error) {
           console.error('Error loading yearly financial data:', yearlyResult.error)
