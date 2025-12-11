@@ -473,7 +473,7 @@ export default function ForecastPageClient() {
               <CardHeader>
                 <CardTitle>Forecast Summary</CardTitle>
                 <CardDescription>
-                  Projected financial outlook based on current data and leads
+                  Projected financial outlook based on current data for the selected period
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -495,23 +495,6 @@ export default function ForecastPageClient() {
                       <div className="text-xs text-muted-foreground">Profit</div>
                     </div>
                   </div>
-
-                  {leads.length > 0 && (
-                    <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/50">
-                      <div>
-                        <div className="text-sm font-medium">Potential from Leads</div>
-                        <div className="text-xs text-muted-foreground">
-                          {leads.length} leads with {totalLeadsHours.toFixed(1)}h quoted
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                          £{potentialRevenue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                        <div className="text-xs text-muted-foreground">If all convert</div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
