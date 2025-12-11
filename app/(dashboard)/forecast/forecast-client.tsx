@@ -19,7 +19,7 @@ import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
 import { getMonthlySummary } from '@/app/actions/monthly-summary'
 import { getLeads } from '@/app/actions/leads'
 import { getYearlyFinancialData } from '@/app/actions/xero-yearly'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -287,6 +287,87 @@ export default function ForecastPageClient() {
                     Connect Xero in Settings
                   </Link>
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Year-to-Date Financial Chart */}
+          {xeroConnected && yearlyFinancialData && yearlyFinancialData.monthlyData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Year-to-Date Financial Overview</CardTitle>
+                <CardDescription>
+                  Revenue and expenses trend over the last 12 months. Solid lines show monthly values, dashed lines show cumulative year-to-date totals.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={yearlyFinancialData.monthlyData.map(data => ({
+                    month: format(parseISO(`${data.month}-01`), 'MMM yyyy'),
+                    revenue: data.revenue,
+                    expenses: data.expenses,
+                    profit: data.profit,
+                    cumulativeRevenue: data.cumulativeRevenue,
+                    cumulativeExpenses: data.cumulativeExpenses,
+                  }))}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="month" 
+                      tick={{ fontSize: 12 }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                    />
+                    <YAxis 
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => `£${(value / 1000).toFixed(0)}k`}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => `£${value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      labelStyle={{ color: 'hsl(var(--foreground))' }}
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--background))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '6px'
+                      }}
+                    />
+                    <Legend />
+                    <Line 
+                      type="monotone" 
+                      dataKey="revenue" 
+                      stroke="hsl(var(--chart-1))" 
+                      strokeWidth={2}
+                      name="Monthly Revenue"
+                      dot={{ r: 4 }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="expenses" 
+                      stroke="hsl(var(--chart-2))" 
+                      strokeWidth={2}
+                      name="Monthly Expenses"
+                      dot={{ r: 4 }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="cumulativeRevenue" 
+                      stroke="hsl(var(--chart-1))" 
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      name="YTD Revenue"
+                      dot={false}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="cumulativeExpenses" 
+                      stroke="hsl(var(--chart-2))" 
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      name="YTD Expenses"
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
               </CardContent>
             </Card>
           )}
