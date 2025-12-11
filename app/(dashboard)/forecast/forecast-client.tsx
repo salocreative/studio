@@ -18,6 +18,8 @@ import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
 import { getMonthlySummary } from '@/app/actions/monthly-summary'
 import { getLeads } from '@/app/actions/leads'
+import { getYearlyFinancialData } from '@/app/actions/xero-yearly'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -51,6 +53,20 @@ export default function ForecastPageClient() {
         value: number
       }>
     }>
+  } | null>(null)
+  const [yearlyFinancialData, setYearlyFinancialData] = useState<{
+    monthlyData: Array<{
+      month: string
+      revenue: number
+      expenses: number
+      profit: number
+      cumulativeRevenue: number
+      cumulativeExpenses: number
+      cumulativeProfit: number
+    }>
+    totalRevenue: number
+    totalExpenses: number
+    totalProfit: number
   } | null>(null)
   const tableScrollRef = useRef<HTMLDivElement>(null)
 
@@ -101,6 +117,16 @@ export default function ForecastPageClient() {
         console.error('Error loading leads:', leadsResult.error)
       } else {
         setLeads(leadsResult.leads || [])
+      }
+
+      // Load yearly financial data for chart
+      if (xeroConnected) {
+        const yearlyResult = await getYearlyFinancialData()
+        if (yearlyResult.error) {
+          console.error('Error loading yearly financial data:', yearlyResult.error)
+        } else if (yearlyResult.success) {
+          setYearlyFinancialData(yearlyResult)
+        }
       }
 
       // Load monthly summary data
