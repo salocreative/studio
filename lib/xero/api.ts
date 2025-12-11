@@ -625,6 +625,21 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
       return null
     }
     
+    // Function to collect all summary rows for debugging
+    const collectAllSummaryRows = (rowsToSearch: any[], collected: any[] = []): any[] => {
+      for (const row of rowsToSearch) {
+        if (row.RowType === 'SummaryRow') {
+          const label = row.Cells?.[0]?.Value || ''
+          const value = row.Cells?.[1]?.Value || '0'
+          collected.push({ label, value, row })
+        }
+        if (row.Rows && Array.isArray(row.Rows)) {
+          collectAllSummaryRows(row.Rows, collected)
+        }
+      }
+      return collected
+    }
+    
     // Look for "Total Income" or "Total Revenue" summary row
     const totalIncomeRow = findSummaryRow(rows, ['total income', 'total revenue', 'total sales'])
     if (totalIncomeRow && totalIncomeRow.Cells && totalIncomeRow.Cells.length > 1) {
@@ -635,8 +650,17 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
       }
     }
     
-    // Look for "Total Expenses" summary row
-    const totalExpensesRow = findSummaryRow(rows, ['total expenses', 'total costs'])
+    // Look for expense totals - try multiple variations including Administrative Costs
+    const expenseKeywords = [
+      'total expenses',
+      'total costs',
+      'total administrative costs',
+      'administrative costs',
+      'total operating expenses',
+      'total overhead',
+    ]
+    
+    const totalExpensesRow = findSummaryRow(rows, expenseKeywords)
     if (totalExpensesRow && totalExpensesRow.Cells && totalExpensesRow.Cells.length > 1) {
       const totalExpenses = parseFloat(totalExpensesRow.Cells[1]?.Value || '0')
       if (!isNaN(totalExpenses)) {
@@ -645,8 +669,22 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
       }
     }
     
-    if (revenue === 0 && expenses === 0) {
-      console.warn('Could not find Total Income or Total Expenses summary rows. Report structure:', JSON.stringify({ rowCount: rows.length, firstRowType: rows[0]?.RowType }, null, 2))
+    // If we still haven't found expenses, try looking for "Total Administrative Costs" specifically
+    if (expenses === 0) {
+      const adminCostsRow = findSummaryRow(rows, ['administrative', 'admin costs'])
+      if (adminCostsRow && adminCostsRow.Cells && adminCostsRow.Cells.length > 1) {
+        const adminCosts = parseFloat(adminCostsRow.Cells[1]?.Value || '0')
+        if (!isNaN(adminCosts) && adminCosts !== 0) {
+          expenses = Math.abs(adminCosts)
+          console.log(`Found Administrative Costs: ${adminCostsRow.Cells[0]?.Value} = ${expenses}`)
+        }
+      }
+    }
+    
+    // Log all available summary rows for debugging
+    if (expenses === 0) {
+      const allSummaryRows = collectAllSummaryRows(rows)
+      console.log('Available summary rows in P&L report:', allSummaryRows.map(r => ({ label: r.label, value: r.value })))
     }
     
     const profit = revenue - expenses
