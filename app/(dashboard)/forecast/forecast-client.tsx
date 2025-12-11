@@ -405,8 +405,8 @@ export default function ForecastPageClient() {
                                 >
                                   {(() => {
                                     // Get all values to scale the chart
-                                    const allValues = monthsWithData.map(m => m.totalValue).filter(v => v > 0)
-                                    const hasData = allValues.length > 0
+                                    const allValues = monthsWithData.map(m => m.totalValue)
+                                    const hasData = allValues.some(v => v > 0)
                                     
                                     if (!hasData) {
                                       return (
@@ -416,12 +416,12 @@ export default function ForecastPageClient() {
                                       )
                                     }
                                     
-                                    const maxValue = Math.max(...allValues)
-                                    const minValue = Math.min(...allValues)
+                                    const maxValue = Math.max(...allValues, 1)
+                                    const minValue = Math.min(...allValues.filter(v => v > 0), 0)
                                     const valueRange = maxValue - minValue || 1
                                     
                                     // Get the total width of all month columns
-                                    const columnWidth = 130
+                                    const columnWidth = 130 // min-w-[130px] from month columns
                                     const totalWidth = monthsWithData.length * columnWidth
                                     const padding = 16
                                     const chartWidth = totalWidth - padding * 2
