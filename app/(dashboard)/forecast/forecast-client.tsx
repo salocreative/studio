@@ -335,7 +335,7 @@ export default function ForecastPageClient() {
                     <Line 
                       type="monotone" 
                       dataKey="revenue" 
-                      stroke="hsl(var(--chart-1))" 
+                      stroke="#8884d8" 
                       strokeWidth={2}
                       name="Monthly Revenue"
                       dot={{ r: 4 }}
@@ -343,7 +343,7 @@ export default function ForecastPageClient() {
                     <Line 
                       type="monotone" 
                       dataKey="expenses" 
-                      stroke="hsl(var(--chart-2))" 
+                      stroke="#82ca9d" 
                       strokeWidth={2}
                       name="Monthly Expenses"
                       dot={{ r: 4 }}
@@ -351,7 +351,7 @@ export default function ForecastPageClient() {
                     <Line 
                       type="monotone" 
                       dataKey="cumulativeRevenue" 
-                      stroke="hsl(var(--chart-1))" 
+                      stroke="#8884d8" 
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       name="YTD Revenue"
@@ -360,7 +360,7 @@ export default function ForecastPageClient() {
                     <Line 
                       type="monotone" 
                       dataKey="cumulativeExpenses" 
-                      stroke="hsl(var(--chart-2))" 
+                      stroke="#82ca9d" 
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       name="YTD Expenses"
