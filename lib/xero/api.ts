@@ -290,8 +290,148 @@ async function saveFinancialDataToCache(
 }
 
 /**
- * Fetch financial data from Xero API (simplified version)
- * For now, we'll fetch invoices and bills to calculate revenue and expenses
+ * Legacy method: Fetch financial data from invoices and bills
+ * Kept as fallback if Reports API is unavailable
+ */
+async function fetchXeroFinancialDataLegacy(
+  connection: any,
+  accessToken: string,
+  startDate: string,
+  endDate: string,
+  tenant_id: string
+) {
+  try {
+    // Fetch invoices
+    const invoicesUrl = `${XERO_API_BASE}/Invoices`
+    
+    const invoicesResponse = await fetch(invoicesUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Xero-tenant-id': tenant_id,
+        'Accept': 'application/json',
+      },
+    })
+    
+    let revenue = 0
+    let expenses = 0
+    
+    if (!invoicesResponse.ok) {
+      const errorText = await invoicesResponse.text()
+      console.error('Failed to fetch invoices from Xero:', {
+        status: invoicesResponse.status,
+        statusText: invoicesResponse.statusText,
+        error: errorText,
+        url: invoicesUrl
+      })
+    } else {
+      const invoicesData = await invoicesResponse.json()
+      const invoices = invoicesData.Invoices || []
+      
+      console.log(`Found ${invoices.length} invoices from Xero`)
+      
+      invoices.forEach((invoice: any) => {
+        const invoiceDateStr = invoice.DateString || invoice.Date
+        if (!invoiceDateStr) return
+        
+        const invoiceDate = new Date(invoiceDateStr)
+        if (isNaN(invoiceDate.getTime())) return
+        
+        const start = new Date(startDate)
+        start.setHours(0, 0, 0, 0)
+        const end = new Date(endDate)
+        end.setHours(23, 59, 59, 999)
+        
+        if (invoiceDate >= start && invoiceDate <= end) {
+          const status = invoice.Status?.toUpperCase()
+          if (status === 'PAID' || status === 'AUTHORISED') {
+            // Use SubTotal to exclude VAT (matching quote values)
+            const total = parseFloat(invoice.SubTotal || invoice.Total || invoice.AmountDue || '0')
+            if (total > 0) {
+              revenue += total
+            }
+          }
+        }
+      })
+    }
+    
+    // Fetch bills for expenses
+    const billsUrl = `${XERO_API_BASE}/Bills`
+    
+    const billsResponse = await fetch(billsUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Xero-tenant-id': tenant_id,
+        'Accept': 'application/json',
+      },
+    })
+    
+    if (!billsResponse.ok) {
+      const errorText = await billsResponse.text()
+      console.error('Failed to fetch bills from Xero:', {
+        status: billsResponse.status,
+        statusText: billsResponse.statusText,
+        error: errorText,
+        url: billsUrl
+      })
+    } else {
+      const billsData = await billsResponse.json()
+      const bills = billsData.Bills || []
+      
+      console.log(`Found ${bills.length} bills from Xero`)
+      
+      bills.forEach((bill: any) => {
+        const billDateStr = bill.DateString || bill.Date
+        if (!billDateStr) return
+        
+        const billDate = new Date(billDateStr)
+        if (isNaN(billDate.getTime())) return
+        
+        const start = new Date(startDate)
+        start.setHours(0, 0, 0, 0)
+        const end = new Date(endDate)
+        end.setHours(23, 59, 59, 999)
+        
+        if (billDate >= start && billDate <= end) {
+          const status = bill.Status?.toUpperCase()
+          if (status === 'PAID' || status === 'AUTHORISED') {
+            // Use SubTotal to exclude VAT
+            const total = parseFloat(bill.SubTotal || bill.Total || bill.AmountDue || '0')
+            if (total > 0) {
+              expenses += total
+            }
+          }
+        }
+      })
+    }
+    
+    const profit = revenue - expenses
+    
+    await saveFinancialDataToCache(tenant_id, startDate, endDate, revenue, expenses, profit)
+    
+    return {
+      success: true,
+      revenue,
+      expenses,
+      profit,
+      period: {
+        start: startDate,
+        end: endDate,
+      },
+      fromCache: false,
+    }
+  } catch (error) {
+    console.error('Error in legacy financial data fetch:', error)
+    throw error
+  }
+}
+
+/**
+ * Fetch financial data from Xero API using Reports API (Profit & Loss report)
+ * This matches exactly what you see in Xero's P&L report:
+ * - Revenue excludes VAT (matching quote values)
+ * - Includes all expense categories (Administrative Costs, Salaries, etc.)
  */
 export async function fetchXeroFinancialData(startDate: string, endDate: string) {
   const connectionResult = await getXeroConnection()
@@ -389,16 +529,21 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
   }
   
   try {
-    // Fetch invoices and bills from Xero
-    // Note: Xero API uses a different date format and filtering approach
-    // We'll fetch all invoices and filter by date in code for now
+    // Use Xero Reports API to fetch Profit & Loss report
+    // This matches exactly what you see in Xero's P&L report
+    // - Revenue excludes VAT (matching quote values)
+    // - Includes all expense categories (Administrative Costs, Salaries, etc.)
     
-    console.log(`Fetching Xero financial data from ${startDate} to ${endDate}`)
+    console.log(`Fetching Xero Profit & Loss report from ${startDate} to ${endDate}`)
     
-    // Fetch invoices - Xero doesn't support complex where clauses easily, so we'll fetch and filter
-    const invoicesUrl = `${XERO_API_BASE}/Invoices`
+    // Format dates for Xero API (YYYY-MM-DD format)
+    const fromDate = startDate.split('T')[0]
+    const toDate = endDate.split('T')[0]
     
-    const invoicesResponse = await fetch(invoicesUrl, {
+    // Fetch Profit & Loss report from Xero Reports API
+    const pnlUrl = `${XERO_API_BASE}/Reports/ProfitAndLoss?fromDate=${fromDate}&toDate=${toDate}&periods=1&standardLayout=true`
+    
+    const pnlResponse = await fetch(pnlUrl, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -410,122 +555,153 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
     let revenue = 0
     let expenses = 0
     
-    if (!invoicesResponse.ok) {
-      const errorText = await invoicesResponse.text()
-      console.error('Failed to fetch invoices from Xero:', {
-        status: invoicesResponse.status,
-        statusText: invoicesResponse.statusText,
+    if (!pnlResponse.ok) {
+      const errorText = await pnlResponse.text()
+      console.error('Failed to fetch Profit & Loss report from Xero:', {
+        status: pnlResponse.status,
+        statusText: pnlResponse.statusText,
         error: errorText,
-        url: invoicesUrl
+        url: pnlUrl
       })
-      // Continue even if invoices fail - we'll just have 0 revenue
-    } else {
-      const invoicesData = await invoicesResponse.json()
-      const invoices = invoicesData.Invoices || []
       
-      console.log(`Found ${invoices.length} invoices from Xero`)
-      
-      // Filter invoices by date and sum revenue
-      invoices.forEach((invoice: any) => {
-        // Xero uses DateString or Date field - check both
-        const invoiceDateStr = invoice.DateString || invoice.Date
-        if (!invoiceDateStr) {
-          console.log(`Skipping invoice ${invoice.InvoiceNumber || 'unknown'}: no date field`)
-          return
-        }
-        
-        const invoiceDate = new Date(invoiceDateStr)
-        if (isNaN(invoiceDate.getTime())) {
-          console.log(`Skipping invoice ${invoice.InvoiceNumber || 'unknown'}: invalid date ${invoiceDateStr}`)
-          return
-        }
-        
-        const start = new Date(startDate)
-        start.setHours(0, 0, 0, 0)
-        const end = new Date(endDate)
-        end.setHours(23, 59, 59, 999) // Include entire end date
-        
-        // Check if invoice is in date range
-        if (invoiceDate >= start && invoiceDate <= end) {
-          // Sum paid and authorized invoices as revenue
-          // Also include VOIDED invoices that were paid (they still count as revenue)
-          const status = invoice.Status?.toUpperCase()
-          if (status === 'PAID' || status === 'AUTHORISED') {
-            const total = parseFloat(invoice.Total || invoice.AmountDue || '0')
-            if (total > 0) {
-              revenue += total
-              console.log(`Adding invoice ${invoice.InvoiceNumber}: £${total.toFixed(2)} (Status: ${status}, Date: ${invoiceDateStr})`)
-            }
-          }
-        }
-      })
+      // Fallback: try the old method if Reports API fails
+      console.log('Falling back to invoices/bills method...')
+      return await fetchXeroFinancialDataLegacy(connection, accessToken, startDate, endDate, connection.tenant_id)
     }
     
-    // Fetch bills for expenses
-    const billsUrl = `${XERO_API_BASE}/Bills`
+    const pnlData = await pnlResponse.json()
+    const reports = pnlData.Reports || []
     
-    const billsResponse = await fetch(billsUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Xero-tenant-id': connection.tenant_id,
-        'Accept': 'application/json',
-      },
-    })
+    if (reports.length === 0) {
+      console.warn('No Profit & Loss report data returned from Xero')
+      return {
+        success: true,
+        revenue: 0,
+        expenses: 0,
+        profit: 0,
+        period: {
+          start: startDate,
+          end: endDate,
+        },
+        fromCache: false,
+      }
+    }
     
-    if (!billsResponse.ok) {
-      const errorText = await billsResponse.text()
-      console.error('Failed to fetch bills from Xero:', {
-        status: billsResponse.status,
-        statusText: billsResponse.statusText,
-        error: errorText,
-        url: billsUrl
-      })
-      // Continue even if bills fail - we'll just have 0 expenses
-    } else {
-      const billsData = await billsResponse.json()
-      const bills = billsData.Bills || []
-      
-      console.log(`Found ${bills.length} bills from Xero`)
-      
-      // Filter bills by date and sum expenses
-      bills.forEach((bill: any) => {
-        // Xero uses DateString or Date field - check both
-        const billDateStr = bill.DateString || bill.Date
-        if (!billDateStr) {
-          console.log(`Skipping bill ${bill.BillNumber || 'unknown'}: no date field`)
-          return
+    const report = reports[0]
+    const rows = report.Rows || []
+    
+    console.log(`Processing Profit & Loss report with ${rows.length} row groups`)
+    
+    // Process report rows to extract revenue and expenses
+    // Xero P&L structure: Rows contain RowType (Header, Section, SummaryRow) and Cells with values
+    rows.forEach((row: any) => {
+      if (row.RowType === 'Section') {
+        const rowType = row.RowsType || ''
+        const cells = row.Cells || []
+        
+        // Get the value from the first period column (index 0 is usually the label/account name)
+        // The actual value is typically in cells[1] for a single period report
+        if (cells.length > 1) {
+          const value = parseFloat(cells[1]?.Value || '0')
+          
+          if (!isNaN(value)) {
+            // Income/Sales accounts are positive, Expenses are negative in Xero
+            // We need to check the section type or account type
+            const accountType = row.RowsType || ''
+            const accountName = cells[0]?.Value || ''
+            
+            // Revenue/Sales sections (typically positive values or negative values that represent income)
+            // In Xero, Income accounts show as positive, Expenses show as negative
+            if (accountType === 'Income' || accountName.toLowerCase().includes('revenue') || accountName.toLowerCase().includes('sales') || accountName.toLowerCase().includes('income')) {
+              revenue += Math.abs(value)
+            } else {
+              // Expenses (Administrative Costs, etc.) - Xero shows these as negative values
+              expenses += Math.abs(value)
+            }
+            
+            console.log(`Row: ${accountName}, Type: ${accountType}, Value: ${value}, Revenue: ${revenue}, Expenses: ${expenses}`)
+          }
         }
         
-        const billDate = new Date(billDateStr)
-        if (isNaN(billDate.getTime())) {
-          console.log(`Skipping bill ${bill.BillNumber || 'unknown'}: invalid date ${billDateStr}`)
-          return
+        // Also check nested rows (sub-accounts)
+        if (row.Rows && Array.isArray(row.Rows)) {
+          row.Rows.forEach((subRow: any) => {
+            if (subRow.RowType === 'Row') {
+              const subCells = subRow.Cells || []
+              if (subCells.length > 1) {
+                const subValue = parseFloat(subCells[1]?.Value || '0')
+                if (!isNaN(subValue)) {
+                  const accountName = subCells[0]?.Value || ''
+                  const accountType = subRow.ReportRowType || row.RowsType || ''
+                  
+                  if (accountType === 'Income' || accountName.toLowerCase().includes('revenue') || accountName.toLowerCase().includes('sales') || accountName.toLowerCase().includes('income')) {
+                    revenue += Math.abs(subValue)
+                  } else {
+                    expenses += Math.abs(subValue)
+                  }
+                }
+              }
+            }
+          })
         }
-        
-        const start = new Date(startDate)
-        start.setHours(0, 0, 0, 0)
-        const end = new Date(endDate)
-        end.setHours(23, 59, 59, 999) // Include entire end date
-        
-        // Check if bill is in date range
-        if (billDate >= start && billDate <= end) {
-          // Sum paid and authorized bills as expenses
-          const status = bill.Status?.toUpperCase()
-          if (status === 'PAID' || status === 'AUTHORISED') {
-            const total = parseFloat(bill.Total || bill.AmountDue || '0')
-            if (total > 0) {
-              expenses += total
-              console.log(`Adding bill ${bill.BillNumber}: £${total.toFixed(2)} (Status: ${status}, Date: ${billDateStr})`)
+      } else if (row.RowType === 'SummaryRow') {
+        // Summary rows (like Total Income, Total Expenses, Net Profit)
+        const cells = row.Cells || []
+        if (cells.length > 1) {
+          const label = cells[0]?.Value || ''
+          const value = parseFloat(cells[1]?.Value || '0')
+          
+          if (!isNaN(value)) {
+            // Check if this is a revenue summary or expense summary
+            const labelLower = label.toLowerCase()
+            if (labelLower.includes('total income') || labelLower.includes('total revenue') || labelLower.includes('total sales')) {
+              revenue = Math.abs(value) // Use the summary total
+            } else if (labelLower.includes('total expenses') || labelLower.includes('total costs')) {
+              expenses = Math.abs(value) // Use the summary total
             }
           }
         }
-      })
+      }
+    })
+    
+    // Alternative: Use SummaryRow values if available (more reliable)
+    // Look for "Total Income" or "Total Revenue" row
+    const totalIncomeRow = rows.find((r: any) => {
+      if (r.RowType === 'SummaryRow') {
+        const label = r.Cells?.[0]?.Value || ''
+        return label.toLowerCase().includes('total income') || label.toLowerCase().includes('total revenue') || label.toLowerCase().includes('total sales')
+      }
+      return false
+    })
+    
+    if (totalIncomeRow && totalIncomeRow.Cells && totalIncomeRow.Cells.length > 1) {
+      const totalIncome = parseFloat(totalIncomeRow.Cells[1]?.Value || '0')
+      if (!isNaN(totalIncome) && totalIncome > 0) {
+        revenue = Math.abs(totalIncome)
+        console.log(`Using Total Income from summary: ${revenue}`)
+      }
+    }
+    
+    // Look for "Total Expenses" row
+    const totalExpensesRow = rows.find((r: any) => {
+      if (r.RowType === 'SummaryRow') {
+        const label = r.Cells?.[0]?.Value || ''
+        return label.toLowerCase().includes('total expenses') || label.toLowerCase().includes('total costs')
+      }
+      return false
+    })
+    
+    if (totalExpensesRow && totalExpensesRow.Cells && totalExpensesRow.Cells.length > 1) {
+      const totalExpenses = parseFloat(totalExpensesRow.Cells[1]?.Value || '0')
+      if (!isNaN(totalExpenses) && totalExpenses > 0) {
+        expenses = Math.abs(totalExpenses)
+        console.log(`Using Total Expenses from summary: ${expenses}`)
+      }
     }
     
     const profit = revenue - expenses
     
-    console.log(`Financial summary: Revenue=${revenue}, Expenses=${expenses}, Profit=${profit}`)
+    console.log(`Financial summary from P&L report: Revenue=${revenue}, Expenses=${expenses}, Profit=${profit}`)
     
     // Save to cache
     await saveFinancialDataToCache(
