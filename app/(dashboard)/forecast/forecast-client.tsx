@@ -405,8 +405,8 @@ export default function ForecastPageClient() {
                                 >
                                   {(() => {
                                     // Get all values to scale the chart
-                                    const allValues = monthsWithData.map(m => m.totalValue)
-                                    const hasData = allValues.some(v => v > 0)
+                                    const allValues = monthsWithData.map(m => m.totalValue).filter(v => v > 0)
+                                    const hasData = allValues.length > 0
                                     
                                     if (!hasData) {
                                       return (
@@ -416,33 +416,49 @@ export default function ForecastPageClient() {
                                       )
                                     }
                                     
-                                    const maxValue = Math.max(...allValues, 1)
-                                    const minValue = Math.min(...allValues.filter(v => v > 0), 0)
-                                    const valueRange = maxValue - minValue || 1
+                                    // Calculate range with padding to avoid flat lines and clipping
+                                    const maxValue = Math.max(...allValues)
+                                    const minValue = Math.min(...allValues)
+                                    const valueRange = maxValue - minValue
+                                    
+                                    // Add padding (15% of range) above and below to make trends more visible
+                                    // This prevents the line from being too flat when values are similar
+                                    const paddingPercent = 0.15
+                                    const paddedRange = valueRange * (1 + paddingPercent * 2)
+                                    const paddedMax = maxValue + (valueRange * paddingPercent)
+                                    const paddedMin = Math.max(0, minValue - (valueRange * paddingPercent))
                                     
                                     // Get the total width of all month columns
                                     const columnWidth = 130 // min-w-[130px] from month columns
                                     const totalWidth = monthsWithData.length * columnWidth
-                                    const padding = 16
-                                    const chartWidth = totalWidth - padding * 2
+                                    const paddingX = 20
+                                    const paddingY = 12
+                                    const chartWidth = totalWidth - paddingX * 2
                                     const chartHeight = 40
-                                    const height = chartHeight - padding * 2
+                                    const height = chartHeight - paddingY * 2
                                     
                                     // Calculate points for the line
                                     const points = monthsWithData.map((m, i) => {
                                       const x = (i / (monthsWithData.length - 1 || 1)) * chartWidth
-                                      const normalizedValue = m.totalValue > 0 ? (m.totalValue - minValue) / valueRange : 0
+                                      if (m.totalValue <= 0) {
+                                        // For zero values, place at bottom
+                                        return `${x},${height}`
+                                      }
+                                      const normalizedValue = (m.totalValue - paddedMin) / (paddedMax - paddedMin || 1)
+                                      // Flip Y coordinate (SVG Y increases downward)
                                       const y = height - (normalizedValue * height)
                                       return `${x},${y}`
                                     }).join(' ')
                                     
                                     return (
-                                      <div className="relative h-full w-full">
+                                      <div className="relative h-full w-full overflow-visible">
                                         <svg 
                                           width={totalWidth} 
-                                          height={chartHeight + padding * 2} 
-                                          className="absolute inset-0"
-                                          style={{ left: padding, top: padding }}
+                                          height={chartHeight + paddingY * 2} 
+                                          className="absolute"
+                                          style={{ left: paddingX, top: paddingY }}
+                                          viewBox={`0 0 ${chartWidth} ${height}`}
+                                          preserveAspectRatio="none"
                                         >
                                           <polyline
                                             points={points}
@@ -451,20 +467,22 @@ export default function ForecastPageClient() {
                                             strokeWidth="2.5"
                                             strokeLinecap="round"
                                             strokeLinejoin="round"
+                                            vectorEffect="non-scaling-stroke"
                                           />
                                           {/* Data points */}
                                           {monthsWithData.map((m, i) => {
                                             if (m.totalValue <= 0) return null
                                             const x = (i / (monthsWithData.length - 1 || 1)) * chartWidth
-                                            const normalizedValue = (m.totalValue - minValue) / valueRange
+                                            const normalizedValue = (m.totalValue - paddedMin) / (paddedMax - paddedMin || 1)
                                             const y = height - (normalizedValue * height)
                                             return (
                                               <circle
                                                 key={m.month}
                                                 cx={x}
                                                 cy={y}
-                                                r="3"
+                                                r="3.5"
                                                 fill="hsl(var(--primary))"
+                                                vectorEffect="non-scaling-stroke"
                                               />
                                             )
                                           })}
