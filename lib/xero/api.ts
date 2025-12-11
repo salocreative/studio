@@ -605,80 +605,8 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
     
     console.log(`Processing Profit & Loss report with ${rows.length} row groups`)
     
-    // Process report rows to extract revenue and expenses
-    // Xero P&L structure: Rows contain RowType (Header, Section, SummaryRow) and Cells with values
-    rows.forEach((row: any) => {
-      if (row.RowType === 'Section') {
-        const rowType = row.RowsType || ''
-        const cells = row.Cells || []
-        
-        // Get the value from the first period column (index 0 is usually the label/account name)
-        // The actual value is typically in cells[1] for a single period report
-        if (cells.length > 1) {
-          const value = parseFloat(cells[1]?.Value || '0')
-          
-          if (!isNaN(value)) {
-            // Income/Sales accounts are positive, Expenses are negative in Xero
-            // We need to check the section type or account type
-            const accountType = row.RowsType || ''
-            const accountName = cells[0]?.Value || ''
-            
-            // Revenue/Sales sections (typically positive values or negative values that represent income)
-            // In Xero, Income accounts show as positive, Expenses show as negative
-            if (accountType === 'Income' || accountName.toLowerCase().includes('revenue') || accountName.toLowerCase().includes('sales') || accountName.toLowerCase().includes('income')) {
-              revenue += Math.abs(value)
-            } else {
-              // Expenses (Administrative Costs, etc.) - Xero shows these as negative values
-              expenses += Math.abs(value)
-            }
-            
-            console.log(`Row: ${accountName}, Type: ${accountType}, Value: ${value}, Revenue: ${revenue}, Expenses: ${expenses}`)
-          }
-        }
-        
-        // Also check nested rows (sub-accounts)
-        if (row.Rows && Array.isArray(row.Rows)) {
-          row.Rows.forEach((subRow: any) => {
-            if (subRow.RowType === 'Row') {
-              const subCells = subRow.Cells || []
-              if (subCells.length > 1) {
-                const subValue = parseFloat(subCells[1]?.Value || '0')
-                if (!isNaN(subValue)) {
-                  const accountName = subCells[0]?.Value || ''
-                  const accountType = subRow.ReportRowType || row.RowsType || ''
-                  
-                  if (accountType === 'Income' || accountName.toLowerCase().includes('revenue') || accountName.toLowerCase().includes('sales') || accountName.toLowerCase().includes('income')) {
-                    revenue += Math.abs(subValue)
-                  } else {
-                    expenses += Math.abs(subValue)
-                  }
-                }
-              }
-            }
-          })
-        }
-      } else if (row.RowType === 'SummaryRow') {
-        // Summary rows (like Total Income, Total Expenses, Net Profit)
-        const cells = row.Cells || []
-        if (cells.length > 1) {
-          const label = cells[0]?.Value || ''
-          const value = parseFloat(cells[1]?.Value || '0')
-          
-          if (!isNaN(value)) {
-            // Check if this is a revenue summary or expense summary
-            const labelLower = label.toLowerCase()
-            if (labelLower.includes('total income') || labelLower.includes('total revenue') || labelLower.includes('total sales')) {
-              revenue = Math.abs(value) // Use the summary total
-            } else if (labelLower.includes('total expenses') || labelLower.includes('total costs')) {
-              expenses = Math.abs(value) // Use the summary total
-            }
-          }
-        }
-      }
-    })
-    
-    // Alternative: Use SummaryRow values if available (more reliable)
-    // Look for "Total Income" or "Total Revenue" row
+    // Use SummaryRow values for totals (most reliable - these match what you see in Xero)
+    // Look for "Total Income" or "Total Revenue" row first
     const totalIncomeRow = rows.find((r: any) => {
       if (r.RowType === 'SummaryRow') {
         const label = r.Cells?.[0]?.Value || ''
