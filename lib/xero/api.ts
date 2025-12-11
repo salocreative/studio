@@ -605,40 +605,48 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
     
     console.log(`Processing Profit & Loss report with ${rows.length} row groups`)
     
-    // Use SummaryRow values for totals (most reliable - these match what you see in Xero)
-    // Look for "Total Income" or "Total Revenue" row first
-    const totalIncomeRow = rows.find((r: any) => {
-      if (r.RowType === 'SummaryRow') {
-        const label = r.Cells?.[0]?.Value || ''
-        return label.toLowerCase().includes('total income') || label.toLowerCase().includes('total revenue') || label.toLowerCase().includes('total sales')
+    // Use SummaryRow values for totals (most reliable - these match exactly what you see in Xero)
+    // Function to recursively search for summary rows in nested structures
+    const findSummaryRow = (rowsToSearch: any[], labelKeywords: string[]): any => {
+      for (const row of rowsToSearch) {
+        if (row.RowType === 'SummaryRow') {
+          const label = row.Cells?.[0]?.Value || ''
+          const labelLower = label.toLowerCase()
+          if (labelKeywords.some(keyword => labelLower.includes(keyword))) {
+            return row
+          }
+        }
+        // Check nested rows
+        if (row.Rows && Array.isArray(row.Rows)) {
+          const found = findSummaryRow(row.Rows, labelKeywords)
+          if (found) return found
+        }
       }
-      return false
-    })
+      return null
+    }
     
+    // Look for "Total Income" or "Total Revenue" summary row
+    const totalIncomeRow = findSummaryRow(rows, ['total income', 'total revenue', 'total sales'])
     if (totalIncomeRow && totalIncomeRow.Cells && totalIncomeRow.Cells.length > 1) {
       const totalIncome = parseFloat(totalIncomeRow.Cells[1]?.Value || '0')
-      if (!isNaN(totalIncome) && totalIncome > 0) {
+      if (!isNaN(totalIncome)) {
         revenue = Math.abs(totalIncome)
-        console.log(`Using Total Income from summary: ${revenue}`)
+        console.log(`Found Total Income/Revenue: ${totalIncomeRow.Cells[0]?.Value} = ${revenue}`)
       }
     }
     
-    // Look for "Total Expenses" row
-    const totalExpensesRow = rows.find((r: any) => {
-      if (r.RowType === 'SummaryRow') {
-        const label = r.Cells?.[0]?.Value || ''
-        return label.toLowerCase().includes('total expenses') || label.toLowerCase().includes('total costs')
-      }
-      return false
-    })
-    
+    // Look for "Total Expenses" summary row
+    const totalExpensesRow = findSummaryRow(rows, ['total expenses', 'total costs'])
     if (totalExpensesRow && totalExpensesRow.Cells && totalExpensesRow.Cells.length > 1) {
       const totalExpenses = parseFloat(totalExpensesRow.Cells[1]?.Value || '0')
-      if (!isNaN(totalExpenses) && totalExpenses > 0) {
+      if (!isNaN(totalExpenses)) {
         expenses = Math.abs(totalExpenses)
-        console.log(`Using Total Expenses from summary: ${expenses}`)
+        console.log(`Found Total Expenses: ${totalExpensesRow.Cells[0]?.Value} = ${expenses}`)
       }
     }
+    
+    if (revenue === 0 && expenses === 0) {
+      console.warn('Could not find Total Income or Total Expenses summary rows. Report structure:', JSON.stringify({ rowCount: rows.length, firstRowType: rows[0]?.RowType }, null, 2))
     
     const profit = revenue - expenses
     
@@ -702,4 +710,5 @@ export async function getXeroAuthUrl() {
   
   return { success: true, authUrl, state }
 }
+
 
