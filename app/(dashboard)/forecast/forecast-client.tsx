@@ -416,69 +416,54 @@ export default function ForecastPageClient() {
                                       )
                                     }
                                     
-                                    // Calculate range with padding to avoid flat lines and clipping
                                     const maxValue = Math.max(...allValues)
                                     const minValue = Math.min(...allValues)
-                                    const valueRange = maxValue - minValue
-                                    
-                                    // Add padding (15% of range) above and below to make trends more visible
-                                    // This prevents the line from being too flat when values are similar
-                                    const paddingPercent = 0.15
-                                    const paddedMax = maxValue + (valueRange * paddingPercent)
-                                    const paddedMin = Math.max(0, minValue - (valueRange * paddingPercent))
+                                    const valueRange = maxValue - minValue || 1
                                     
                                     // Get the total width of all month columns
-                                    const columnWidth = 130 // min-w-[130px] from month columns
+                                    const columnWidth = 130
                                     const totalWidth = monthsWithData.length * columnWidth
-                                    const paddingX = 20
-                                    const paddingY = 12
-                                    const chartWidth = totalWidth - paddingX * 2
+                                    const padding = 16
+                                    const chartWidth = totalWidth - padding * 2
                                     const chartHeight = 40
-                                    const height = chartHeight - paddingY * 2
+                                    const height = chartHeight - padding * 2
                                     
-                                    // Calculate points for the line (same calculation as dots)
-                                    const pointCoords = monthsWithData.map((m, i) => {
+                                    // Calculate points for the line
+                                    const points = monthsWithData.map((m, i) => {
                                       const x = (i / (monthsWithData.length - 1 || 1)) * chartWidth
-                                      if (m.totalValue <= 0) {
-                                        // For zero values, place at bottom
-                                        return { x, y: height }
-                                      }
-                                      const normalizedValue = (m.totalValue - paddedMin) / (paddedMax - paddedMin || 1)
-                                      // Flip Y coordinate (SVG Y increases downward)
+                                      const normalizedValue = m.totalValue > 0 ? (m.totalValue - minValue) / valueRange : 0
                                       const y = height - (normalizedValue * height)
-                                      return { x, y }
-                                    })
-                                    
-                                    // Create points string for polyline
-                                    const points = pointCoords.map(p => `${p.x},${p.y}`).join(' ')
+                                      return `${x},${y}`
+                                    }).join(' ')
                                     
                                     return (
-                                      <div className="relative h-full w-full" style={{ minHeight: '60px', padding: `${paddingY}px ${paddingX}px` }}>
+                                      <div className="relative h-full w-full">
                                         <svg 
-                                          width="100%" 
-                                          height="100%" 
-                                          viewBox={`0 0 ${chartWidth} ${height}`}
-                                          preserveAspectRatio="none"
-                                          style={{ display: 'block' }}
+                                          width={totalWidth} 
+                                          height={chartHeight + padding * 2} 
+                                          className="absolute"
+                                          style={{ left: padding, top: padding }}
                                         >
                                           <polyline
                                             points={points}
                                             fill="none"
                                             stroke="hsl(var(--primary))"
-                                            strokeWidth="3"
+                                            strokeWidth="2.5"
                                             strokeLinecap="round"
                                             strokeLinejoin="round"
                                           />
                                           {/* Data points */}
-                                          {pointCoords.map((coord, i) => {
-                                            const m = monthsWithData[i]
+                                          {monthsWithData.map((m, i) => {
                                             if (m.totalValue <= 0) return null
+                                            const x = (i / (monthsWithData.length - 1 || 1)) * chartWidth
+                                            const normalizedValue = (m.totalValue - minValue) / valueRange
+                                            const y = height - (normalizedValue * height)
                                             return (
                                               <circle
                                                 key={m.month}
-                                                cx={coord.x}
-                                                cy={coord.y}
-                                                r="3.5"
+                                                cx={x}
+                                                cy={y}
+                                                r="3"
                                                 fill="hsl(var(--primary))"
                                               />
                                             )
