@@ -13,7 +13,8 @@ import {
   Palette,
   TrendingUp,
   Menu,
-  Calculator
+  Calculator,
+  Target
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -63,6 +64,12 @@ export const navigation: NavItem[] = [
     title: 'Forecast',
     href: '/forecast',
     icon: Calendar,
+    roles: ['admin'], // Admin only
+  },
+  {
+    title: 'Leads',
+    href: '/leads',
+    icon: Target,
     roles: ['admin'], // Admin only
   },
   {

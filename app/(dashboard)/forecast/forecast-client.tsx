@@ -16,7 +16,6 @@ import {
 import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
-import { getLeads } from '@/app/actions/leads'
 import { getMonthlySummary } from '@/app/actions/monthly-summary'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import Link from 'next/link'
@@ -38,7 +37,6 @@ export default function ForecastPageClient() {
   const [xeroConnected, setXeroConnected] = useState(false)
   const [period, setPeriod] = useState<'current' | 'last' | 'next'>('current')
   const [financialData, setFinancialData] = useState<FinancialData | null>(null)
-  const [leads, setLeads] = useState<any[]>([])
   const [loadingFinancial, setLoadingFinancial] = useState(false)
   const [monthlySummary, setMonthlySummary] = useState<{
     months: Array<{
@@ -93,14 +91,6 @@ export default function ForecastPageClient() {
         if (isConnected) {
           await loadFinancialData()
         }
-      }
-
-      // Load leads
-      const leadsResult = await getLeads()
-      if (leadsResult.error) {
-        console.error('Error loading leads:', leadsResult.error)
-      } else {
-        setLeads(leadsResult.leads || [])
       }
 
       // Load monthly summary data
@@ -204,11 +194,6 @@ export default function ForecastPageClient() {
     }
   }
 
-  const totalLeadsHours = leads.reduce((sum, lead) => sum + (lead.quoted_hours || 0), 0)
-  // Simplified: Estimate revenue from leads (assuming £X per hour)
-  // This would be configurable in production
-  const estimatedHourlyRate = 75 // Placeholder - should be configurable
-  const potentialRevenue = totalLeadsHours * estimatedHourlyRate
 
   if (loading) {
     return (
@@ -235,24 +220,12 @@ export default function ForecastPageClient() {
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-background">
-        <div className="flex h-16 items-center justify-between px-6">
+        <div className="flex h-16 items-center px-6">
           <div>
             <h1 className="text-2xl font-semibold">Forecast</h1>
             <p className="text-sm text-muted-foreground">
               Project forecasting and planning
             </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <Select value={period} onValueChange={(value: 'current' | 'last' | 'next') => setPeriod(value)}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="last">Last Month</SelectItem>
-                <SelectItem value="current">Current Month</SelectItem>
-                <SelectItem value="next">Next Month</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </div>
       </div>
@@ -282,16 +255,38 @@ export default function ForecastPageClient() {
             </Card>
           )}
 
-          {/* Financial Overview */}
+          {/* Financial Overview - Period Selector */}
           {xeroConnected && (
-            <div className="space-y-4">
-              {financialData?.fromCache && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                  <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                  <span>Showing cached financial data. Xero connection unavailable.</span>
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Financial Overview</CardTitle>
+                    <CardDescription>
+                      Revenue, expenses, and profit for the selected period
+                    </CardDescription>
+                  </div>
+                  <Select value={period} onValueChange={(value: 'current' | 'last' | 'next') => setPeriod(value)}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="last">Last Month</SelectItem>
+                      <SelectItem value="current">Current Month</SelectItem>
+                      <SelectItem value="next">Next Month</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {financialData?.fromCache && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
+                      <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                      <span>Showing cached financial data. Xero connection unavailable.</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -345,8 +340,10 @@ export default function ForecastPageClient() {
                   )}
                 </CardContent>
               </Card>
-              </div>
-            </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           {/* Monthly Summary Table */}
