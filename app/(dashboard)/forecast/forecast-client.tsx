@@ -530,15 +530,15 @@ export default function ForecastPageClient() {
                   <div className="overflow-auto max-h-[600px]">
                     <div className="min-w-full">
                       <Table>
-                        <TableHeader className="sticky top-0 z-30 bg-background">
+                        <TableHeader className="sticky top-0 z-30 bg-background border-b">
                           <TableRow>
-                            <TableHead className="sticky left-0 z-40 bg-background border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                            <TableHead className="sticky left-0 z-40 bg-background border-r border-b min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                               Client
                             </TableHead>
                             {clientSpend.months.map((month) => {
                               const monthDate = parseISO(`${month}-01`)
                               return (
-                                <TableHead key={month} className="text-right min-w-[130px] whitespace-nowrap">
+                                <TableHead key={month} className="text-right min-w-[130px] whitespace-nowrap border-l border-b">
                                   {format(monthDate, 'MMM yyyy')}
                                 </TableHead>
                               )
@@ -559,7 +559,7 @@ export default function ForecastPageClient() {
                               {clientSpend.months.map((month) => {
                                 const spend = client.monthlySpend[month] || 0
                                 return (
-                                  <TableCell key={month} className="text-right whitespace-nowrap">
+                                  <TableCell key={month} className="text-right whitespace-nowrap border-l">
                                     {spend > 0 ? (
                                       `£${spend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                     ) : (
@@ -577,26 +577,28 @@ export default function ForecastPageClient() {
                   
                   {/* Sticky totals row at bottom */}
                   <div className="sticky bottom-0 z-30 bg-background border-t border-b">
-                    <Table>
-                      <TableBody>
-                        <TableRow className="bg-muted/50 font-semibold">
-                          <TableCell className="sticky left-0 z-40 bg-muted/50 border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                            Total
-                          </TableCell>
-                          {clientSpend.months.map((month) => {
-                            const monthTotal = clientSpend.clients.reduce(
-                              (sum, client) => sum + (client.monthlySpend[month] || 0),
-                              0
-                            )
-                            return (
-                              <TableCell key={month} className="text-right whitespace-nowrap">
-                                £{monthTotal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </TableCell>
-                            )
-                          })}
-                        </TableRow>
-                      </TableBody>
-                    </Table>
+                    <div className="min-w-full">
+                      <Table>
+                        <TableBody>
+                          <TableRow className="bg-muted/50 font-semibold">
+                            <TableCell className="sticky left-0 z-40 bg-muted/50 border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                              Total
+                            </TableCell>
+                            {clientSpend.months.map((month) => {
+                              const monthTotal = clientSpend.clients.reduce(
+                                (sum, client) => sum + (client.monthlySpend[month] || 0),
+                                0
+                              )
+                              return (
+                                <TableCell key={month} className="text-right whitespace-nowrap border-l">
+                                  £{monthTotal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </TableCell>
+                              )
+                            })}
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
                 </div>
               ) : (
