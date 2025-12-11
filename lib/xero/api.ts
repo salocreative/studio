@@ -473,14 +473,23 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
   
   const connection = connectionResult.connection
   
-  // Check cache first (if data is less than 24 hours old, use it)
+  // Check cache first, but only use it if:
+  // 1. Cache is less than 1 hour old, OR
+  // 2. Cache is older but connection wasn't recently updated (indicating reconnection)
   const cached = await getCachedFinancialData(connection.tenant_id, startDate, endDate)
   if (cached) {
     const cacheAge = Date.now() - new Date(cached.cached_at).getTime()
-    const oneDayInMs = 24 * 60 * 60 * 1000
+    const oneHourInMs = 60 * 60 * 1000
     
-    if (cacheAge < oneDayInMs) {
-      console.log('Returning cached financial data (less than 24 hours old)')
+    // Check when connection was last updated (to detect reconnection)
+    const connectionUpdatedAt = connection.updated_at ? new Date(connection.updated_at).getTime() : 0
+    const cacheCreatedAt = new Date(cached.cached_at).getTime()
+    
+    // Use cache only if:
+    // - Cache is less than 1 hour old, AND
+    // - Connection wasn't updated after cache was created (no recent reconnection)
+    if (cacheAge < oneHourInMs && connectionUpdatedAt <= cacheCreatedAt) {
+      console.log('Returning cached financial data (less than 1 hour old and connection not recently updated)')
       return {
         success: true,
         revenue: Number(cached.revenue || 0),
@@ -492,6 +501,10 @@ export async function fetchXeroFinancialData(startDate: string, endDate: string)
         },
         fromCache: true,
       }
+    } else if (connectionUpdatedAt > cacheCreatedAt) {
+      console.log('Connection was updated after cache was created, fetching fresh data...')
+    } else {
+      console.log('Cache is older than 1 hour, fetching fresh data...')
     }
   }
   
