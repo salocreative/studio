@@ -117,6 +117,10 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     }
   })
   
+  // Track completed board IDs to avoid falling back to global mappings for these boards
+  // (since they may have different column structures than active boards)
+  const completedBoardIds = new Set<string>()
+  
   // If including completed boards, fetch those as well
   if (includeCompletedBoards) {
     const { data: completedBoards } = await supabase
@@ -125,6 +129,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     
     completedBoards?.forEach(cb => {
       mappedBoardIds.add(cb.monday_board_id)
+      completedBoardIds.add(cb.monday_board_id)
     })
     
     // Also include leads board if configured (it needs column mappings too)
@@ -156,6 +161,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
       if (hasOwnMappings) {
         // Has its own mappings, include it
         mappedBoardIds.add(completedBoardId)
+        completedBoardIds.add(completedBoardId)
       } else {
         // No own mappings - check if it's a Flexi-Design board (by name) and inherit from other Flexi-Design boards
         const isFlexiDesignBoard = flexiDesignCompletedBoard.board_name?.toLowerCase().includes('flexi') ?? false
@@ -206,6 +212,8 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
                       // Found a Flexi-Design board with mappings - include completed board
                       // Mappings will be inherited in the column lookup function
                       mappedBoardIds.add(completedBoardId)
+                      // Note: Flexi-Design boards can inherit, so we don't add to completedBoardIds
+                      // (they have special inheritance logic in getColumnId)
                     }
                   }
                 }
@@ -255,7 +263,10 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
   const flexiDesignBoardMappings = new Map<string, string>() // column_type -> column_id
   
   // Helper to get column ID for a board (prioritize board-specific, fallback to other Flexi-Design boards, then global)
-  function getColumnId(boardId: string, columnType: string, boardName?: string): string | undefined {
+  // For completed boards, avoid falling back to global mappings for critical columns (they may have different structures)
+  function getColumnId(boardId: string, columnType: string, boardName?: string, requireBoardSpecific: boolean = false): string | undefined {
+    const isCompletedBoard = completedBoardIds.has(boardId)
+    
     // First, try board-specific mappings
     const boardMappings = columnMappingsByBoard.get(boardId)
     if (boardMappings?.get(columnType)) {
@@ -287,7 +298,15 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
       }
     }
     
-    // Fallback to global mappings
+    // For completed boards, don't fall back to global mappings for critical columns like quote_value
+    // (they likely have different column structures)
+    // Also respect the requireBoardSpecific flag
+    if (isCompletedBoard && (columnType === 'quote_value' || requireBoardSpecific)) {
+      // Return undefined - this board needs its own mapping configured
+      return undefined
+    }
+    
+    // Fallback to global mappings (for active boards or non-critical columns)
     return globalMappings.get(columnType)
   }
 
@@ -346,7 +365,9 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     // Get client column ID for this board (from parent items)
     const clientColumnId = getColumnId(board.id, 'client', board.name)
     // Get quote_value column ID for this board (from parent items)
-    const quoteValueColumnId = getColumnId(board.id, 'quote_value', board.name)
+    // For completed boards, require board-specific mapping (don't fall back to global)
+    const isCompletedBoard = completedBoardIds.has(board.id)
+    const quoteValueColumnId = getColumnId(board.id, 'quote_value', board.name, isCompletedBoard)
 
     for (const item of board.items_page.items || []) {
       // Find client name from column values using the mapped column
