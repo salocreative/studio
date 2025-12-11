@@ -99,10 +99,12 @@ export async function getClientSpendByMonth(
           }
         }
 
-        // Fallback to estimated value if no quote_value
-        const estimatedHourlyRate = 75 // Should match forecast page
-        const estimatedValue = project.quoted_hours ? Number(project.quoted_hours) * estimatedHourlyRate : 0
-        const finalValue = projectValue || estimatedValue
+        // Skip projects without quote_value
+        if (!projectValue || isNaN(projectValue)) {
+          return
+        }
+
+        const finalValue = projectValue
 
         // Initialize client if not exists
         if (!clientData[clientName]) {
