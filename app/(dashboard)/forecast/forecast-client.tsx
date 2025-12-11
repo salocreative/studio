@@ -523,55 +523,64 @@ export default function ForecastPageClient() {
                 Total project spend by client over the last 12 months from completed projects. Based on completed_date field.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0">
               {clientSpend && clientSpend.clients.length > 0 ? (
-                <div className="overflow-x-auto -mx-6 px-6">
-                  <div className="inline-block min-w-full align-middle">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="sticky left-0 z-20 bg-background border-r min-w-[180px]">
-                            Client
-                          </TableHead>
-                          {clientSpend.months.map((month) => {
-                            const monthDate = parseISO(`${month}-01`)
-                            return (
-                              <TableHead key={month} className="text-right min-w-[130px] whitespace-nowrap">
-                                {format(monthDate, 'MMM yyyy')}
-                              </TableHead>
-                            )
-                          })}
-                          <TableHead className="text-right sticky right-0 z-20 bg-background border-l min-w-[130px] font-semibold">
-                            Total
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {clientSpend.clients.map((client) => (
-                          <TableRow key={client.clientName}>
-                            <TableCell className="sticky left-0 z-10 bg-background font-medium border-r min-w-[180px]">
-                              {client.clientName}
-                            </TableCell>
+                <div className="relative">
+                  {/* Table container with fixed height and scrolling */}
+                  <div className="overflow-auto max-h-[600px]">
+                    <div className="min-w-full">
+                      <Table>
+                        <TableHeader className="sticky top-0 z-30 bg-background">
+                          <TableRow>
+                            <TableHead className="sticky left-0 z-40 bg-background border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                              Client
+                            </TableHead>
                             {clientSpend.months.map((month) => {
-                              const spend = client.monthlySpend[month] || 0
+                              const monthDate = parseISO(`${month}-01`)
                               return (
-                                <TableCell key={month} className="text-right whitespace-nowrap">
-                                  {spend > 0 ? (
-                                    `£${spend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </TableCell>
+                                <TableHead key={month} className="text-right min-w-[130px] whitespace-nowrap">
+                                  {format(monthDate, 'MMM yyyy')}
+                                </TableHead>
                               )
                             })}
-                            <TableCell className="text-right sticky right-0 z-10 bg-background font-semibold border-l whitespace-nowrap">
-                              £{client.totalSpend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </TableCell>
                           </TableRow>
-                        ))}
-                        {/* Totals Row */}
+                        </TableHeader>
+                        <TableBody>
+                          {clientSpend.clients.map((client) => (
+                            <TableRow key={client.clientName}>
+                              <TableCell className="sticky left-0 z-20 bg-background border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                                <div>
+                                  <div className="font-medium">{client.clientName}</div>
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    Total: £{client.totalSpend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                              </TableCell>
+                              {clientSpend.months.map((month) => {
+                                const spend = client.monthlySpend[month] || 0
+                                return (
+                                  <TableCell key={month} className="text-right whitespace-nowrap">
+                                    {spend > 0 ? (
+                                      `£${spend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </TableCell>
+                                )
+                              })}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                  
+                  {/* Sticky totals row at bottom */}
+                  <div className="sticky bottom-0 z-30 bg-background border-t border-b">
+                    <Table>
+                      <TableBody>
                         <TableRow className="bg-muted/50 font-semibold">
-                          <TableCell className="sticky left-0 z-10 bg-muted border-r min-w-[180px]">
+                          <TableCell className="sticky left-0 z-40 bg-muted/50 border-r min-w-[200px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
                             Total
                           </TableCell>
                           {clientSpend.months.map((month) => {
@@ -585,16 +594,13 @@ export default function ForecastPageClient() {
                               </TableCell>
                             )
                           })}
-                          <TableCell className="text-right sticky right-0 z-10 bg-muted border-l whitespace-nowrap">
-                            £{clientSpend.clients.reduce((sum, client) => sum + client.totalSpend, 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </TableCell>
                         </TableRow>
                       </TableBody>
                     </Table>
                   </div>
                 </div>
               ) : (
-                <div className="text-center py-12 text-muted-foreground">
+                <div className="text-center py-12 text-muted-foreground px-6">
                   <p className="mb-2">No client spend data available</p>
                   <p className="text-sm">
                     This could be because:
