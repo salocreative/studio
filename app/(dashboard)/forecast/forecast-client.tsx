@@ -453,13 +453,13 @@ export default function ForecastPageClient() {
                                     const points = pointCoords.map(p => `${p.x},${p.y}`).join(' ')
                                     
                                     return (
-                                      <div className="relative h-full w-full" style={{ minHeight: '60px' }}>
+                                      <div className="relative h-full w-full" style={{ minHeight: '60px', padding: `${paddingY}px ${paddingX}px` }}>
                                         <svg 
-                                          width={chartWidth} 
-                                          height={height} 
-                                          className="absolute"
-                                          style={{ left: paddingX, top: paddingY }}
+                                          width="100%" 
+                                          height="100%" 
                                           viewBox={`0 0 ${chartWidth} ${height}`}
+                                          preserveAspectRatio="none"
+                                          style={{ display: 'block' }}
                                         >
                                           <polyline
                                             points={points}
