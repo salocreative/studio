@@ -361,90 +361,88 @@ export default function ForecastPageClient() {
               {monthlySummary && monthlySummary.months.length > 0 ? (
                 <TooltipProvider>
                   <div className="rounded-lg border overflow-hidden">
-                    <div ref={tableScrollRef} className="overflow-x-auto">
-                      <div className="inline-block min-w-full align-middle">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="sticky left-0 z-30 bg-background border-r min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Metric
-                              </TableHead>
-                              {monthlySummary.months.map((monthData) => {
-                                const monthDate = parseISO(`${monthData.month}-01`)
-                                return (
-                                  <TableHead key={monthData.month} className="text-right min-w-[130px] whitespace-nowrap">
-                                    {format(monthDate, 'MMM yyyy')}
-                                  </TableHead>
-                                )
-                              })}
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {/* Total Billable Work Row */}
-                            <TableRow>
-                              <TableCell className="sticky left-0 z-20 bg-background border-r font-medium min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Total Billable Work
-                              </TableCell>
-                              {monthlySummary.months.map((monthData) => (
-                                <TableCell key={monthData.month} className="text-right">
-                                  {monthData.clientBreakdown.length > 0 ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="cursor-help underline decoration-dotted">
-                                          £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" className="max-w-[300px]">
-                                        <div className="space-y-1">
-                                          <div className="font-semibold mb-2">Client Breakdown:</div>
-                                          {monthData.clientBreakdown.map((client) => (
-                                            <div key={client.clientName} className="flex justify-between gap-4 text-sm">
-                                              <span>{client.clientName}:</span>
-                                              <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                            {/* Hours Quoted Row */}
-                            <TableRow>
-                              <TableCell className="sticky left-0 z-20 bg-background border-r font-medium min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Hours Quoted
-                              </TableCell>
-                              {monthlySummary.months.map((monthData) => (
-                                <TableCell key={monthData.month} className="text-right">
-                                  {monthData.totalQuotedHours > 0 ? (
-                                    `${monthData.totalQuotedHours.toFixed(1)}h`
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                            {/* Number of Projects Row */}
-                            <TableRow>
-                              <TableCell className="sticky left-0 z-20 bg-background border-r font-medium min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Number of Projects
-                              </TableCell>
-                              {monthlySummary.months.map((monthData) => (
-                                <TableCell key={monthData.month} className="text-right">
-                                  {monthData.projectCount > 0 ? (
-                                    monthData.projectCount
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                          </TableBody>
-                        </Table>
-                      </div>
+                    <div ref={tableScrollRef} className="overflow-x-auto relative">
+                      <table className="w-full caption-bottom text-sm border-collapse">
+                        <thead className="[&_tr]:border-b">
+                          <tr className="hover:bg-muted/50 border-b transition-colors">
+                            <th className="sticky left-0 z-30 bg-background border-r text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                              Metric
+                            </th>
+                            {monthlySummary.months.map((monthData) => {
+                              const monthDate = parseISO(`${monthData.month}-01`)
+                              return (
+                                <th key={monthData.month} className="text-right text-foreground h-10 px-2 align-middle font-medium whitespace-nowrap min-w-[130px]">
+                                  {format(monthDate, 'MMM yyyy')}
+                                </th>
+                              )
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody className="[&_tr:last-child]:border-0">
+                          {/* Total Billable Work Row */}
+                          <tr className="hover:bg-muted/50 border-b transition-colors">
+                            <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                              Total Billable Work
+                            </td>
+                            {monthlySummary.months.map((monthData) => (
+                              <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
+                                {monthData.clientBreakdown.length > 0 ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-help underline decoration-dotted">
+                                        £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[300px]">
+                                      <div className="space-y-1">
+                                        <div className="font-semibold mb-2">Client Breakdown:</div>
+                                        {monthData.clientBreakdown.map((client) => (
+                                          <div key={client.clientName} className="flex justify-between gap-4 text-sm">
+                                            <span>{client.clientName}:</span>
+                                            <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                          {/* Hours Quoted Row */}
+                          <tr className="hover:bg-muted/50 border-b transition-colors">
+                            <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                              Hours Quoted
+                            </td>
+                            {monthlySummary.months.map((monthData) => (
+                              <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
+                                {monthData.totalQuotedHours > 0 ? (
+                                  `${monthData.totalQuotedHours.toFixed(1)}h`
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                          {/* Number of Projects Row */}
+                          <tr className="hover:bg-muted/50 border-b transition-colors">
+                            <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                              Number of Projects
+                            </td>
+                            {monthlySummary.months.map((monthData) => (
+                              <td key={monthData.month} className="text-right p-2 align-middle whitespace-nowrap">
+                                {monthData.projectCount > 0 ? (
+                                  monthData.projectCount
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </TooltipProvider>
