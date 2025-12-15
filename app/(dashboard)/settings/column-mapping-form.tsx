@@ -121,12 +121,12 @@ export function ColumnMappingForm() {
         const leadsBoardId = leadsResult.board?.monday_board_id || null
         const flexiCompletedBoardId = flexiCompletedResult.board?.monday_board_id || null
 
-        const mainBoards = mappingsResult.boards.filter(b => 
+        const mainBoards = mappingsResult.boards.filter((b: { id: string; name: string; mappings: Record<string, string>; isFlexiDesign: boolean }) => 
           !b.isFlexiDesign && 
           !completedBoardIds.has(b.id) && 
           b.id !== leadsBoardId
         )
-        const flexiBoards = mappingsResult.boards.filter(b => 
+        const flexiBoards = mappingsResult.boards.filter((b: { id: string; name: string; mappings: Record<string, string>; isFlexiDesign: boolean }) => 
           b.isFlexiDesign && 
           b.id !== flexiCompletedBoardId
         )
@@ -575,7 +575,7 @@ export function ColumnMappingForm() {
                           </SelectTrigger>
                           <SelectContent>
                             {allBoards
-                              .filter(b => !b.name.toLowerCase().startsWith('subitems of'))
+                              .filter((b: Board) => !b.name.toLowerCase().startsWith('subitems of'))
                               .map((board) => (
                                 <SelectItem key={board.id} value={board.id}>
                                   {board.name}
