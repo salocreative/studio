@@ -114,10 +114,10 @@ export function ColumnMappingForm() {
       const mappingsResult = await getAllBoardsWithMappings()
       
       if (mappingsResult.boards) {
-        const allBoardIds = new Set(mappingsResult.boards.map(b => b.id))
+        const allBoardIds = new Set(mappingsResult.boards.map((b: { id: string; name: string; mappings: Record<string, string>; isFlexiDesign: boolean }) => b.id))
         
         // Get configured board IDs to exclude
-        const completedBoardIds = new Set((completedResult.boards || []).map(b => b.monday_board_id))
+        const completedBoardIds = new Set((completedResult.boards || []).map((b: { monday_board_id: string }) => b.monday_board_id))
         const leadsBoardId = leadsResult.board?.monday_board_id || null
         const flexiCompletedBoardId = flexiCompletedResult.board?.monday_board_id || null
 
