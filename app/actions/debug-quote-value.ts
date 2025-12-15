@@ -74,20 +74,21 @@ export async function debugQuoteValueMapping() {
           let parsedValue: number | null = null
           
           if (columnData.value !== null && columnData.value !== undefined) {
+            let tempValue: number | null = null
             if (typeof columnData.value === 'number') {
-              parsedValue = columnData.value
+              tempValue = columnData.value
             } else if (typeof columnData.value === 'object' && columnData.value.value !== undefined) {
-              parsedValue = typeof columnData.value.value === 'number'
+              tempValue = typeof columnData.value.value === 'number'
                 ? columnData.value.value
                 : parseFloat(String(columnData.value.value))
             } else if (typeof columnData.value === 'string') {
-              parsedValue = parseFloat(columnData.value)
+              tempValue = parseFloat(columnData.value)
             } else {
-              parsedValue = parseFloat(String(columnData.value))
+              tempValue = parseFloat(String(columnData.value))
             }
             
-            if (isNaN(parsedValue)) {
-              parsedValue = null
+            if (tempValue !== null && !isNaN(tempValue)) {
+              parsedValue = tempValue
             }
           } else if (columnData.text) {
             const textValue = parseFloat(columnData.text.replace(/[£,$,\s]/g, ''))
