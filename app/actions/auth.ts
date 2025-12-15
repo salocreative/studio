@@ -21,9 +21,15 @@ export async function requireAdmin() {
   try {
     const { data: userProfile } = await supabase
       .from('users')
-      .select('role')
+      .select('role, deleted_at')
       .eq('id', user.id)
+      .is('deleted_at', null) // Exclude soft-deleted users
       .maybeSingle()
+    
+    // If user is soft-deleted, redirect to login
+    if (userProfile?.deleted_at) {
+      redirect('/auth/login')
+    }
 
     if (userProfile?.role) {
       const role = userProfile.role as string

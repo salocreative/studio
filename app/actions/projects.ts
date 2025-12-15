@@ -230,6 +230,7 @@ export async function getProjectDetails(projectId: string) {
       const { data: users } = await adminClient
         .from('users')
         .select('id, email, full_name')
+        .is('deleted_at', null) // Only include active users
       allUsers = users || []
     }
 

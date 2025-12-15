@@ -16,8 +16,9 @@ export async function getUsers() {
   // Check if user is admin using regular client (checks own profile)
   const { data: userProfile } = await supabase
     .from('users')
-    .select('role')
+    .select('role, deleted_at')
     .eq('id', user.id)
+    .is('deleted_at', null) // Exclude soft-deleted users
     .single()
 
   if (userProfile?.role !== 'admin') {
@@ -34,6 +35,7 @@ export async function getUsers() {
     const { data, error } = await adminClient
       .from('users')
       .select('*')
+      .is('deleted_at', null) // Only return active (non-deleted) users
       .order('created_at', { ascending: false })
 
     if (error) throw error
@@ -72,15 +74,47 @@ export async function createUser(
   }
 
   try {
-    // Check if user already exists in our users table
+    // Check if user already exists in our users table (including soft-deleted)
+    // If soft-deleted, we can restore them instead of creating new
     const { data: existingProfile } = await supabase
       .from('users')
-      .select('id, email')
+      .select('id, email, deleted_at')
       .eq('email', email)
       .maybeSingle()
 
+    // If user exists but is soft-deleted, restore them instead of creating new
     if (existingProfile) {
-      return { error: 'User already exists in the system' }
+      if (existingProfile.deleted_at) {
+        // Restore the soft-deleted user
+        const adminClient = await createAdminClient()
+        if (!adminClient) {
+          return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+        }
+        
+        const { error: restoreError } = await adminClient
+          .from('users')
+          .update({ deleted_at: null })
+          .eq('id', existingProfile.id)
+        
+        if (restoreError) {
+          return { error: 'Failed to restore user' }
+        }
+        
+        // Re-enable auth user by removing deleted metadata
+        try {
+          await adminClient.auth.admin.updateUserById(existingProfile.id, {
+            user_metadata: { deleted: false },
+          })
+        } catch (authError) {
+          console.error('Error re-enabling auth user:', authError)
+          // Continue - profile is restored
+        }
+        
+        // Return success - user is restored, no need to create new
+        return { success: true, restored: true }
+      } else {
+        return { error: 'User already exists in the system' }
+      }
     }
 
     // Create new user via Supabase Admin API
@@ -331,28 +365,37 @@ export async function deleteUser(userId: string) {
     return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
   }
 
-  // Prevent deleting the last admin
+  // Prevent deleting the last admin (only count active admins)
   const { data: admins } = await adminClient
     .from('users')
     .select('id')
     .eq('role', 'admin')
+    .is('deleted_at', null) // Only count active admins
 
   if (admins?.length === 1 && admins[0].id === userId) {
     return { error: 'Cannot delete the last admin user' }
   }
 
   try {
-    // Delete user profile using admin client (bypasses RLS)
-    const { error } = await adminClient.from('users').delete().eq('id', userId)
+    // Soft delete: Set deleted_at timestamp instead of actually deleting
+    // This preserves all time entries and historical data
+    const { error } = await adminClient
+      .from('users')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', userId)
 
     if (error) throw error
 
-    // Delete auth user via admin API
+    // Disable auth user (don't delete - keeps auth record for audit trail)
+    // This prevents login but preserves the auth record
     try {
-      await adminClient.auth.admin.deleteUser(userId)
-    } catch (deleteError) {
-      console.error('Error deleting auth user:', deleteError)
-      // Continue even if auth deletion fails - profile is already deleted
+      // Use user metadata to mark as deleted instead of ban (ban might expire)
+      await adminClient.auth.admin.updateUserById(userId, {
+        user_metadata: { deleted: true, deleted_at: new Date().toISOString() },
+      })
+    } catch (updateError) {
+      console.error('Error disabling auth user:', updateError)
+      // Continue even if auth update fails - profile is already soft-deleted
     }
 
     return { success: true }

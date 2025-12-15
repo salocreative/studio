@@ -74,10 +74,12 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
 
     // Get all users using admin client (bypasses RLS)
     // Exclude users marked to be excluded from utilization calculations
+    // Exclude soft-deleted users
     const { data: users, error: usersError } = await adminClient
       .from('users')
       .select('*')
       .eq('exclude_from_utilization', false)
+      .is('deleted_at', null) // Only include active (non-deleted) users
       .order('full_name', { ascending: true, nullsFirst: false })
 
     if (usersError) throw usersError

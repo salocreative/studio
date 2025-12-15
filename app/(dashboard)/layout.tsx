@@ -46,9 +46,15 @@ export default async function DashboardLayout({
   try {
     const { data: userProfile, error: profileError } = await supabase
       .from('users')
-      .select('role')
+      .select('role, deleted_at')
       .eq('id', user.id)
+      .is('deleted_at', null) // Exclude soft-deleted users
       .maybeSingle()
+    
+    // If user is soft-deleted, redirect to login
+    if (userProfile?.deleted_at) {
+      redirect('/auth/login')
+    }
 
     if (profileError && profileError.code !== 'PGRST116') {
       // PGRST116 is "not found" which is fine for new users
