@@ -32,6 +32,7 @@ export interface Document {
   file_path: string
   file_name: string
   file_size: number | null
+  thumbnail_path: string | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -151,7 +152,8 @@ export async function createDocument(
   category: DocumentCategory,
   filePath: string,
   fileName: string,
-  fileSize: number | null
+  fileSize: number | null,
+  thumbnailPath: string | null = null
 ) {
   const supabase = await createClient()
 
@@ -181,6 +183,7 @@ export async function createDocument(
         file_path: filePath,
         file_name: fileName,
         file_size: fileSize,
+        thumbnail_path: thumbnailPath,
         created_by: user.id,
       })
       .select()
@@ -267,23 +270,31 @@ export async function deleteDocument(id: string) {
   }
 
   try {
-    // First get the document to get the file path
+    // First get the document to get the file path and thumbnail path
     const { data: document, error: fetchError } = await supabase
       .from('documents')
-      .select('file_path')
+      .select('file_path, thumbnail_path')
       .eq('id', id)
       .single()
 
     if (fetchError) throw fetchError
 
-    // Delete the file from storage
+    // Delete the file and thumbnail from storage
+    const filesToDelete: string[] = []
     if (document?.file_path) {
+      filesToDelete.push(document.file_path)
+    }
+    if (document?.thumbnail_path) {
+      filesToDelete.push(document.thumbnail_path)
+    }
+
+    if (filesToDelete.length > 0) {
       const { error: storageError } = await supabase.storage
         .from('documents')
-        .remove([document.file_path])
+        .remove(filesToDelete)
 
       if (storageError) {
-        console.error('Error deleting file from storage:', storageError)
+        console.error('Error deleting files from storage:', storageError)
         // Continue with database deletion even if storage deletion fails
       }
     }
@@ -326,5 +337,12 @@ export async function getDocumentDownloadUrl(filePath: string): Promise<{ error?
     console.error('Error generating download URL:', error)
     return { error: error instanceof Error ? error.message : 'Failed to generate download URL' }
   }
+}
+
+/**
+ * Get a signed URL for a thumbnail image
+ */
+export async function getThumbnailUrl(thumbnailPath: string): Promise<{ error?: string; url?: string }> {
+  return getDocumentDownloadUrl(thumbnailPath)
 }
 

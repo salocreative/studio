@@ -24,8 +24,9 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { FileText, Upload, Edit2, Trash2, Download, Plus, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getDocuments, createDocument, updateDocument, deleteDocument, getDocumentDownloadUrl, checkIsAdmin, type Document, type DocumentCategory } from '@/app/actions/documents'
+import { getDocuments, createDocument, updateDocument, deleteDocument, getDocumentDownloadUrl, getThumbnailUrl, checkIsAdmin, type Document, type DocumentCategory } from '@/app/actions/documents'
 import { createClient } from '@/lib/supabase/client'
+import { generatePdfThumbnail } from '@/lib/pdf-thumbnail'
 import { format } from 'date-fns'
 
 export function DocumentsPageContent() {
@@ -37,6 +38,7 @@ export function DocumentsPageContent() {
   const [editingDocument, setEditingDocument] = useState<Document | null>(null)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({})
 
   // Form state
   const [title, setTitle] = useState('')
@@ -74,6 +76,22 @@ export function DocumentsPageContent() {
         toast.error('Error loading documents', { description: result.error })
       } else if (result.success && result.documents) {
         setDocuments(result.documents)
+        
+        // Load thumbnail URLs for documents with thumbnails
+        const urls: Record<string, string> = {}
+        await Promise.all(
+          result.documents
+            .filter(doc => doc.thumbnail_path)
+            .map(async (doc) => {
+              if (doc.thumbnail_path) {
+                const thumbResult = await getThumbnailUrl(doc.thumbnail_path)
+                if (thumbResult.url) {
+                  urls[doc.id] = thumbResult.url
+                }
+              }
+            })
+        )
+        setThumbnailUrls(urls)
       }
     } catch (error) {
       console.error('Error loading documents:', error)
@@ -143,7 +161,7 @@ export function DocumentsPageContent() {
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
         const filePath = `documents/${fileName}`
 
-        // Upload to Supabase Storage
+        // Upload PDF to Supabase Storage
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('documents')
           .upload(filePath, file, {
@@ -165,6 +183,33 @@ export function DocumentsPageContent() {
           return
         }
 
+        // Generate and upload thumbnail
+        let thumbnailPath: string | null = null
+        try {
+          const thumbnailBlob = await generatePdfThumbnail(file, 400, 400)
+          if (thumbnailBlob) {
+            const thumbnailFileName = `${fileName.replace(/\.[^/.]+$/, '')}-thumb.png`
+            const thumbnailFilePath = `documents/thumbnails/${thumbnailFileName}`
+            
+            const { data: thumbnailUploadData, error: thumbnailUploadError } = await supabase.storage
+              .from('documents')
+              .upload(thumbnailFilePath, thumbnailBlob, {
+                contentType: 'image/png',
+                upsert: false,
+              })
+
+            if (!thumbnailUploadError && thumbnailUploadData?.path) {
+              thumbnailPath = thumbnailUploadData.path
+            } else {
+              console.warn('Failed to upload thumbnail:', thumbnailUploadError)
+              // Continue without thumbnail - not critical
+            }
+          }
+        } catch (thumbnailError) {
+          console.warn('Error generating thumbnail:', thumbnailError)
+          // Continue without thumbnail - not critical
+        }
+
         setUploading(false)
 
         // Save document metadata via server action
@@ -174,7 +219,8 @@ export function DocumentsPageContent() {
           category,
           uploadData.path,
           file.name,
-          file.size
+          file.size,
+          thumbnailPath
         )
 
         if (createResult.error) {
@@ -311,19 +357,47 @@ export function DocumentsPageContent() {
             {filteredDocuments.map((doc) => (
               <Card key={doc.id} className="flex flex-col overflow-hidden hover:shadow-lg transition-shadow">
                 {/* PDF Preview/Thumbnail */}
-                <div className="relative w-full h-48 bg-muted/50 flex items-center justify-center border-b overflow-hidden group">
-                  <FileText className="h-16 w-16 text-muted-foreground/50" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => handlePreview(doc)}
-                      className="text-xs"
-                    >
-                      <FileText className="h-3 w-3 mr-1" />
-                      Preview
-                    </Button>
-                  </div>
+                <div className="relative w-full h-48 bg-muted/50 border-b overflow-hidden group">
+                  {doc.thumbnail_path && thumbnailUrls[doc.id] ? (
+                    <>
+                      <img
+                        src={thumbnailUrls[doc.id]}
+                        alt={doc.title}
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          // Fallback to icon if thumbnail fails to load
+                          const target = e.target as HTMLImageElement
+                          target.style.display = 'none'
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handlePreview(doc)}
+                          className="text-xs"
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          Preview
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center relative">
+                      <FileText className="h-16 w-16 text-muted-foreground/50" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handlePreview(doc)}
+                          className="text-xs"
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          Preview
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <CardHeader>
                   <div className="flex items-start justify-between">
