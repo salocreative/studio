@@ -667,14 +667,14 @@ function BoardMappingEditor({
 }) {
   
   const renderColumnMapping = (
-    columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value',
+    columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status',
     label: string,
     description: string,
     columns: Column[],
     filterFn?: (col: Column) => boolean,
     isRequired: boolean = false
   ) => {
-    const isParent = columnType === 'client' || columnType === 'quote_value'
+    const isParent = columnType === 'client' || columnType === 'quote_value' || columnType === 'due_date' || columnType === 'completed_date' || columnType === 'status'
     const isConfigured = !!mappings[columnType]
     
     return (
