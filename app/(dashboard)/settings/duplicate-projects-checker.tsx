@@ -126,7 +126,7 @@ export function DuplicateProjectsChecker() {
             Check for Duplicates
           </Button>
           
-          {'success' in result && result.success && result.stats && 
+          {result && 'success' in result && result.success && result.stats && 
            (result.stats.duplicatesByItemIdCount > 0 || result.stats.duplicatesByNameCount > 0) && (
             <Button onClick={handleFix} disabled={fixing} variant="destructive">
               {fixing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
