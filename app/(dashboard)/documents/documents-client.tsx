@@ -24,7 +24,8 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { FileText, Upload, Edit2, Trash2, Download, Plus, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getDocuments, createDocument, updateDocument, deleteDocument, uploadDocumentFile, getDocumentDownloadUrl, checkIsAdmin, type Document, type DocumentCategory } from '@/app/actions/documents'
+import { getDocuments, createDocument, updateDocument, deleteDocument, getDocumentDownloadUrl, checkIsAdmin, type Document, type DocumentCategory } from '@/app/actions/documents'
+import { createClient } from '@/lib/supabase/client'
 import { format } from 'date-fns'
 
 export function DocumentsPageContent() {
@@ -133,26 +134,45 @@ export function DocumentsPageContent() {
         }
 
         setUploading(true)
-        const uploadResult = await uploadDocumentFile(file)
+        
+        // Upload file directly to Supabase Storage from client
+        const supabase = createClient()
+        
+        // Generate unique filename
+        const fileExt = file.name.split('.').pop()
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
+        const filePath = `documents/${fileName}`
+
+        // Upload to Supabase Storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(filePath, file, {
+            contentType: file.type,
+            upsert: false,
+          })
+
+        if (uploadError) {
+          setUploading(false)
+          setSaving(false)
+          toast.error('Error uploading file', { description: uploadError.message })
+          return
+        }
+
+        if (!uploadData?.path) {
+          setUploading(false)
+          setSaving(false)
+          toast.error('Failed to upload file')
+          return
+        }
+
         setUploading(false)
 
-        if (uploadResult.error) {
-          toast.error('Error uploading file', { description: uploadResult.error })
-          setSaving(false)
-          return
-        }
-
-        if (!uploadResult.filePath) {
-          toast.error('Failed to upload file')
-          setSaving(false)
-          return
-        }
-
+        // Save document metadata via server action
         const createResult = await createDocument(
           title.trim(),
           description.trim() || null,
           category,
-          uploadResult.filePath,
+          uploadData.path,
           file.name,
           file.size
         )
