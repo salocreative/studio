@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/table'
 
 type DuplicateResult = {
-  success: true
+  success: boolean
   duplicates?: Array<{
     name: string
     client_name: string | null
@@ -45,9 +45,7 @@ type DuplicateResult = {
     duplicatesByItemIdInDbCount: number
   }
   message?: string
-} | {
-  success?: never
-  error: string
+  error?: string
 }
 
 export function DuplicateProjectsChecker() {
@@ -59,7 +57,7 @@ export function DuplicateProjectsChecker() {
     setLoading(true)
     setResult(null)
     try {
-      const checkResult = await checkDuplicateFlexiDesignProjects()
+      const checkResult = await checkDuplicateFlexiDesignProjects() as DuplicateResult
       setResult(checkResult)
       
       if ('error' in checkResult && checkResult.error) {
