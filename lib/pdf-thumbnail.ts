@@ -7,8 +7,9 @@ export async function generatePdfThumbnail(file: File, maxWidth: number = 400, m
     // Dynamically import pdfjs-dist
     const pdfjsLib = await import('pdfjs-dist')
     
-    // Set worker source
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
+    // Set worker source - use local worker file from public folder
+    // This avoids CDN issues and works reliably in all environments
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.mjs'
     
     // Load the PDF
     const arrayBuffer = await file.arrayBuffer()
