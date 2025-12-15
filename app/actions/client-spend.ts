@@ -79,7 +79,7 @@ export async function getClientSpendByMonth(
       .from('monday_projects')
       .select('id, name, client_name, quoted_hours, completed_date, quote_value, monday_data, monday_board_id')
       .eq('status', 'locked')
-      .order('completed_date', { ascending: false, nullsLast: true })
+      .order('completed_date', { ascending: false, nullsFirst: false })
 
     if (projectsError) throw projectsError
 
