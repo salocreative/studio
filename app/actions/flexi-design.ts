@@ -57,15 +57,26 @@ export async function getFlexiDesignClients() {
     // Get Flexi-Design board IDs
     const flexiDesignBoardIds = await getFlexiDesignBoardIds()
     
+    // Get Flexi-Design completed board ID to exclude it from active projects
+    const completedBoardResult = await getFlexiDesignCompletedBoard()
+    const completedBoardId = completedBoardResult.success && completedBoardResult.board 
+      ? completedBoardResult.board.monday_board_id 
+      : null
+    
     if (flexiDesignBoardIds.size === 0) {
       return { success: true, clients: [] }
     }
 
-    // Get all Flexi-Design projects with quoted_hours (from active boards)
+    // Filter out completed board from active board IDs
+    const activeBoardIds = Array.from(flexiDesignBoardIds).filter(
+      boardId => !completedBoardId || boardId !== completedBoardId
+    )
+
+    // Get all Flexi-Design projects with quoted_hours (from active boards, excluding completed board)
     const { data: allProjects, error: projectsError } = await supabase
       .from('monday_projects')
       .select('id, name, client_name, status, created_at, quoted_hours')
-      .in('monday_board_id', Array.from(flexiDesignBoardIds))
+      .in('monday_board_id', activeBoardIds)
       .in('status', ['active', 'archived', 'locked'])
       .order('created_at', { ascending: false })
 
@@ -73,9 +84,7 @@ export async function getFlexiDesignClients() {
 
     // Get completed projects from the completed board
     let completedProjects: any[] = []
-    const completedBoardResult = await getFlexiDesignCompletedBoard()
-    if (completedBoardResult.success && completedBoardResult.board) {
-      const completedBoardId = completedBoardResult.board.monday_board_id
+    if (completedBoardId) {
       const { data: completed, error: completedError } = await supabase
         .from('monday_projects')
         .select('id, name, client_name, status, created_at, quoted_hours')
@@ -262,6 +271,12 @@ export async function getFlexiDesignClientDetail(clientName: string) {
     // Get Flexi-Design board IDs
     const flexiDesignBoardIds = await getFlexiDesignBoardIds()
     
+    // Get Flexi-Design completed board ID to exclude it from active projects
+    const completedBoardResult = await getFlexiDesignCompletedBoard()
+    const completedBoardId = completedBoardResult.success && completedBoardResult.board 
+      ? completedBoardResult.board.monday_board_id 
+      : null
+    
     if (flexiDesignBoardIds.size === 0) {
       return { error: 'No Flexi-Design boards configured' }
     }
@@ -297,11 +312,16 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       clientData = data
     }
 
-    // Get all projects for this client from Flexi-Design boards with quoted_hours
+    // Filter out completed board from active board IDs
+    const activeBoardIds = Array.from(flexiDesignBoardIds).filter(
+      boardId => !completedBoardId || boardId !== completedBoardId
+    )
+
+    // Get all projects for this client from active Flexi-Design boards (excluding completed board)
     const { data: projects, error: projectsError } = await supabase
       .from('monday_projects')
       .select('id, name, status, created_at, quoted_hours')
-      .in('monday_board_id', Array.from(flexiDesignBoardIds))
+      .in('monday_board_id', activeBoardIds)
       .eq('client_name', clientName)
       .in('status', ['active', 'archived', 'locked'])
       .order('created_at', { ascending: false })
@@ -402,10 +422,7 @@ export async function getFlexiDesignClientDetail(clientName: string) {
     let totalCompletedQuotedHours = 0
     let totalCompletedLoggedHours = 0
     
-    const completedBoardResult = await getFlexiDesignCompletedBoard()
-    if (completedBoardResult.success && completedBoardResult.board) {
-      const completedBoardId = completedBoardResult.board.monday_board_id
-      
+    if (completedBoardId) {
       // Get completed projects for this client from the completed board
       const { data: completedProjects, error: completedProjectsError } = await supabase
         .from('monday_projects')
