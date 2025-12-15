@@ -74,7 +74,7 @@ export async function getYearlyFinancialData() {
 
       // Fetch fresh data for this month
       const result = await fetchXeroFinancialData(startDateStr, endDateStr)
-      if (result.success) {
+      if ('success' in result && result.success) {
         monthlyData.push({
           month: monthKey,
           revenue: result.revenue || 0,

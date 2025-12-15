@@ -158,12 +158,9 @@ export default function ForecastPageClient() {
       const dates = getDateRange()
       const result = await getFinancialData(dates.start, dates.end)
       
-      if (result.error) {
+      if ('error' in result && result.error) {
         console.error('Error loading financial data:', result.error)
-        // Only show error toast if we don't have cached data
-        if (!result.fromCache) {
-          toast.error('Error loading financial data', { description: result.error })
-        }
+        toast.error('Error loading financial data', { description: result.error })
         // Still set data to 0 so UI doesn't break
         setFinancialData({
           revenue: 0,
@@ -171,7 +168,7 @@ export default function ForecastPageClient() {
           profit: 0,
           period: { start: dates.start, end: dates.end },
         })
-      } else if (result.success) {
+      } else if ('success' in result && result.success) {
         console.log('Financial data loaded:', {
           revenue: result.revenue,
           expenses: result.expenses,
