@@ -85,18 +85,15 @@ export function DuplicateProjectsChecker() {
     try {
       const fixResult = await fixDuplicateFlexiDesignProjects()
       
-      if (fixResult.error) {
+      if ('error' in fixResult && fixResult.error) {
         toast.error(fixResult.error)
-        if (fixResult.errors && fixResult.errors.length > 0) {
-          console.error('Fix errors:', fixResult.errors)
-        }
-      } else {
+      } else if ('success' in fixResult) {
         const message = fixResult.message || 'Duplicates fixed successfully'
         if (fixResult.success) {
           toast.success(message)
         } else {
           toast.warning(message)
-          if (fixResult.errors && fixResult.errors.length > 0) {
+          if ('errors' in fixResult && fixResult.errors && fixResult.errors.length > 0) {
             console.error('Fix errors:', fixResult.errors)
           }
         }
