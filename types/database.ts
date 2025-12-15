@@ -317,6 +317,44 @@ export interface Database {
           updated_at?: string
         }
       }
+      documents: {
+        Row: {
+          id: string
+          title: string
+          description: string | null
+          category: 'hr' | 'sales'
+          file_path: string
+          file_name: string
+          file_size: number | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          description?: string | null
+          category: 'hr' | 'sales'
+          file_path: string
+          file_name: string
+          file_size?: number | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          description?: string | null
+          category?: 'hr' | 'sales'
+          file_path?: string
+          file_name?: string
+          file_size?: number | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -327,6 +365,7 @@ export interface Database {
     Enums: {
       user_role: 'admin' | 'designer' | 'employee'
       project_status: 'active' | 'archived' | 'locked'
+      document_category: 'hr' | 'sales'
     }
   }
 }

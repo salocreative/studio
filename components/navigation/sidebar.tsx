@@ -14,7 +14,8 @@ import {
   TrendingUp,
   Menu,
   Calculator,
-  Target
+  Target,
+  FileText
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -83,6 +84,12 @@ export const navigation: NavItem[] = [
     href: '/customers',
     icon: Users,
     roles: ['admin'], // Admin only
+  },
+  {
+    title: 'Documents',
+    href: '/documents',
+    icon: FileText,
+    roles: ['admin', 'designer', 'manager'], // All authenticated users can view documents
   },
   {
     title: 'Settings',

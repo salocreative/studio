@@ -273,7 +273,7 @@ function FlexiDesignPageContent() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* Box 1: Remaining Hours */}
                 <Card>
-                  <CardHeader className="pb-3">
+                  <CardHeader className="pb-1">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
                       Remaining Hours
                     </CardTitle>
@@ -286,60 +286,48 @@ function FlexiDesignPageContent() {
                         (clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)
                       )
                     )}>
-                      {clientDetail.remaining_hours.toFixed(1)}h
+                      {clientDetail.remaining_hours.toFixed(1)}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Credit added - Total quoted hours
-                    </p>
                   </CardContent>
                 </Card>
 
                 {/* Box 2: Total Projects */}
                 <Card>
-                  <CardHeader className="pb-3">
+                  <CardHeader className="pb-1">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Total Projects
+                      Completed projects
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-3xl font-bold">{clientDetail.total_projects}</div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {clientDetail.projects.length} active / {clientDetail.completed_projects?.length || 0} completed
-                    </p>
+                    <div className="text-3xl font-bold">{clientDetail.completed_projects?.length}</div>
                   </CardContent>
                 </Card>
 
                 {/* Box 3: Total Hours Used */}
                 <Card>
-                  <CardHeader className="pb-3">
+                  <CardHeader className="pb-1">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Total Hours Used
+                      Total hours used
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold">
-                      {((clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)).toFixed(1)}h
+                      {((clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)).toFixed(1)}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {(clientDetail.hours_used || 0) + (clientDetail.completed_logged_hours || 0)}h logged
-                    </p>
                   </CardContent>
                 </Card>
 
                 {/* Box 4: Avg Hours Per Month */}
                 <Card>
-                  <CardHeader className="pb-3">
+                  <CardHeader className="pb-1">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Avg Hours Per Month
+                      Avg hours per month
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold">
-                      {calculateAvgHoursPerMonth().toFixed(1)}h
+                      {calculateAvgHoursPerMonth().toFixed(1)}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Based on quoted hours
-                    </p>
                   </CardContent>
                 </Card>
               </div>
@@ -369,14 +357,14 @@ function FlexiDesignPageContent() {
                               <div className="text-xs text-muted-foreground mt-0.5">
                                 {format(new Date(project.created_at), 'MMM d, yyyy')}
                                 {project.total_logged_hours > 0 && (
-                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)}h logged</span>
+                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)} logged</span>
                                 )}
                               </div>
                             </div>
                             {project.quoted_hours && (
                               <div className="ml-4 text-right">
                                 <div className="text-lg font-bold text-primary">
-                                  {project.quoted_hours.toFixed(1)}h
+                                  {project.quoted_hours.toFixed(1)}
                                 </div>
                               </div>
                             )}
@@ -412,14 +400,14 @@ function FlexiDesignPageContent() {
                                   ? format(new Date(project.completed_date), 'MMM d, yyyy')
                                   : format(new Date(project.created_at), 'MMM d, yyyy')}
                                 {project.total_logged_hours > 0 && (
-                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)}h logged</span>
+                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)} logged</span>
                                 )}
                               </div>
                             </div>
                             {project.quoted_hours && (
                               <div className="ml-4 text-right">
                                 <div className="text-lg font-bold text-primary">
-                                  {project.quoted_hours.toFixed(1)}h
+                                  {project.quoted_hours.toFixed(1)}
                                 </div>
                               </div>
                             )}
