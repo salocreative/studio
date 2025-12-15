@@ -38,6 +38,7 @@ export async function generatePdfThumbnail(file: File, maxWidth: number = 400, m
     await page.render({
       canvasContext: context,
       viewport: scaledViewport,
+      canvas: canvas,
     }).promise
     
     // Convert canvas to blob
