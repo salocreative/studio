@@ -82,12 +82,12 @@ export async function getLeads() {
 
         // Use quote_value from database column if available
         if (lead.quote_value !== null && lead.quote_value !== undefined) {
-          quote_value = typeof lead.quote_value === 'number' 
+          const parsedValue = typeof lead.quote_value === 'number' 
             ? lead.quote_value 
             : parseFloat(String(lead.quote_value))
           
-          if (isNaN(quote_value)) {
-            quote_value = null
+          if (!isNaN(parsedValue)) {
+            quote_value = parsedValue
           }
         }
 
