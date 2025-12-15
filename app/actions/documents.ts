@@ -22,7 +22,7 @@ export async function checkIsAdmin() {
   return { isAdmin: userProfile?.role === 'admin' }
 }
 
-export type DocumentCategory = 'hr' | 'sales'
+export type DocumentCategory = 'hr' | 'sales' | 'operations'
 
 export interface Document {
   id: string

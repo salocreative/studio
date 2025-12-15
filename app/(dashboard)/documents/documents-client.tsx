@@ -299,6 +299,7 @@ export function DocumentsPageContent() {
   const categoryLabels: Record<DocumentCategory, string> = {
     hr: 'HR',
     sales: 'Sales',
+    operations: 'Operations',
   }
 
   return (
@@ -309,7 +310,7 @@ export function DocumentsPageContent() {
           <div>
             <h1 className="text-3xl font-bold">Documents</h1>
             <p className="text-muted-foreground mt-1">
-              Access HR and Sales documents
+              Access HR, Sales, and Operations documents
             </p>
           </div>
           <Button onClick={handleUploadClick}>
@@ -337,6 +338,12 @@ export function DocumentsPageContent() {
             onClick={() => setSelectedCategory('sales')}
           >
             Sales
+          </Button>
+          <Button
+            variant={selectedCategory === 'operations' ? 'default' : 'outline'}
+            onClick={() => setSelectedCategory('operations')}
+          >
+            Operations
           </Button>
         </div>
 
@@ -507,6 +514,7 @@ export function DocumentsPageContent() {
                     <SelectContent>
                       <SelectItem value="hr">HR</SelectItem>
                       <SelectItem value="sales">Sales</SelectItem>
+                      <SelectItem value="operations">Operations</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -592,6 +600,7 @@ export function DocumentsPageContent() {
                     <SelectContent>
                       <SelectItem value="hr">HR</SelectItem>
                       <SelectItem value="sales">Sales</SelectItem>
+                      <SelectItem value="operations">Operations</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

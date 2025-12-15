@@ -322,7 +322,7 @@ export interface Database {
           id: string
           title: string
           description: string | null
-          category: 'hr' | 'sales'
+          category: 'hr' | 'sales' | 'operations'
           file_path: string
           file_name: string
           file_size: number | null
@@ -335,7 +335,7 @@ export interface Database {
           id?: string
           title: string
           description?: string | null
-          category: 'hr' | 'sales'
+          category: 'hr' | 'sales' | 'operations'
           file_path: string
           file_name: string
           file_size?: number | null
@@ -368,7 +368,7 @@ export interface Database {
     Enums: {
       user_role: 'admin' | 'designer' | 'employee'
       project_status: 'active' | 'archived' | 'locked'
-      document_category: 'hr' | 'sales'
+      document_category: 'hr' | 'sales' | 'operations'
     }
   }
 }
