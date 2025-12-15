@@ -38,7 +38,6 @@ import { AutomaticSyncForm } from './automatic-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
 import { QuoteValueDebugger } from './quote-value-debugger'
 import { LeadsStatusConfigForm } from './leads-status-config-form'
-import { DuplicateProjectsChecker } from './duplicate-projects-checker'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
 import { toast } from 'sonner'
@@ -472,8 +471,6 @@ export default function SettingsPage() {
                     <LeadsStatusConfigForm />
                   </CardContent>
                 </Card>
-
-                <DuplicateProjectsChecker />
 
                 <Card>
                   <CardHeader>
