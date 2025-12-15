@@ -16,8 +16,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-interface DuplicateResult {
-  success: boolean
+type DuplicateResult = {
+  success: true
   duplicates?: Array<{
     name: string
     client_name: string | null
@@ -44,7 +44,10 @@ interface DuplicateResult {
     duplicatesByItemIdCount: number
     duplicatesByItemIdInDbCount: number
   }
-  error?: string
+  message?: string
+} | {
+  success?: never
+  error: string
 }
 
 export function DuplicateProjectsChecker() {
@@ -59,9 +62,9 @@ export function DuplicateProjectsChecker() {
       const checkResult = await checkDuplicateFlexiDesignProjects()
       setResult(checkResult)
       
-      if (checkResult.error) {
+      if ('error' in checkResult && checkResult.error) {
         toast.error(checkResult.error)
-      } else if (checkResult.success) {
+      } else if ('success' in checkResult && checkResult.success) {
         const stats = checkResult.stats
         if (stats && (stats.duplicatesByNameCount > 0 || stats.duplicatesByItemIdCount > 0 || stats.duplicatesByItemIdInDbCount > 0)) {
           toast.warning(`Found ${stats.duplicatesByNameCount + stats.duplicatesByItemIdCount + stats.duplicatesByItemIdInDbCount} duplicate(s)`)
@@ -78,7 +81,7 @@ export function DuplicateProjectsChecker() {
   }
 
   async function handleFix() {
-    if (!result || result.error) return
+    if (!result || ('error' in result && result.error)) return
     
     setFixing(true)
     try {
@@ -128,7 +131,7 @@ export function DuplicateProjectsChecker() {
             Check for Duplicates
           </Button>
           
-          {result && result.success && result.stats && 
+          {'success' in result && result.success && result.stats && 
            (result.stats.duplicatesByItemIdCount > 0 || result.stats.duplicatesByNameCount > 0) && (
             <Button onClick={handleFix} disabled={fixing} variant="destructive">
               {fixing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -137,7 +140,7 @@ export function DuplicateProjectsChecker() {
           )}
         </div>
 
-        {result && result.error && (
+        {'error' in result && result.error && (
           <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
@@ -149,7 +152,7 @@ export function DuplicateProjectsChecker() {
           </div>
         )}
 
-        {result && result.success && result.stats && (
+        {'success' in result && result.success && result.stats && (
           <div className="space-y-4">
             <div className="rounded-lg border bg-muted/50 p-4">
               <h3 className="font-semibold mb-2">Statistics</h3>
