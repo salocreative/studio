@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
+import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
 
 /**
  * Get all active projects with their tasks
@@ -28,11 +29,21 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
       const flexiDesignBoardIds = await getFlexiDesignBoardIds()
       
       if (boardType === 'flexi-design') {
-        // Only show Flexi-Design boards
-        if (flexiDesignBoardIds.size > 0) {
-          projectsQuery = projectsQuery.in('monday_board_id', Array.from(flexiDesignBoardIds))
+        // Only show active Flexi-Design boards (exclude completed board)
+        const completedBoardResult = await getFlexiDesignCompletedBoard()
+        const completedBoardId = completedBoardResult.success && completedBoardResult.board 
+          ? completedBoardResult.board.monday_board_id 
+          : null
+        
+        // Filter out completed board from active board IDs
+        const activeBoardIds = Array.from(flexiDesignBoardIds).filter(
+          boardId => !completedBoardId || boardId !== completedBoardId
+        )
+        
+        if (activeBoardIds.length > 0) {
+          projectsQuery = projectsQuery.in('monday_board_id', activeBoardIds)
         } else {
-          // No Flexi-Design boards found, return empty
+          // No active Flexi-Design boards found, return empty
           return { success: true, projects: [] }
         }
       } else {
