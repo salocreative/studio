@@ -243,6 +243,11 @@ export function DocumentsPageContent() {
     }
   }
 
+  async function handlePreview(doc: Document) {
+    // Same as download - opens PDF in new tab for preview
+    await handleDownload(doc)
+  }
+
   const filteredDocuments = documents
 
   const categoryLabels: Record<DocumentCategory, string> = {
@@ -304,7 +309,22 @@ export function DocumentsPageContent() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filteredDocuments.map((doc) => (
-              <Card key={doc.id} className="flex flex-col">
+              <Card key={doc.id} className="flex flex-col overflow-hidden hover:shadow-lg transition-shadow">
+                {/* PDF Preview/Thumbnail */}
+                <div className="relative w-full h-48 bg-muted/50 flex items-center justify-center border-b overflow-hidden group">
+                  <FileText className="h-16 w-16 text-muted-foreground/50" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handlePreview(doc)}
+                      className="text-xs"
+                    >
+                      <FileText className="h-3 w-3 mr-1" />
+                      Preview
+                    </Button>
+                  </div>
+                </div>
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
@@ -326,9 +346,9 @@ export function DocumentsPageContent() {
                   )}
                   <div className="mt-auto space-y-2">
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{doc.file_name}</span>
+                      <span className="truncate flex-1 mr-2">{doc.file_name}</span>
                       {doc.file_size && (
-                        <span>{(doc.file_size / 1024 / 1024).toFixed(2)} MB</span>
+                        <span className="flex-shrink-0">{(doc.file_size / 1024 / 1024).toFixed(2)} MB</span>
                       )}
                     </div>
                     <div className="flex gap-2">
