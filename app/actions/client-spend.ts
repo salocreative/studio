@@ -103,12 +103,12 @@ export async function getClientSpendByMonth(
 
         // First, try the direct quote_value column (preferred - faster and more reliable)
         if (project.quote_value !== null && project.quote_value !== undefined) {
-          projectValue = typeof project.quote_value === 'number' 
+          const parsedValue = typeof project.quote_value === 'number' 
             ? project.quote_value 
             : parseFloat(String(project.quote_value))
           
-          if (isNaN(projectValue)) {
-            projectValue = null
+          if (!isNaN(parsedValue)) {
+            projectValue = parsedValue
           }
         }
 
