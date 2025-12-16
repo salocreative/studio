@@ -322,6 +322,7 @@ export async function getCustomersWithAnalysis(
       lifetime_value: data.lifetime_value,
       relationship_score: scoresMap.get(client_name) || null,
       project_count: data.project_count,
+      agency: null, // Agency is not tracked separately in this view, grouping is determined by groupBy parameter
     }))
 
     // Sort by lifetime value descending
