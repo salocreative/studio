@@ -350,7 +350,7 @@ export function ColumnMappingForm() {
     setEditingMappings({})
   }
 
-  async function handleSave(columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) {
+  async function handleSave(columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) {
     if (!editingBoardType) return
     
     const config = boardConfigs[editingBoardType]
@@ -394,7 +394,7 @@ export function ColumnMappingForm() {
       type: 'main',
       title: 'Main Projects',
       description: 'Active project boards for ongoing work',
-      requiredParentColumns: ['client', 'quote_value', 'due_date', 'status'],
+      requiredParentColumns: ['client', 'agency', 'quote_value', 'due_date', 'status'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.main,
     },
@@ -402,7 +402,7 @@ export function ColumnMappingForm() {
       type: 'completed',
       title: 'Completed Projects',
       description: 'Boards where completed projects are archived',
-      requiredParentColumns: ['client', 'quote_value', 'completed_date'],
+      requiredParentColumns: ['client', 'agency', 'quote_value', 'completed_date'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.completed,
     },
@@ -601,7 +601,7 @@ export function ColumnMappingForm() {
                           return (
                             <div key={colType} className="flex items-center justify-between text-sm">
                               <span className={isConfigured ? 'text-foreground' : 'text-muted-foreground'}>
-                                {colType === 'client' ? 'Client' : colType === 'quote_value' ? 'Quote Value' : colType}
+                                {colType === 'client' ? 'Client' : colType === 'agency' ? 'Agency' : colType === 'quote_value' ? 'Quote Value' : colType}
                               </span>
                               {isConfigured ? (
                                 <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -659,7 +659,7 @@ function BoardMappingEditor({
   parentColumns: Column[]
   subtaskColumns: Column[]
   mappings: Record<string, string>
-  onSave: (columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) => Promise<void>
+  onSave: (columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) => Promise<void>
   onMappingChange: (mappings: Record<string, string>) => void
   saving: boolean
   requiredParentColumns: string[]
@@ -667,14 +667,14 @@ function BoardMappingEditor({
 }) {
   
   const renderColumnMapping = (
-    columnType: 'client' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status',
+    columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status',
     label: string,
     description: string,
     columns: Column[],
     filterFn?: (col: Column) => boolean,
     isRequired: boolean = false
   ) => {
-    const isParent = columnType === 'client' || columnType === 'quote_value' || columnType === 'due_date' || columnType === 'completed_date' || columnType === 'status'
+    const isParent = columnType === 'client' || columnType === 'agency' || columnType === 'quote_value' || columnType === 'due_date' || columnType === 'completed_date' || columnType === 'status'
     const isConfigured = !!mappings[columnType]
     
     return (
@@ -738,6 +738,15 @@ function BoardMappingEditor({
           'client',
           'Client Column',
           'Select the column that contains the client name',
+          parentColumns,
+          (col) => ['text', 'text_with_label', 'dropdown', 'status'].includes(col.type),
+          true
+        )}
+
+        {requiredParentColumns.includes('agency') && renderColumnMapping(
+          'agency',
+          'Agency Column',
+          'Select the parent column that contains the agency name (for projects worked on behalf of an agency)',
           parentColumns,
           (col) => ['text', 'text_with_label', 'dropdown', 'status'].includes(col.type),
           true

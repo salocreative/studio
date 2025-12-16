@@ -48,6 +48,7 @@ export interface Database {
           monday_board_id: string
           name: string
           client_name: string | null
+          agency: string | null
           completed_date: string | null
           due_date: string | null
           status: 'active' | 'archived' | 'locked'
@@ -63,6 +64,7 @@ export interface Database {
           monday_board_id: string
           name: string
           client_name?: string | null
+          agency?: string | null
           completed_date?: string | null
           due_date?: string | null
           status?: 'active' | 'archived' | 'locked'
@@ -78,6 +80,7 @@ export interface Database {
           monday_board_id?: string
           name?: string
           client_name?: string | null
+          agency?: string | null
           completed_date?: string | null
           due_date?: string | null
           status?: 'active' | 'archived' | 'locked'
@@ -194,7 +197,7 @@ export interface Database {
         Row: {
           id: string
           monday_column_id: string
-          column_type: 'client' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
+          column_type: 'client' | 'agency' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
           board_id: string | null
           workspace_id: string | null
           created_at: string
@@ -203,7 +206,7 @@ export interface Database {
         Insert: {
           id?: string
           monday_column_id: string
-          column_type: 'client' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
+          column_type: 'client' | 'agency' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
           board_id?: string | null
           workspace_id?: string | null
           created_at?: string
@@ -316,6 +319,55 @@ export interface Database {
           customer_type?: 'partner' | 'client'
           day_rate_gbp?: number
           hours_per_day?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      customer_relationship_scores: {
+        Row: {
+          id: string
+          client_name: string
+          relationship_score: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          client_name: string
+          relationship_score: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          client_name?: string
+          relationship_score?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      lifetime_value_brackets: {
+        Row: {
+          id: string
+          bracket_name: 'low' | 'medium' | 'high'
+          min_value: number
+          max_value: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          bracket_name: 'low' | 'medium' | 'high'
+          min_value: number
+          max_value?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          bracket_name?: 'low' | 'medium' | 'high'
+          min_value?: number
+          max_value?: number | null
           created_at?: string
           updated_at?: string
         }

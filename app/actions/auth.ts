@@ -50,3 +50,29 @@ export async function requireAdmin() {
   return userRole
 }
 
+/**
+ * Require authentication but allow all roles
+ * Returns user or redirects if not authenticated
+ */
+export async function requireAuth() {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    redirect('/auth/login')
+  }
+
+  // Check if user is soft-deleted
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('deleted_at')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  if (userProfile?.deleted_at) {
+    redirect('/auth/login')
+  }
+
+  return user
+}
+

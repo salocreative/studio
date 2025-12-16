@@ -12,6 +12,7 @@ export interface MondayProject {
   name: string
   board_id: string
   client_name?: string
+  agency?: string
   completed_date?: string
   due_date?: string
   status?: string
@@ -365,6 +366,8 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
   for (const board of data.boards || []) {
     // Get client column ID for this board (from parent items)
     const clientColumnId = getColumnId(board.id, 'client', board.name)
+    // Get agency column ID for this board (from parent items)
+    const agencyColumnId = getColumnId(board.id, 'agency', board.name)
     // Get quote_value column ID for this board (from parent items)
     // For completed boards, require board-specific mapping (don't fall back to global)
     const isCompletedBoard = completedBoardIds.has(board.id)
@@ -381,6 +384,16 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         const clientColumn = item.column_values.find((cv) => cv.id === clientColumnId)
         if (clientColumn?.text) {
           client_name = clientColumn.text
+        }
+      }
+
+      // Find agency name from column values using the mapped column
+      let agency: string | undefined
+
+      if (item.column_values && agencyColumnId) {
+        const agencyColumn = item.column_values.find((cv) => cv.id === agencyColumnId)
+        if (agencyColumn?.text) {
+          agency = agencyColumn.text
         }
       }
 
@@ -494,6 +507,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         name: item.name,
         board_id: board.id,
         client_name,
+        agency,
         completed_date,
         due_date,
         quote_value,
@@ -832,10 +846,10 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         projectStatus = 'archived'
       }
       
-      // Check if project exists - get full record to preserve quoted_hours for locked projects
+      // Check if project exists - get full record to preserve quoted_hours and quote_value for locked projects
       const { data: existing } = await supabase
         .from('monday_projects')
-        .select('id, status, quoted_hours')
+        .select('id, status, quoted_hours, quote_value, monday_data')
         .eq('monday_item_id', project.id)
         .single()
 
@@ -845,6 +859,71 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
       const finalQuotedHours = preserveQuotedHours 
         ? (existing.quoted_hours || project.quoted_hours || null)
         : (project.quoted_hours || null)
+
+      // Handle quote_value - try to extract if not provided, preserve for locked projects if still missing
+      let finalQuoteValue = project.quote_value || null
+      
+      // Helper function to extract quote_value from monday_data/column_values
+      const extractQuoteValue = (data: Record<string, any> | undefined, columnId: string | null | undefined): number | null => {
+        if (!data || !columnId || !data[columnId]) return null
+        
+        const valueColumn = data[columnId]
+        if (valueColumn.value !== null && valueColumn.value !== undefined) {
+          try {
+            let parsedValue: number
+            if (typeof valueColumn.value === 'number') {
+              parsedValue = valueColumn.value
+            } else if (typeof valueColumn.value === 'object' && valueColumn.value?.value !== undefined) {
+              parsedValue = typeof valueColumn.value.value === 'number' 
+                ? valueColumn.value.value 
+                : parseFloat(String(valueColumn.value.value))
+            } else {
+              parsedValue = parseFloat(String(valueColumn.value))
+            }
+            if (!isNaN(parsedValue)) {
+              return parsedValue
+            }
+          } catch {
+            // Ignore parsing errors
+          }
+        }
+        
+        if (valueColumn.text) {
+          const numValue = parseFloat(valueColumn.text.replace(/[£,$,\s]/g, ''))
+          if (!isNaN(numValue)) {
+            return numValue
+          }
+        }
+        
+        return null
+      }
+
+      // Get quote_value column mapping for this board
+      const { data: quoteValueMapping } = await supabase
+        .from('monday_column_mappings')
+        .select('monday_column_id')
+        .eq('column_type', 'quote_value')
+        .or(`board_id.eq.${project.board_id},board_id.is.null`)
+        .order('board_id', { ascending: true, nullsFirst: false }) // Prefer board-specific
+        .maybeSingle()
+      
+      const quoteValueColumnId = quoteValueMapping?.monday_column_id || null
+      
+      // If quote_value wasn't extracted but we have column_values, try to extract it now (auto-backfill)
+      if (!finalQuoteValue && project.column_values && quoteValueColumnId) {
+        finalQuoteValue = extractQuoteValue(project.column_values, quoteValueColumnId)
+      }
+
+      // For locked projects, preserve existing quote_value if we couldn't extract a new one
+      // This ensures historical data is maintained
+      if (existing?.status === 'locked' && (!finalQuoteValue || finalQuoteValue === 0)) {
+        finalQuoteValue = existing.quote_value || null
+        
+        // If still no value and we have existing monday_data, try extracting from that
+        if (!finalQuoteValue && existing.monday_data && quoteValueColumnId) {
+          finalQuoteValue = extractQuoteValue(existing.monday_data, quoteValueColumnId)
+        }
+      }
 
       // Handle status transitions
       // - Leads can move to active, but once active/completed they shouldn't go back to lead
@@ -873,10 +952,11 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
         monday_board_id: project.board_id,
         name: project.name,
         client_name: project.client_name || null,
+        agency: project.agency || null,
         completed_date: project.completed_date || null,
         due_date: project.due_date || null,
         quoted_hours: finalQuotedHours,
-        quote_value: project.quote_value || null,
+        quote_value: finalQuoteValue,
         monday_data: project.column_values,
         status: finalStatus,
         updated_at: new Date().toISOString(),
