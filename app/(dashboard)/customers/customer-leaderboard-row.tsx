@@ -31,7 +31,7 @@ export default function CustomerLeaderboardRow({ customer, rank, onVote }: Custo
       ])
 
       if (!userVoteResult.error) {
-        setUserVote(userVoteResult.score)
+        setUserVote(userVoteResult.score ?? null)
       }
       if (!allVotesResult.error && allVotesResult.votes) {
         setAllVotes(allVotesResult.votes)
