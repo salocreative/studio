@@ -83,7 +83,7 @@ export const navigation: NavItem[] = [
     title: 'Customers',
     href: '/customers',
     icon: Users,
-    roles: ['admin'], // Admin only
+    roles: ['admin', 'designer', 'manager'], // All authenticated users can view customers
   },
   {
     title: 'Documents',

@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { format, startOfWeek, endOfWeek, eachWeekOfInterval, startOfQuarter, endOfQuarter, startOfYear } from 'date-fns'
+import { format, startOfWeek, endOfWeek, eachWeekOfInterval, startOfQuarter, endOfQuarter, startOfYear, subWeeks } from 'date-fns'
 import { getTimeEntries } from './time-tracking'
 import { getLeads } from './leads'
 import { fetchXeroFinancialData } from '@/lib/xero/api'
@@ -225,92 +225,268 @@ async function calculateAutomatedMetric(
 }
 
 /**
- * Get or create scorecard entries for a week, calculating automated values
+ * Sync scorecard entries for a specific week (calculate and save automated metrics)
  */
-export async function getOrCreateScorecardEntries(weekStartDate: string) {
+export async function syncScorecardWeek(weekStartDate: string) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return { error: 'Not authenticated' }
+  
+  // Use admin client for sync operations (allows service-to-service calls)
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available' }
   }
 
   try {
-    // Get all metrics
+    // Get all automated metrics
     const metricsResult = await getScorecardMetrics()
     if (metricsResult.error || !metricsResult.success) {
       return { error: metricsResult.error || 'Failed to fetch metrics' }
     }
 
-    const metrics = metricsResult.metrics || []
-
-    // Get existing entries for this week
-    const entriesResult = await getScorecardEntries(weekStartDate)
-    const existingEntries = entriesResult.success ? (entriesResult.entries || []) : []
-
+    const automatedMetrics = (metricsResult.metrics || []).filter(m => m.is_automated)
     const weekStart = new Date(weekStartDate)
-    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 }) // Monday start
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 })
 
-    // Calculate week dates
-    const weekStartDateObj = startOfWeek(weekStart, { weekStartsOn: 1 })
+    let synced = 0
+    let errors: string[] = []
 
-    // Process each metric
-    const entries: ScorecardEntry[] = []
-
-    for (const metric of metrics) {
-      let entry = existingEntries.find((e: any) => e.metric_id === metric.id)
-
-      // If automated and no entry exists, calculate and create
-      if (metric.is_automated && !entry) {
-        const calculatedValue = await calculateAutomatedMetric(metric, weekStartDateObj, weekEnd)
+    for (const metric of automatedMetrics) {
+      try {
+        // Calculate the automated value
+        const calculatedValue = await calculateAutomatedMetric(metric, weekStart, weekEnd)
         
-          if (calculatedValue !== null) {
-          const { data: newEntry, error: insertError } = await supabase
+        if (calculatedValue === null) {
+          // Skip if calculation returned null (no data available)
+          continue
+        }
+
+        // Check if entry already exists
+        const { data: existingEntry } = await adminClient
+          .from('scorecard_entries')
+          .select('id')
+          .eq('metric_id', metric.id)
+          .eq('week_start_date', weekStartDate)
+          .maybeSingle()
+
+        if (existingEntry) {
+          // Update existing entry (only update value, preserve target and notes if manually set)
+          const { error: updateError } = await adminClient
+            .from('scorecard_entries')
+            .update({
+              value: calculatedValue,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingEntry.id)
+
+          if (updateError) {
+            errors.push(`Failed to update ${metric.name}: ${updateError.message}`)
+          } else {
+            synced++
+          }
+        } else {
+          // Create new entry
+          const { error: insertError } = await adminClient
             .from('scorecard_entries')
             .insert({
               metric_id: metric.id,
-              week_start_date: format(weekStartDateObj, 'yyyy-MM-dd'),
+              week_start_date: weekStartDate,
               value: calculatedValue,
               target_value: metric.target_value,
-              created_by: user.id,
+              created_by: user?.id || null,
             })
-            .select(`
-              *,
-              metric:scorecard_metrics(*)
-            `)
-            .single()
 
-          if (!insertError && newEntry) {
-            entry = newEntry
+          if (insertError) {
+            errors.push(`Failed to create ${metric.name}: ${insertError.message}`)
+          } else {
+            synced++
           }
         }
+      } catch (error) {
+        errors.push(`Error syncing ${metric.name}: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
-
-      // If still no entry, create a placeholder
-      if (!entry) {
-        entry = {
-          id: '',
-          metric_id: metric.id,
-          week_start_date: format(weekStartDateObj, 'yyyy-MM-dd'),
-          value: 0,
-          target_value: metric.target_value,
-          notes: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          metric: metric,
-        } as any
-      } else if (!entry.metric) {
-        // Ensure metric is attached
-        entry.metric = metric
-      }
-
-      entries.push(entry as any)
     }
 
-    return { success: true, entries }
+    return {
+      success: true,
+      synced,
+      errors: errors.length > 0 ? errors : undefined,
+    }
+  } catch (error) {
+    console.error('Error syncing scorecard week:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to sync week' }
+  }
+}
+
+/**
+ * Sync scorecard entries for the last N weeks (typically called on Sundays)
+ */
+export async function syncScorecardRecentWeeks(numWeeks: number = 3) {
+  const today = new Date()
+  const currentWeekStart = startOfWeek(today, { weekStartsOn: 1 })
+  
+  const weeksToSync: string[] = []
+  for (let i = 0; i < numWeeks; i++) {
+    const weekDate = subWeeks(currentWeekStart, i)
+    weeksToSync.push(format(startOfWeek(weekDate, { weekStartsOn: 1 }), 'yyyy-MM-dd'))
+  }
+
+  const results = await Promise.all(
+    weeksToSync.map(weekStart => syncScorecardWeek(weekStart))
+  )
+
+  const totalSynced = results.reduce((sum, r) => sum + (r.synced || 0), 0)
+  const allErrors = results.flatMap(r => r.errors || [])
+
+  return {
+    success: true,
+    weeksSynced: weeksToSync.length,
+    totalEntriesSynced: totalSynced,
+    errors: allErrors.length > 0 ? allErrors : undefined,
+  }
+}
+
+/**
+ * Get scorecard entries for multiple weeks (optimized batch query)
+ */
+export async function getScorecardEntriesForWeeks(weekStartDates: string[]) {
+  const supabase = await createClient()
+
+  try {
+    if (!weekStartDates || weekStartDates.length === 0) {
+      return { error: 'No week dates provided' }
+    }
+
+    // Get all metrics
+    const metricsResult = await getScorecardMetrics()
+    if (metricsResult.error || !metricsResult.success) {
+      console.error('Error fetching metrics:', metricsResult.error)
+      return { error: `Failed to fetch metrics: ${metricsResult.error || 'Unknown error'}` }
+    }
+
+    const metrics = metricsResult.metrics || []
+
+    if (metrics.length === 0) {
+      console.warn('No metrics found - will still create placeholder entries')
+    }
+
+    // Fetch all entries for these weeks in a single query
+    let entriesData: any[] = []
+    let entriesError: any = null
+
+    try {
+      const queryResult = await supabase
+        .from('scorecard_entries')
+        .select(`
+          *,
+          metric:scorecard_metrics(*)
+        `)
+        .in('week_start_date', weekStartDates)
+      
+      entriesData = queryResult.data || []
+      entriesError = queryResult.error
+
+      if (entriesError) {
+        console.error('Supabase query error:', entriesError)
+        console.error('Week dates being queried:', weekStartDates)
+        console.error('Error code:', entriesError.code)
+        console.error('Error details:', entriesError.details)
+        console.error('Error hint:', entriesError.hint)
+        throw new Error(`Database query failed: ${entriesError.message || JSON.stringify(entriesError)}`)
+      }
+
+      // Sort entries by metric display_order manually since we can't use order() with joins easily
+      if (entriesData.length > 0 && entriesData[0].metric) {
+        entriesData.sort((a, b) => {
+          const orderA = a.metric?.display_order || 999
+          const orderB = b.metric?.display_order || 999
+          return orderA - orderB
+        })
+      }
+    } catch (queryErr) {
+      console.error('Error executing Supabase query:', queryErr)
+      throw queryErr
+    }
+
+    const entriesByWeek = new Map<string, any[]>()
+
+    // Initialize map with empty arrays for each week
+    weekStartDates.forEach(date => {
+      entriesByWeek.set(date, [])
+    })
+
+    // Group entries by week
+    if (entriesData) {
+      entriesData.forEach((entry: any) => {
+        const week = entry.week_start_date
+        if (entriesByWeek.has(week)) {
+          entriesByWeek.get(week)!.push(entry)
+        }
+      })
+    }
+
+    // For each week, ensure all metrics have entries (create placeholders if missing)
+    const result: Record<string, any[]> = {}
+    for (const weekStartDate of weekStartDates) {
+      const existingEntries = entriesByWeek.get(weekStartDate) || []
+      const entries: any[] = []
+
+      for (const metric of metrics) {
+        let entry = existingEntries.find((e: any) => e.metric_id === metric.id)
+
+        // If no entry exists, create a placeholder (don't calculate on page load)
+        if (!entry) {
+          entry = {
+            id: '',
+            metric_id: metric.id,
+            week_start_date: weekStartDate,
+            value: 0,
+            target_value: metric.target_value,
+            notes: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            metric: metric,
+          }
+        } else if (!entry.metric) {
+          // Ensure metric is attached
+          entry.metric = metric
+        }
+
+        entries.push(entry)
+      }
+
+      result[weekStartDate] = entries
+    }
+
+    return { success: true, entriesByWeek: result }
   } catch (error) {
     console.error('Error getting scorecard entries:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to get entries' }
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : typeof error === 'string'
+      ? error
+      : JSON.stringify(error)
+    console.error('Full error details:', error)
+    return { error: `Failed to get entries: ${errorMessage}` }
+  }
+}
+
+/**
+ * Get or create scorecard entries for a week, calculating automated values
+ * NOTE: This is now only used for single-week operations. For batch loading,
+ * use getScorecardEntriesForWeeks instead.
+ */
+export async function getOrCreateScorecardEntries(weekStartDate: string) {
+  const result = await getScorecardEntriesForWeeks([weekStartDate])
+  
+  if (result.error || !result.success) {
+    return { error: result.error || 'Failed to get entries' }
+  }
+
+  return {
+    success: true,
+    entries: result.entriesByWeek?.[weekStartDate] || [],
   }
 }
 
@@ -391,4 +567,3 @@ export async function createScorecardEntry(
     return { error: error instanceof Error ? error.message : 'Failed to create entry' }
   }
 }
-

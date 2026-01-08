@@ -1,7 +1,8 @@
-import { requireAdmin } from '@/app/actions/auth'
+import { requireAuth } from '@/app/actions/auth'
+import ScorecardPageClient from './scorecard-client'
 
 export default async function ScorecardPage() {
-  await requireAdmin() // Redirect if not admin
+  await requireAuth() // Redirect if not authenticated
   
   return (
     <div className="flex flex-col h-full">
@@ -10,18 +11,15 @@ export default async function ScorecardPage() {
           <div>
             <h1 className="text-2xl font-semibold">Scorecard</h1>
             <p className="text-sm text-muted-foreground">
-              Performance metrics and KPIs
+              Weekly key metrics across Marketing, Sales, Operations, and Finance
             </p>
           </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="flex items-center justify-center h-full">
-          <p className="text-muted-foreground">Coming soon</p>
-        </div>
+        <ScorecardPageClient />
       </div>
     </div>
   )
 }
-
