@@ -332,18 +332,30 @@ export async function syncScorecardRecentWeeks(numWeeks: number = 3) {
     weeksToSync.push(format(startOfWeek(weekDate, { weekStartsOn: 1 }), 'yyyy-MM-dd'))
   }
 
-  const results = await Promise.all(
-    weeksToSync.map(weekStart => syncScorecardWeek(weekStart))
-  )
+  try {
+    const results = await Promise.all(
+      weeksToSync.map(weekStart => syncScorecardWeek(weekStart))
+    )
 
-  const totalSynced = results.reduce((sum, r) => sum + (r.synced || 0), 0)
-  const allErrors = results.flatMap(r => r.errors || [])
+    // Check if any week sync failed completely
+    const failedWeeks = results.filter(r => 'error' in r)
+    if (failedWeeks.length > 0) {
+      const errorMessages = failedWeeks.map(r => 'error' in r ? r.error : 'Unknown error')
+      return { error: `Failed to sync ${failedWeeks.length} week(s): ${errorMessages.join(', ')}` }
+    }
 
-  return {
-    success: true,
-    weeksSynced: weeksToSync.length,
-    totalEntriesSynced: totalSynced,
-    errors: allErrors.length > 0 ? allErrors : undefined,
+    const totalSynced = results.reduce((sum, r) => sum + (('success' in r && r.success) ? (r.synced || 0) : 0), 0)
+    const allErrors = results.flatMap(r => ('success' in r && r.success) ? (r.errors || []) : [])
+
+    return {
+      success: true,
+      weeksSynced: weeksToSync.length,
+      totalEntriesSynced: totalSynced,
+      errors: allErrors.length > 0 ? allErrors : undefined,
+    }
+  } catch (error) {
+    console.error('Error syncing scorecard weeks:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to sync weeks' }
   }
 }
 

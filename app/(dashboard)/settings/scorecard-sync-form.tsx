@@ -23,7 +23,7 @@ export function ScorecardSyncForm() {
     try {
       const result = await syncScorecardRecentWeeks(3)
 
-      if (result.error) {
+      if ('error' in result) {
         toast.error('Sync failed', {
           description: result.error,
         })
