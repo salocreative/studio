@@ -3,12 +3,20 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Loader2, Calendar, Clock } from 'lucide-react'
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay } from 'date-fns'
 import { cn } from '@/lib/utils'
@@ -25,6 +33,9 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
   const [error, setError] = useState<string | null>(null)
   const [clientName, setClientName] = useState<string>('')
   const [monthlyData, setMonthlyData] = useState<MonthlyProjectData[]>([])
+  const [monthlyHours, setMonthlyHours] = useState<number | null>(null)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [showDateDialog, setShowDateDialog] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -49,6 +60,7 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
       }
 
       setClientName(shareResult.client.client_name)
+      setMonthlyHours(shareResult.client.monthly_hours || null)
 
       // Then load the retainer data using public version
       const dataResult = await getRetainerDataPublic(shareResult.client.client_name)
@@ -82,35 +94,84 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
     }
   }
 
-  function getMonthTotalHours(monthData: MonthlyProjectData): number {
-    return monthData.projects.reduce((total, project) => {
+  // Convert hours to days (assuming 6-hour work day)
+  function hoursToDays(hours: number): number {
+    return hours / 6
+  }
+
+  // Format days for display
+  function formatDays(days: number): string {
+    if (days === 0) return '0.0'
+    return days.toFixed(1)
+  }
+
+  function getMonthTotalDays(monthData: MonthlyProjectData): number {
+    const totalHours = monthData.projects.reduce((total, project) => {
       return total + project.tasks.reduce((taskTotal, task) => {
         return taskTotal + task.total_hours
       }, 0)
     }, 0)
+    return hoursToDays(totalHours)
   }
 
-  function getProjectTotalHours(project: MonthlyProjectData['projects'][0]): number {
-    return project.tasks.reduce((total, task) => total + task.total_hours, 0)
+  function getProjectTotalDays(project: MonthlyProjectData['projects'][0]): number {
+    const totalHours = project.tasks.reduce((total, task) => total + task.total_hours, 0)
+    return hoursToDays(totalHours)
   }
 
-  function getHoursByDay(monthData: MonthlyProjectData): Map<string, number> {
-    const hoursByDay = new Map<string, number>()
+  function getDaysByDay(monthData: MonthlyProjectData): Map<string, number> {
+    const daysByDay = new Map<string, number>()
     
     monthData.projects.forEach(project => {
       project.tasks.forEach(task => {
         task.time_entries.forEach(entry => {
           const dateKey = entry.date // YYYY-MM-DD format
-          const currentHours = hoursByDay.get(dateKey) || 0
-          hoursByDay.set(dateKey, currentHours + entry.hours)
+          const currentDays = daysByDay.get(dateKey) || 0
+          daysByDay.set(dateKey, currentDays + hoursToDays(entry.hours))
         })
       })
     })
     
-    return hoursByDay
+    return daysByDay
   }
 
-  function renderCalendar(monthKey: string, hoursByDay: Map<string, number>) {
+  function getDateBreakdown(dateKey: string, monthData: MonthlyProjectData) {
+    const breakdown: Array<{
+      projectName: string
+      taskName: string
+      days: number
+      user_name: string | null
+      notes: string | null
+    }> = []
+
+    monthData.projects.forEach(project => {
+      project.tasks.forEach(task => {
+        task.time_entries.forEach(entry => {
+          if (entry.date === dateKey) {
+            breakdown.push({
+              projectName: project.name,
+              taskName: task.name,
+              days: hoursToDays(entry.hours),
+              user_name: entry.user_name,
+              notes: entry.notes,
+            })
+          }
+        })
+      })
+    })
+
+    return breakdown
+  }
+
+  function handleDateClick(dateKey: string, monthData: MonthlyProjectData) {
+    const breakdown = getDateBreakdown(dateKey, monthData)
+    if (breakdown.length > 0) {
+      setSelectedDate(dateKey)
+      setShowDateDialog(true)
+    }
+  }
+
+  function renderCalendar(monthKey: string, daysByDay: Map<string, number>, monthData: MonthlyProjectData) {
     const monthStart = startOfMonth(parseISO(`${monthKey}-01`))
     const monthEnd = endOfMonth(monthStart)
     const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd })
@@ -169,15 +230,17 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                 }
                 
                 const dateKey = format(day, 'yyyy-MM-dd')
-                const hours = hoursByDay.get(dateKey) || 0
+                const days = daysByDay.get(dateKey) || 0
                 const isToday = isSameDay(day, new Date())
+                const hasTimeEntries = days > 0
                 
                 return (
                   <div
                     key={dateKey}
+                    onClick={() => hasTimeEntries && handleDateClick(dateKey, monthData)}
                     className={cn(
                       "aspect-square border rounded-lg p-2 flex flex-col items-center justify-center",
-                      hours > 0 ? "bg-primary/5 border-primary/20" : "bg-muted/30 border-dashed",
+                      hasTimeEntries ? "bg-primary/5 border-primary/20 cursor-pointer hover:bg-primary/10 transition-colors" : "bg-muted/30 border-dashed",
                       isToday && "ring-2 ring-primary/50"
                     )}
                   >
@@ -186,9 +249,9 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                     </div>
                     <div className={cn(
                       "text-lg font-bold",
-                      hours > 0 ? "text-foreground" : "text-muted-foreground"
+                      days > 0 ? "text-foreground" : "text-muted-foreground"
                     )}>
-                      {hours > 0 ? hours.toFixed(1) : '0'}h
+                      {formatDays(days)}d
                     </div>
                   </div>
                 )
@@ -237,8 +300,14 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
           ) : (
             <Accordion type="multiple" className="w-full space-y-4">
               {monthlyData.map((monthData) => {
-                const monthTotalHours = getMonthTotalHours(monthData)
+                const monthTotalDays = getMonthTotalDays(monthData)
                 const monthLabel = formatMonth(monthData.month)
+                
+                // Calculate progress for this month (convert monthly_hours to days)
+                const availableDays = monthlyHours ? hoursToDays(monthlyHours) : 0
+                const progressPercentage = availableDays > 0 
+                  ? Math.min((monthTotalDays / availableDays) * 100, 100)
+                  : 0
 
                 return (
                   <Card key={monthData.month}>
@@ -250,13 +319,26 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                             <div className="text-left">
                               <CardTitle className="text-lg">{monthLabel}</CardTitle>
                               <CardDescription className="mt-0">
-                                {monthData.projects.length} project{monthData.projects.length !== 1 ? 's' : ''} • {monthTotalHours.toFixed(1)} hours
+                                {monthData.projects.length} project{monthData.projects.length !== 1 ? 's' : ''} • {formatDays(monthTotalDays)} days
+                                {availableDays > 0 && ` of ${formatDays(availableDays)}`}
                               </CardDescription>
                             </div>
                           </div>
-                          <Badge variant="secondary" className="ml-auto">
-                            {monthTotalHours.toFixed(1)}h
-                          </Badge>
+                          <div className="flex items-center gap-3">
+                            {availableDays > 0 && (
+                              <div className="flex flex-col items-end gap-1 min-w-[120px]">
+                                <div className="text-sm font-medium">
+                                  {formatDays(monthTotalDays)}d / {formatDays(availableDays)}d
+                                </div>
+                                <Progress value={progressPercentage} className="w-full h-2" />
+                              </div>
+                            )}
+                            <Badge variant="secondary" className={cn(
+                              availableDays > 0 && monthTotalDays > availableDays && "bg-destructive/10 text-destructive"
+                            )}>
+                              {formatDays(monthTotalDays)}d
+                            </Badge>
+                          </div>
                         </div>
                       </AccordionTrigger>
                       <AccordionContent>
@@ -268,7 +350,7 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                             </h3>
                             <div className="space-y-2">
                               {monthData.projects.map((project) => {
-                                const projectTotalHours = getProjectTotalHours(project)
+                                const projectTotalDays = getProjectTotalDays(project)
                                 return (
                                   <div
                                     key={project.id}
@@ -283,7 +365,7 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                                       </div>
                                     </div>
                                     <div className="text-right">
-                                      <p className="text-lg font-bold">{projectTotalHours.toFixed(1)}h</p>
+                                      <p className="text-lg font-bold">{formatDays(projectTotalDays)}d</p>
                                     </div>
                                   </div>
                                 )
@@ -294,9 +376,9 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                           {/* Calendar View */}
                           <div className="space-y-3">
                             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                              Daily Hours
+                              Daily
                             </h3>
-                            {renderCalendar(monthData.month, getHoursByDay(monthData))}
+                            {renderCalendar(monthData.month, getDaysByDay(monthData), monthData)}
                           </div>
                         </CardContent>
                       </AccordionContent>
@@ -308,6 +390,83 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
           )}
         </div>
       </div>
+
+      {/* Date Breakdown Dialog */}
+      <Dialog open={showDateDialog} onOpenChange={setShowDateDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedDate && formatDate(selectedDate)}
+            </DialogTitle>
+            <DialogDescription>
+              Project breakdown and time logged for this date
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedDate && (() => {
+            const monthKey = selectedDate.substring(0, 7) // YYYY-MM
+            const monthData = monthlyData.find(m => m.month === monthKey)
+            if (!monthData) return null
+
+            const breakdown = getDateBreakdown(selectedDate, monthData)
+            const totalDays = breakdown.reduce((sum, item) => sum + item.days, 0)
+            
+            // Group by project
+            const byProject = breakdown.reduce((acc, item) => {
+              if (!acc[item.projectName]) {
+                acc[item.projectName] = []
+              }
+              acc[item.projectName].push(item)
+              return acc
+            }, {} as Record<string, typeof breakdown>)
+
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                  <span className="font-medium">Total Days</span>
+                  <span className="text-2xl font-bold">{formatDays(totalDays)}d</span>
+                </div>
+
+                <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+                  {Object.entries(byProject).map(([projectName, items]) => {
+                    const projectDays = items.reduce((sum, item) => sum + item.days, 0)
+                    return (
+                      <div key={projectName} className="border rounded-lg p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold">{projectName}</h4>
+                          <Badge variant="secondary">{formatDays(projectDays)}d</Badge>
+                        </div>
+                        <div className="space-y-2">
+                          {items.map((item, idx) => (
+                            <div key={idx} className="flex items-start justify-between gap-4 p-2 bg-muted/50 rounded">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-sm">{item.taskName}</div>
+                                {item.user_name && (
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    {item.user_name}
+                                  </div>
+                                )}
+                                {item.notes && (
+                                  <div className="text-xs text-muted-foreground mt-1 italic">
+                                    {item.notes}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-sm font-semibold whitespace-nowrap">
+                                {formatDays(item.days)}d
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

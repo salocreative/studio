@@ -12,6 +12,7 @@ import {
   LogOut,
   Palette,
   TrendingUp,
+  CalendarHeart,
   Menu,
   Calculator,
   Target,
@@ -82,7 +83,7 @@ export const navigation: NavItem[] = [
   {
     title: 'Retainers',
     href: '/retainers',
-    icon: Users,
+    icon: CalendarHeart,
     roles: ['admin'], // Admin only
   },
   {
