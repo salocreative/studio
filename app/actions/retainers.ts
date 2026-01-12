@@ -405,6 +405,46 @@ export async function getRetainerData(clientName: string, startDate?: string, en
       }
     }
 
+    // Calculate remaining hours from active projects (status !== 'locked')
+    // For each active project, calculate: sum of task quoted_hours - sum of task logged hours
+    let remainingProjectHours = 0
+    const activeProjects = (projects || []).filter(p => p.status !== 'locked')
+    const activeProjectIds = new Set(activeProjects.map(p => p.id))
+    
+    // Aggregate hours by project and task
+    const projectHoursMap = new Map<string, { quoted: number; logged: number }>()
+    
+    // Initialize map for active projects
+    activeProjects.forEach(p => {
+      projectHoursMap.set(p.id, { quoted: 0, logged: 0 })
+    })
+    
+    // Aggregate from tasks
+    ;(tasks || []).forEach(task => {
+      if (activeProjectIds.has(task.project_id)) {
+        const projectData = projectHoursMap.get(task.project_id) || { quoted: 0, logged: 0 }
+        const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : 0
+        projectData.quoted += quotedHours
+        projectHoursMap.set(task.project_id, projectData)
+      }
+    })
+    
+    // Aggregate logged hours from time entries
+    ;(timeEntries || []).forEach(entry => {
+      const task = (tasks || []).find(t => t.id === entry.task_id)
+      if (task && activeProjectIds.has(task.project_id)) {
+        const projectData = projectHoursMap.get(task.project_id) || { quoted: 0, logged: 0 }
+        projectData.logged += Number(entry.hours || 0)
+        projectHoursMap.set(task.project_id, projectData)
+      }
+    })
+    
+    // Calculate remaining hours (quoted - logged, but don't go negative)
+    projectHoursMap.forEach((data, projectId) => {
+      const remaining = Math.max(0, data.quoted - data.logged)
+      remainingProjectHours += remaining
+    })
+
     // Convert to array and sort by month
     const result: MonthlyProjectData[] = Object.entries(monthlyData)
       .map(([month, projects]) => ({
@@ -443,6 +483,7 @@ export async function getRetainerData(clientName: string, startDate?: string, en
       data: filteredResult,
       monthly_hours: retainerClient?.monthly_hours || null,
       rollover_hours: retainerClient?.rollover_hours || null,
+      remaining_project_hours: remainingProjectHours,
     }
   } catch (error) {
     console.error('Error fetching retainer data:', error)

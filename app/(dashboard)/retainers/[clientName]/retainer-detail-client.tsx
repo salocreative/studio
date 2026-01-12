@@ -46,6 +46,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
   const [monthlyData, setMonthlyData] = useState<MonthlyProjectData[]>([])
   const [monthlyHours, setMonthlyHours] = useState<number | null>(null)
   const [rolloverHours, setRolloverHours] = useState<number | null>(null)
+  const [remainingProjectHours, setRemainingProjectHours] = useState<number>(0)
   const [shareLinks, setShareLinks] = useState<RetainerShareLink[]>([])
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [creatingLink, setCreatingLink] = useState(false)
@@ -68,6 +69,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
         setMonthlyData(result.data)
         setMonthlyHours(result.monthly_hours ?? null)
         setRolloverHours(result.rollover_hours ?? null)
+        setRemainingProjectHours(result.remaining_project_hours ?? 0)
       }
     } catch (error) {
       console.error('Error loading retainer data:', error)
@@ -370,8 +372,98 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
               </CardContent>
             </Card>
           ) : (
-            <Accordion type="multiple" className="w-full space-y-4">
-              {monthlyData.map((monthData) => {
+            <>
+              {/* Summary Section */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Capacity Overview</CardTitle>
+                  <CardDescription>
+                    Remaining hours and capacity analysis for active projects
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Remaining Project Hours */}
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-muted-foreground">
+                        Remaining Project Hours
+                      </div>
+                      <div className="text-2xl font-bold">
+                        {remainingProjectHours.toFixed(1)}h
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Hours left to complete on active projects
+                      </div>
+                    </div>
+                    
+                    {/* Current Month Capacity */}
+                    {(() => {
+                      const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
+                      const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
+                      const currentMonthHours = currentMonthData ? getMonthTotalHours(currentMonthData) : 0
+                      const currentMonthCapacity = monthlyHours ? monthlyHours - currentMonthHours : null
+                      
+                      return (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-muted-foreground">
+                            Current Month Capacity Remaining
+                          </div>
+                          <div className="text-2xl font-bold">
+                            {currentMonthCapacity !== null ? `${currentMonthCapacity.toFixed(1)}h` : 'N/A'}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {monthlyHours ? `${monthlyHours.toFixed(1)}h allocated, ${currentMonthHours.toFixed(1)}h used` : 'No monthly hours set'}
+                          </div>
+                        </div>
+                      )
+                    })()}
+                    
+                    {/* Likelihood to Fill Capacity */}
+                    {(() => {
+                      const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
+                      const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
+                      const currentMonthHours = currentMonthData ? getMonthTotalHours(currentMonthData) : 0
+                      const currentMonthCapacity = monthlyHours ? monthlyHours - currentMonthHours : null
+                      
+                      let likelihoodText = 'N/A'
+                      let likelihoodColor = 'text-muted-foreground'
+                      
+                      if (currentMonthCapacity !== null && currentMonthCapacity > 0) {
+                        if (remainingProjectHours >= currentMonthCapacity) {
+                          likelihoodText = 'Very Likely'
+                          likelihoodColor = 'text-green-600'
+                        } else if (remainingProjectHours >= currentMonthCapacity * 0.7) {
+                          likelihoodText = 'Likely'
+                          likelihoodColor = 'text-green-500'
+                        } else if (remainingProjectHours >= currentMonthCapacity * 0.4) {
+                          likelihoodText = 'Possible'
+                          likelihoodColor = 'text-yellow-600'
+                        } else {
+                          likelihoodText = 'Unlikely'
+                          likelihoodColor = 'text-orange-600'
+                        }
+                      }
+                      
+                      return (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-muted-foreground">
+                            Likelihood to Fill Capacity
+                          </div>
+                          <div className={`text-2xl font-bold ${likelihoodColor}`}>
+                            {likelihoodText}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Based on remaining project hours vs. capacity
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Accordion type="multiple" className="w-full space-y-4">
+                {monthlyData.map((monthData) => {
                 const monthTotalHours = getMonthTotalHours(monthData)
                 const monthLabel = formatMonth(monthData.month)
                 
@@ -458,7 +550,8 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                   </Card>
                 )
               })}
-            </Accordion>
+              </Accordion>
+            </>
           )}
         </div>
       </div>
