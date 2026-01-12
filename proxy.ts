@@ -64,15 +64,17 @@ export async function proxy(request: NextRequest) {
 
     // Only check auth if there's no error
     if (!authError) {
-      // Protect dashboard routes
-      if (request.nextUrl.pathname.startsWith('/time-tracking') ||
+      // Protect dashboard routes (but not public share routes)
+      if ((request.nextUrl.pathname.startsWith('/time-tracking') ||
           request.nextUrl.pathname.startsWith('/projects') ||
           request.nextUrl.pathname.startsWith('/flexi-design') ||
           request.nextUrl.pathname.startsWith('/performance') ||
           request.nextUrl.pathname.startsWith('/forecast') ||
           request.nextUrl.pathname.startsWith('/scorecard') ||
           request.nextUrl.pathname.startsWith('/customers') ||
-          request.nextUrl.pathname.startsWith('/settings')) {
+          request.nextUrl.pathname.startsWith('/settings') ||
+          request.nextUrl.pathname.startsWith('/retainers')) &&
+          !request.nextUrl.pathname.startsWith('/retainers/share')) {
         if (!user) {
           const url = request.nextUrl.clone()
           url.pathname = '/auth/login'

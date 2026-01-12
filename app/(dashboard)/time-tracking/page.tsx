@@ -16,8 +16,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { checkIsAdmin } from '@/app/actions/auth'
+import { getUsers } from '@/app/actions/users'
 
 interface Task {
   id: string
@@ -43,6 +52,12 @@ interface TimeEntry {
   project: Project & { status?: 'active' | 'archived' | 'locked' }
 }
 
+interface User {
+  id: string
+  email: string
+  full_name: string | null
+}
+
 export default function TimeTrackingPage() {
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [view, setView] = useState<'daily' | 'calendar'>('daily')
@@ -52,6 +67,13 @@ export default function TimeTrackingPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [boardType, setBoardType] = useState<'main' | 'flexi-design'>('main')
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [users, setUsers] = useState<User[]>([])
+  const [selectedUserId, setSelectedUserId] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    checkAdminAndLoadUsers()
+  }, [])
 
   useEffect(() => {
     loadData()
@@ -59,7 +81,22 @@ export default function TimeTrackingPage() {
 
   useEffect(() => {
     loadTimeEntries()
-  }, [selectedDate])
+  }, [selectedDate, selectedUserId])
+
+  async function checkAdminAndLoadUsers() {
+    try {
+      const { isAdmin: admin } = await checkIsAdmin()
+      setIsAdmin(admin)
+      if (admin) {
+        const result = await getUsers()
+        if (result.success && result.users) {
+          setUsers(result.users)
+        }
+      }
+    } catch (error) {
+      console.error('Error checking admin status:', error)
+    }
+  }
 
   async function loadData() {
     setLoading(true)
@@ -80,7 +117,7 @@ export default function TimeTrackingPage() {
   async function loadTimeEntries() {
     const dateStr = format(selectedDate, 'yyyy-MM-dd')
     try {
-      const result = await getTimeEntries(dateStr, dateStr)
+      const result = await getTimeEntries(dateStr, dateStr, selectedUserId)
       if (result.error) {
         console.error('Error loading time entries:', result.error)
       } else if (result.entries) {
@@ -147,7 +184,7 @@ export default function TimeTrackingPage() {
     }
 
     try {
-      const result = await deleteTimeEntry(entryId)
+      const result = await deleteTimeEntry(entryId, selectedUserId)
       if (result.error) {
         toast.error('Error deleting entry', { description: result.error })
       } else {
@@ -174,6 +211,25 @@ export default function TimeTrackingPage() {
             <p className="text-sm text-muted-foreground">Track your time against projects</p>
           </div>
           <div className="flex items-center gap-2">
+            {/* User Selector (Admin only) */}
+            {isAdmin && users.length > 0 && (
+              <Select
+                value={selectedUserId || 'current'}
+                onValueChange={(value) => setSelectedUserId(value === 'current' ? undefined : value)}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select user" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current">Current User</SelectItem>
+                  {users.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.full_name || user.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {/* View Switcher */}
             <Button
               variant={view === 'daily' ? 'default' : 'outline'}
@@ -221,6 +277,7 @@ export default function TimeTrackingPage() {
             boardType={boardType}
             onBoardTypeChange={setBoardType}
             onTimeEntrySuccess={handleTimeEntrySuccess}
+            targetUserId={selectedUserId}
           />
         )}
       </div>
@@ -235,6 +292,7 @@ export default function TimeTrackingPage() {
             setSelectedTask(null)
             setSelectedProject(null)
           }}
+          targetUserId={selectedUserId}
         />
       )}
     </div>
@@ -407,6 +465,7 @@ function CalendarView({
   boardType,
   onBoardTypeChange,
   onTimeEntrySuccess,
+  targetUserId,
 }: {
   selectedDate: Date
   onDateSelect: (date: Date) => void
@@ -416,6 +475,7 @@ function CalendarView({
   boardType: 'main' | 'flexi-design'
   onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
   onTimeEntrySuccess: () => void
+  targetUserId?: string
 }) {
   const [selectedMonth, setSelectedMonth] = useState(new Date())
   const [monthTimeEntries, setMonthTimeEntries] = useState<Record<string, number>>({})
@@ -465,7 +525,7 @@ function CalendarView({
         const startDateStr = format(monthStart, 'yyyy-MM-dd')
         const endDateStr = format(monthEnd, 'yyyy-MM-dd')
         
-        const result = await getTimeEntries(startDateStr, endDateStr)
+        const result = await getTimeEntries(startDateStr, endDateStr, targetUserId)
         if (result.error) {
           console.error('Error loading month time entries:', result.error)
           setMonthTimeEntries({})
@@ -492,7 +552,7 @@ function CalendarView({
     }
 
     loadMonthTimeEntries()
-  }, [selectedMonth, reloadTrigger])
+  }, [selectedMonth, reloadTrigger, targetUserId])
 
   // Load time entries for selected date
   useEffect(() => {
@@ -792,6 +852,7 @@ function CalendarView({
             setCalendarTask(null)
             setCalendarProject(null)
           }}
+          targetUserId={targetUserId}
         />
       )}
     </div>

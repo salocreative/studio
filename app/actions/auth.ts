@@ -76,3 +76,24 @@ export async function requireAuth() {
   return user
 }
 
+/**
+ * Check if current user is admin (non-redirecting version)
+ */
+export async function checkIsAdmin() {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { isAdmin: false }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .maybeSingle()
+
+  return { isAdmin: userProfile?.role === 'admin' }
+}
+

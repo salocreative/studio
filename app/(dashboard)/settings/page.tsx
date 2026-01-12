@@ -40,6 +40,7 @@ import { QuoteRatesForm } from './quote-rates-form'
 import { QuoteValueDebugger } from './quote-value-debugger'
 import { LeadsStatusConfigForm } from './leads-status-config-form'
 import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
+import { RetainersForm } from './retainers-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
 import { toast } from 'sonner'
@@ -477,6 +478,8 @@ export default function SettingsPage() {
                 </Card>
 
                 <LifetimeValueBracketsForm />
+
+                <RetainersForm />
 
                 <Card>
                   <CardHeader>

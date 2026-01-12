@@ -1055,6 +1055,40 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
             })
             .eq('id', projectRecord.id)
         }
+
+        // Clean up orphaned tasks (tasks that exist in DB but not in Monday.com)
+        // Track which Monday task IDs we just synced
+        const syncedMondayTaskIds = new Set(mondayTasks.map(t => t.id))
+        
+        // Find tasks in DB that weren't in the sync (orphaned tasks)
+        if (existingTasks) {
+          for (const dbTask of existingTasks) {
+            // Skip if this task was just synced
+            if (syncedMondayTaskIds.has(dbTask.monday_item_id)) {
+              continue
+            }
+            
+            // Task exists in DB but not in Monday.com - check if it can be deleted
+            // Check if task has any time entries (on delete restrict prevents deletion if it does)
+            const { data: taskTimeEntries } = await supabase
+              .from('time_entries')
+              .select('id')
+              .eq('task_id', dbTask.id)
+              .limit(1)
+            
+            const hasTimeEntries = taskTimeEntries && taskTimeEntries.length > 0
+            
+            if (!hasTimeEntries) {
+              // Safe to delete - no time entries referencing it
+              await supabase
+                .from('monday_tasks')
+                .delete()
+                .eq('id', dbTask.id)
+            }
+            // If has time entries, we keep it (can't delete due to foreign key constraint)
+            // This preserves historical time tracking data
+          }
+        }
       }
     }
 

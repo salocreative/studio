@@ -1,8 +1,9 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
 import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
+import { checkIsAdmin } from '@/app/actions/auth'
 
 /**
  * Get all active projects with their tasks
@@ -159,8 +160,9 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
 
 /**
  * Get time entries for a date range
+ * @param targetUserId - Optional user ID to fetch entries for (admin only)
  */
-export async function getTimeEntries(startDate: string, endDate: string) {
+export async function getTimeEntries(startDate: string, endDate: string, targetUserId?: string) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -168,15 +170,36 @@ export async function getTimeEntries(startDate: string, endDate: string) {
     return { error: 'Not authenticated' }
   }
 
+  // Determine which user's entries to fetch
+  let userIdToFetch = user.id
+  let clientToUse = supabase
+
+  if (targetUserId && targetUserId !== user.id) {
+    // Check if current user is admin
+    const { isAdmin } = await checkIsAdmin()
+    if (!isAdmin) {
+      return { error: 'Unauthorized: Admin access required to view other users\' entries' }
+    }
+
+    // Use admin client to bypass RLS
+    const adminClient = await createAdminClient()
+    if (!adminClient) {
+      return { error: 'Admin client not available' }
+    }
+
+    userIdToFetch = targetUserId
+    clientToUse = adminClient
+  }
+
   try {
-    const { data, error } = await supabase
+    const { data, error } = await clientToUse
       .from('time_entries')
       .select(`
         *,
         task:monday_tasks(*),
         project:monday_projects(*)
       `)
-      .eq('user_id', user.id)
+      .eq('user_id', userIdToFetch)
       .gte('date', startDate)
       .lte('date', endDate)
       .order('date', { ascending: false })
@@ -236,19 +259,42 @@ export async function getTimeEntries(startDate: string, endDate: string) {
 
 /**
  * Create a time entry
+ * @param targetUserId - Optional user ID to create entry for (admin only)
  */
 export async function createTimeEntry(
   taskId: string,
   projectId: string,
   date: string,
   hours: number,
-  notes?: string
+  notes?: string,
+  targetUserId?: string
 ) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return { error: 'Not authenticated' }
+  }
+
+  // Determine which user's entry to create
+  let userIdToUse = user.id
+  let clientToUse = supabase
+
+  if (targetUserId && targetUserId !== user.id) {
+    // Check if current user is admin
+    const { isAdmin } = await checkIsAdmin()
+    if (!isAdmin) {
+      return { error: 'Unauthorized: Admin access required to create entries for other users' }
+    }
+
+    // Use admin client to bypass RLS
+    const adminClient = await createAdminClient()
+    if (!adminClient) {
+      return { error: 'Admin client not available' }
+    }
+
+    userIdToUse = targetUserId
+    clientToUse = adminClient
   }
 
   try {
@@ -264,10 +310,10 @@ export async function createTimeEntry(
     }
 
     // Check if entry already exists for this task/date
-    const { data: existing } = await supabase
+    const { data: existing } = await clientToUse
       .from('time_entries')
       .select('id')
-      .eq('user_id', user.id)
+      .eq('user_id', userIdToUse)
       .eq('task_id', taskId)
       .eq('date', date)
       .maybeSingle()
@@ -276,10 +322,10 @@ export async function createTimeEntry(
       return { error: 'Time entry already exists for this task and date. Please update the existing entry.' }
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await clientToUse
       .from('time_entries')
       .insert({
-        user_id: user.id,
+        user_id: userIdToUse,
         task_id: taskId,
         project_id: projectId,
         date,
@@ -300,11 +346,13 @@ export async function createTimeEntry(
 
 /**
  * Update a time entry
+ * @param targetUserId - Optional user ID (admin only, used for verification)
  */
 export async function updateTimeEntry(
   entryId: string,
   hours: number,
-  notes?: string
+  notes?: string,
+  targetUserId?: string
 ) {
   const supabase = await createClient()
 
@@ -313,17 +361,45 @@ export async function updateTimeEntry(
     return { error: 'Not authenticated' }
   }
 
+  let clientToUse = supabase
+  let isAdminAction = false
+
+  // If targetUserId is provided and different from current user, check if admin
+  if (targetUserId && targetUserId !== user.id) {
+    const { isAdmin } = await checkIsAdmin()
+    if (!isAdmin) {
+      return { error: 'Unauthorized: Admin access required to update other users\' entries' }
+    }
+
+    const adminClient = await createAdminClient()
+    if (!adminClient) {
+      return { error: 'Admin client not available' }
+    }
+
+    clientToUse = adminClient
+    isAdminAction = true
+  }
+
   try {
-    // Verify ownership
-    const { data: existing } = await supabase
+    // Verify ownership (or admin access)
+    let query = clientToUse
       .from('time_entries')
-      .select('id, project:monday_projects(status)')
+      .select('id, user_id, project:monday_projects(status)')
       .eq('id', entryId)
-      .eq('user_id', user.id)
-      .single()
+    
+    if (!isAdminAction) {
+      query = query.eq('user_id', user.id)
+    }
+
+    const { data: existing } = await query.single()
 
     if (!existing) {
       return { error: 'Time entry not found or access denied' }
+    }
+
+    // If admin action, verify the entry belongs to the target user
+    if (isAdminAction && targetUserId && existing.user_id !== targetUserId) {
+      return { error: 'Time entry does not belong to the specified user' }
     }
 
     // Check if project is locked (type narrowing needed)
@@ -332,7 +408,7 @@ export async function updateTimeEntry(
       return { error: 'Cannot update time entries for locked projects' }
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await clientToUse
       .from('time_entries')
       .update({
         hours,
@@ -354,8 +430,9 @@ export async function updateTimeEntry(
 
 /**
  * Delete a time entry
+ * @param targetUserId - Optional user ID (admin only, used for verification)
  */
-export async function deleteTimeEntry(entryId: string) {
+export async function deleteTimeEntry(entryId: string, targetUserId?: string) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -363,17 +440,45 @@ export async function deleteTimeEntry(entryId: string) {
     return { error: 'Not authenticated' }
   }
 
+  let clientToUse = supabase
+  let isAdminAction = false
+
+  // If targetUserId is provided and different from current user, check if admin
+  if (targetUserId && targetUserId !== user.id) {
+    const { isAdmin } = await checkIsAdmin()
+    if (!isAdmin) {
+      return { error: 'Unauthorized: Admin access required to delete other users\' entries' }
+    }
+
+    const adminClient = await createAdminClient()
+    if (!adminClient) {
+      return { error: 'Admin client not available' }
+    }
+
+    clientToUse = adminClient
+    isAdminAction = true
+  }
+
   try {
-    // Verify ownership and check if project is locked
-    const { data: existing } = await supabase
+    // Verify ownership (or admin access)
+    let query = clientToUse
       .from('time_entries')
-      .select('id, project:monday_projects(status)')
+      .select('id, user_id, project:monday_projects(status)')
       .eq('id', entryId)
-      .eq('user_id', user.id)
-      .single()
+    
+    if (!isAdminAction) {
+      query = query.eq('user_id', user.id)
+    }
+
+    const { data: existing } = await query.single()
 
     if (!existing) {
       return { error: 'Time entry not found or access denied' }
+    }
+
+    // If admin action, verify the entry belongs to the target user
+    if (isAdminAction && targetUserId && existing.user_id !== targetUserId) {
+      return { error: 'Time entry does not belong to the specified user' }
     }
 
     // Check if project is locked (type narrowing needed)
@@ -382,7 +487,7 @@ export async function deleteTimeEntry(entryId: string) {
       return { error: 'Cannot delete time entries for locked projects' }
     }
 
-    const { error } = await supabase
+    const { error } = await clientToUse
       .from('time_entries')
       .delete()
       .eq('id', entryId)

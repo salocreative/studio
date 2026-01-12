@@ -80,16 +80,22 @@ export const navigation: NavItem[] = [
     roles: ['admin'], // Admin only
   },
   {
+    title: 'Retainers',
+    href: '/retainers',
+    icon: Users,
+    roles: ['admin'], // Admin only
+  },
+  {
     title: 'Customers',
     href: '/customers',
     icon: Users,
     roles: ['admin', 'designer', 'manager'], // All authenticated users can view customers
   },
   {
-    title: 'Documents',
-    href: '/documents',
+    title: 'Cupboard',
+    href: '/cupboard',
     icon: FileText,
-    roles: ['admin', 'designer', 'manager'], // All authenticated users can view documents
+    roles: ['admin', 'designer', 'manager'], // All authenticated users can view cupboard
   },
   {
     title: 'Settings',

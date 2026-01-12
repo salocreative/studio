@@ -33,6 +33,7 @@ interface TimeEntryFormProps {
   date: string
   onSuccess: () => void
   onCancel: () => void
+  targetUserId?: string
 }
 
 export function TimeEntryForm({
@@ -41,6 +42,7 @@ export function TimeEntryForm({
   date,
   onSuccess,
   onCancel,
+  targetUserId,
 }: TimeEntryFormProps) {
   const [hours, setHours] = useState<string>('')
   const [notes, setNotes] = useState('')
@@ -81,7 +83,8 @@ export function TimeEntryForm({
         project.id,
         date,
         hoursNum,
-        notes || undefined
+        notes || undefined,
+        targetUserId
       )
 
       if (result.error) {
