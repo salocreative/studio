@@ -8,8 +8,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Plus, History } from 'lucide-react'
-import { getFlexiDesignClients, getFlexiDesignClientDetail, updateFlexiDesignClientCredit } from '@/app/actions/flexi-design'
+import { ArrowLeft, Plus, History, Link as LinkIcon, Copy, Check, Loader2 } from 'lucide-react'
+import { 
+  getFlexiDesignClients, 
+  getFlexiDesignClientDetail, 
+  updateFlexiDesignClientCredit,
+  getFlexiDesignShareLinks,
+  createFlexiDesignShareLink,
+  deactivateFlexiDesignShareLink,
+  type FlexiDesignShareLink
+} from '@/app/actions/flexi-design'
 import { format, differenceInMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -68,6 +76,10 @@ function FlexiDesignPageContent() {
   const [creditDate, setCreditDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [selectedClientForCredit, setSelectedClientForCredit] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [shareLinks, setShareLinks] = useState<FlexiDesignShareLink[]>([])
+  const [showShareDialog, setShowShareDialog] = useState(false)
+  const [creatingLink, setCreatingLink] = useState(false)
+  const [copiedLink, setCopiedLink] = useState<string | null>(null)
 
   useEffect(() => {
     loadClients()
@@ -76,8 +88,10 @@ function FlexiDesignPageContent() {
   useEffect(() => {
     if (clientName) {
       loadClientDetail(clientName)
+      loadShareLinks()
     } else {
       setClientDetail(null)
+      setShareLinks([])
     }
   }, [clientName])
 
@@ -128,6 +142,64 @@ function FlexiDesignPageContent() {
     } finally {
       setDetailLoading(false)
     }
+  }
+
+  async function loadShareLinks() {
+    // Only load if we have client detail with ID
+    if (!clientDetail?.id) return
+    
+    try {
+      const result = await getFlexiDesignShareLinks(clientDetail.id)
+      if (result.error) {
+        console.error('Error loading share links:', result.error)
+      } else if (result.success && result.shareLinks) {
+        setShareLinks(result.shareLinks)
+      }
+    } catch (error) {
+      console.error('Error loading share links:', error)
+    }
+  }
+
+  async function handleCreateShareLink() {
+    if (!clientDetail?.id) return
+    setCreatingLink(true)
+    try {
+      const result = await createFlexiDesignShareLink(clientDetail.id)
+      if (result.error) {
+        toast.error('Error creating share link', { description: result.error })
+      } else if (result.success && result.shareLink) {
+        toast.success('Share link created successfully')
+        await loadShareLinks()
+      }
+    } catch (error) {
+      console.error('Error creating share link:', error)
+      toast.error('Error creating share link')
+    } finally {
+      setCreatingLink(false)
+    }
+  }
+
+  async function handleDeactivateLink(linkId: string) {
+    try {
+      const result = await deactivateFlexiDesignShareLink(linkId)
+      if (result.error) {
+        toast.error('Error deactivating link', { description: result.error })
+      } else {
+        toast.success('Share link deactivated')
+        await loadShareLinks()
+      }
+    } catch (error) {
+      console.error('Error deactivating link:', error)
+      toast.error('Error deactivating link')
+    }
+  }
+
+  function handleCopyLink(token: string, linkId: string) {
+    const shareUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/flexi-design/share/${token}`
+    navigator.clipboard.writeText(shareUrl)
+    setCopiedLink(linkId)
+    toast.success('Link copied to clipboard')
+    setTimeout(() => setCopiedLink(null), 2000)
   }
 
   const handleClientClick = (clientName: string) => {
@@ -247,6 +319,13 @@ function FlexiDesignPageContent() {
               </div>
             </div>
             <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowShareDialog(true)}
+              >
+                <LinkIcon className="mr-2 h-4 w-4" />
+                Share Link
+              </Button>
               <Button 
                 variant="outline" 
                 onClick={() => setShowCreditHistoryDialog(true)}
@@ -421,6 +500,74 @@ function FlexiDesignPageContent() {
             </div>
           )}
         </div>
+
+        {/* Share Link Dialog */}
+        <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Share Flexi-Design Account</DialogTitle>
+              <DialogDescription>
+                Create a public link to share this Flexi-Design account overview with the client.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {shareLinks.filter(link => link.is_active).length > 0 && (
+                <div className="space-y-2">
+                  <Label>Active Share Links</Label>
+                  <div className="space-y-2">
+                    {shareLinks.filter(link => link.is_active).map((link) => {
+                      const shareUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/flexi-design/share/${link.share_token}`
+                      return (
+                        <div key={link.id} className="flex items-center gap-2 p-2 border rounded">
+                          <Input value={shareUrl} readOnly className="flex-1 font-mono text-xs" />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleCopyLink(link.share_token, link.id)}
+                          >
+                            {copiedLink === link.id ? (
+                              <Check className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeactivateLink(link.id)}
+                            title="Deactivate link"
+                          >
+                            <LinkIcon className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowShareDialog(false)}>
+                  Close
+                </Button>
+                <Button onClick={handleCreateShareLink} disabled={creatingLink}>
+                  {creatingLink ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create Share Link
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Credit Dialog */}
         <Dialog open={showCreditDialog} onOpenChange={setShowCreditDialog}>

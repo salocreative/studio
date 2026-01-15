@@ -1,8 +1,10 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
 import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
+import crypto from 'crypto'
 
 interface FlexiDesignClient {
   id: string
@@ -612,3 +614,178 @@ export async function updateFlexiDesignClientCredit(
   }
 }
 
+export interface FlexiDesignShareLink {
+  id: string
+  flexi_design_client_id: string
+  share_token: string
+  created_by: string | null
+  created_at: string
+  expires_at: string | null
+  is_active: boolean
+}
+
+/**
+ * Create a public share link for a Flexi-Design client (admin only)
+ */
+export async function createFlexiDesignShareLink(flexiDesignClientId: string, expiresAt?: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  try {
+    // Generate a unique token
+    const shareToken = crypto.randomBytes(32).toString('hex')
+
+    const { data, error } = await supabase
+      .from('flexi_design_share_links')
+      .insert({
+        flexi_design_client_id: flexiDesignClientId,
+        share_token: shareToken,
+        created_by: user.id,
+        expires_at: expiresAt || null,
+        is_active: true,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    return { success: true, shareLink: data as FlexiDesignShareLink }
+  } catch (error) {
+    console.error('Error creating share link:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to create share link' }
+  }
+}
+
+/**
+ * Get Flexi-Design client by share token (public access)
+ */
+export async function getFlexiDesignClientByToken(shareToken: string) {
+  const supabase = await createAdminClient()
+
+  if (!supabase) {
+    return { error: 'Admin client not available' }
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('flexi_design_share_links')
+      .select(`
+        *,
+        flexi_design_client:flexi_design_clients(*)
+      `)
+      .eq('share_token', shareToken)
+      .eq('is_active', true)
+      .single()
+
+    if (error) throw error
+
+    if (!data) {
+      return { error: 'Share link not found or inactive' }
+    }
+
+    // Check if expired
+    if (data.expires_at && new Date(data.expires_at) < new Date()) {
+      return { error: 'Share link has expired' }
+    }
+
+    const client = (data as any).flexi_design_client as FlexiDesignClient | null
+    if (!client) {
+      return { error: 'Client not found' }
+    }
+
+    return { success: true, shareLink: data as any, client }
+  } catch (error) {
+    console.error('Error fetching share link:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to fetch share link' }
+  }
+}
+
+/**
+ * Get all share links for a Flexi-Design client (admin only)
+ */
+export async function getFlexiDesignShareLinks(flexiDesignClientId: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('flexi_design_share_links')
+      .select('*')
+      .eq('flexi_design_client_id', flexiDesignClientId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+
+    return { success: true, shareLinks: (data || []) as FlexiDesignShareLink[] }
+  } catch (error) {
+    console.error('Error fetching share links:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to fetch share links' }
+  }
+}
+
+/**
+ * Deactivate a share link (admin only)
+ */
+export async function deactivateFlexiDesignShareLink(shareLinkId: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  try {
+    const { error } = await supabase
+      .from('flexi_design_share_links')
+      .update({ is_active: false })
+      .eq('id', shareLinkId)
+
+    if (error) throw error
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error deactivating share link:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to deactivate share link' }
+  }
+}

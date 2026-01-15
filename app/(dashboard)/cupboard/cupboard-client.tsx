@@ -52,6 +52,7 @@ import {
   deleteCupboardLink,
   getCupboardFileDownloadUrl,
   getCupboardThumbnailUrl,
+  getCupboardCoverImageUrl,
   checkIsAdmin,
   type CupboardItem,
   type CupboardCategory,
@@ -83,10 +84,13 @@ export default function CupboardPageClient() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
   const [showCategoryDialog, setShowCategoryDialog] = useState(false)
+  const [showViewDialog, setShowViewDialog] = useState(false)
+  const [viewingItem, setViewingItem] = useState<CupboardItem | null>(null)
   const [editingItem, setEditingItem] = useState<CupboardItem | null>(null)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({})
+  const [coverImageUrls, setCoverImageUrls] = useState<Record<string, string>>({})
 
   // Form state
   const [title, setTitle] = useState('')
@@ -94,6 +98,8 @@ export default function CupboardPageClient() {
   const [categoryId, setCategoryId] = useState<string>('')
   const [filesToUpload, setFilesToUpload] = useState<FileToUpload[]>([])
   const [linksToAdd, setLinksToAdd] = useState<LinkToAdd[]>([])
+  const [coverImageToUpload, setCoverImageToUpload] = useState<File | null>(null)
+  const [coverImagePreview, setCoverImagePreview] = useState<string | null>(null)
 
   // Category management
   const [newCategoryName, setNewCategoryName] = useState('')
@@ -102,6 +108,7 @@ export default function CupboardPageClient() {
   const [isAdmin, setIsAdmin] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const coverImageInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     checkAdminStatus()
@@ -145,7 +152,7 @@ export default function CupboardPageClient() {
         setItems(result.items)
         
         // Load thumbnail URLs for files with thumbnails
-        const urls: Record<string, string> = {}
+        const fileThumbUrls: Record<string, string> = {}
         await Promise.all(
           result.items
             .flatMap(item => item.files || [])
@@ -154,12 +161,28 @@ export default function CupboardPageClient() {
               if (file.thumbnail_path) {
                 const thumbResult = await getCupboardThumbnailUrl(file.thumbnail_path)
                 if (thumbResult.success && thumbResult.url) {
-                  urls[file.id] = thumbResult.url
+                  fileThumbUrls[file.id] = thumbResult.url
                 }
               }
             })
         )
-        setThumbnailUrls(urls)
+        setThumbnailUrls(fileThumbUrls)
+
+        // Load cover image URLs for items with cover images
+        const itemCoverUrls: Record<string, string> = {}
+        await Promise.all(
+          result.items
+            .filter(item => item.cover_image_path)
+            .map(async (item) => {
+              if (item.cover_image_path) {
+                const coverResult = await getCupboardCoverImageUrl(item.cover_image_path)
+                if (coverResult.success && coverResult.url) {
+                  itemCoverUrls[item.id] = coverResult.url
+                }
+              }
+            })
+        )
+        setCoverImageUrls(itemCoverUrls)
       }
     } catch (error) {
       console.error('Error loading items:', error)
@@ -178,13 +201,21 @@ export default function CupboardPageClient() {
     setShowAddDialog(true)
   }
 
-  function handleEditClick(item: CupboardItem) {
+  function handleViewClick(item: CupboardItem) {
+    setViewingItem(item)
+    setShowViewDialog(true)
+  }
+
+  function handleEditClick(item: CupboardItem, e?: React.MouseEvent) {
+    e?.stopPropagation() // Prevent card click
     setEditingItem(item)
     setTitle(item.title)
     setDescription(item.description || '')
     setCategoryId(item.category_id || '')
     setFilesToUpload([]) // Files are already uploaded, we'll manage them separately
     setLinksToAdd([]) // Links are already added, we'll manage them separately
+    setCoverImageToUpload(null)
+    setCoverImagePreview(item.cover_image_path ? coverImageUrls[item.id] || null : null)
     setShowEditDialog(true)
   }
 
@@ -193,6 +224,10 @@ export default function CupboardPageClient() {
   }
 
   function handleCancel() {
+    // Revoke object URL if it was created from a file
+    if (coverImagePreview && coverImagePreview.startsWith('blob:')) {
+      URL.revokeObjectURL(coverImagePreview)
+    }
     setShowAddDialog(false)
     setShowEditDialog(false)
     setEditingItem(null)
@@ -201,6 +236,8 @@ export default function CupboardPageClient() {
     setCategoryId('')
     setFilesToUpload([])
     setLinksToAdd([])
+    setCoverImageToUpload(null)
+    setCoverImagePreview(null)
   }
 
   function handleAddFile() {
@@ -221,6 +258,39 @@ export default function CupboardPageClient() {
 
   function handleRemoveFile(fileId: string) {
     setFilesToUpload(prev => prev.filter(f => f.id !== fileId))
+  }
+
+  function handleCoverImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        toast.error('Please select an image file')
+        return
+      }
+      // Revoke old preview URL if it exists and was created from a file (not from existing cover)
+      if (coverImagePreview && coverImagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(coverImagePreview)
+      }
+      setCoverImageToUpload(file)
+      // Create preview URL
+      const previewUrl = URL.createObjectURL(file)
+      setCoverImagePreview(previewUrl)
+    }
+    if (coverImageInputRef.current) {
+      coverImageInputRef.current.value = ''
+    }
+  }
+
+  function handleRemoveCoverImage() {
+    // Revoke object URL if it was created from a file
+    if (coverImagePreview && coverImagePreview.startsWith('blob:')) {
+      URL.revokeObjectURL(coverImagePreview)
+    }
+    setCoverImageToUpload(null)
+    setCoverImagePreview(null)
+    if (coverImageInputRef.current) {
+      coverImageInputRef.current.value = ''
+    }
   }
 
   function handleAddLink() {
@@ -392,12 +462,62 @@ export default function CupboardPageClient() {
         handleCancel()
         loadItems()
       } else if (showEditDialog && editingItem) {
+        // Handle cover image: upload new, remove existing, or keep existing
+        let coverImagePath: string | null = editingItem.cover_image_path
+        
+        // Check if user removed the cover image (had one before, but preview is now null)
+        const coverImageRemoved = editingItem.cover_image_path && !coverImagePreview && !coverImageToUpload
+        
+        if (coverImageToUpload) {
+          // Upload new cover image
+          setUploading(true)
+          const supabase = createClient()
+          try {
+            const fileExt = coverImageToUpload.name.split('.').pop()
+            const fileName = `cover-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
+            const filePath = `cupboard/${fileName}`
+
+            let uploadData
+            try {
+              const result = await supabase.storage
+                .from('cupboard')
+                .upload(filePath, coverImageToUpload, {
+                  contentType: coverImageToUpload.type,
+                  upsert: false,
+                })
+              uploadData = result.data
+              if (result.error) throw result.error
+            } catch {
+              const result = await supabase.storage
+                .from('documents')
+                .upload(filePath, coverImageToUpload, {
+                  contentType: coverImageToUpload.type,
+                  upsert: false,
+                })
+              uploadData = result.data
+              if (result.error) throw result.error
+            }
+
+            if (uploadData?.path) {
+              coverImagePath = uploadData.path
+            }
+          } catch (error) {
+            console.error('Error uploading cover image:', error)
+            toast.error('Failed to upload cover image')
+          }
+          setUploading(false)
+        } else if (coverImageRemoved) {
+          // User removed the cover image
+          coverImagePath = null
+        }
+
         // Update existing item
         const updateResult = await updateCupboardItem(
           editingItem.id,
           title.trim(),
           description.trim() || null,
-          categoryId || null
+          categoryId || null,
+          coverImagePath
         )
 
         if (updateResult.error) {
@@ -580,6 +700,50 @@ export default function CupboardPageClient() {
     }
   }
 
+  async function handleDownloadAllFiles(item: CupboardItem, e?: React.MouseEvent) {
+    e?.stopPropagation() // Prevent card click
+    
+    if (!item.files || item.files.length === 0) {
+      return
+    }
+
+    if (item.files.length === 1) {
+      // If only one file, just download it
+      handleDownloadFile(item.files[0])
+      return
+    }
+
+    try {
+      // Show loading toast
+      const loadingToast = toast.loading(`Downloading ${item.files.length} files...`)
+
+      // Download all files - open each in a new tab
+      // Note: Browsers may block multiple popups, so we'll open them with a slight delay
+      for (let i = 0; i < item.files.length; i++) {
+        const file = item.files[i]
+        const result = await getCupboardFileDownloadUrl(file.file_path)
+        if (result.success && result.url) {
+          // Use setTimeout to stagger downloads and avoid browser blocking
+          setTimeout(() => {
+            const link = document.createElement('a')
+            link.href = result.url!
+            link.download = file.file_name
+            link.target = '_blank'
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+          }, i * 200) // 200ms delay between each download
+        }
+      }
+
+      toast.dismiss(loadingToast)
+      toast.success(`Started downloading ${item.files.length} files`)
+    } catch (error) {
+      console.error('Error downloading all files:', error)
+      toast.error('Failed to download all files')
+    }
+  }
+
   async function handleCreateCategory() {
     if (!newCategoryName.trim()) {
       toast.error('Category name is required')
@@ -709,17 +873,31 @@ export default function CupboardPageClient() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredItems.map((item) => {
-                // Get the first file with a thumbnail for the main preview
+                // Check for cover image first, then fall back to thumbnail
+                const coverImageUrl = item.cover_image_path ? coverImageUrls[item.id] : null
                 const firstFileWithThumbnail = item.files?.find(f => thumbnailUrls[f.id])
                 const firstFile = item.files?.[0]
                 const firstLink = item.links?.[0]
                 
+                // Determine what to show in the preview
+                const showPreview = coverImageUrl || firstFileWithThumbnail || (firstFile && (firstFile.file_type?.startsWith('image/') || firstFile.file_type === 'application/pdf'))
+                
                 return (
-                  <Card key={item.id} className="hover:shadow-lg transition-shadow flex flex-col">
-                    {/* Main Thumbnail Preview */}
-                    {(firstFileWithThumbnail || (firstFile && (firstFile.file_type?.startsWith('image/') || firstFile.file_type === 'application/pdf'))) && (
-                      <div className="relative w-full h-48 bg-muted overflow-hidden rounded-t-lg flex items-center justify-center p-4">
-                        {firstFileWithThumbnail && thumbnailUrls[firstFileWithThumbnail.id] ? (
+                  <Card 
+                    key={item.id} 
+                    className="hover:shadow-lg transition-shadow flex flex-col p-0 overflow-hidden cursor-pointer"
+                    onClick={() => handleViewClick(item)}
+                  >
+                    {/* Main Thumbnail/Cover Preview */}
+                    {showPreview && (
+                      <div className="relative w-full h-48 bg-muted overflow-hidden flex items-center justify-center">
+                        {coverImageUrl ? (
+                          <img 
+                            src={coverImageUrl} 
+                            alt={item.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : firstFileWithThumbnail && thumbnailUrls[firstFileWithThumbnail.id] ? (
                           <img 
                             src={thumbnailUrls[firstFileWithThumbnail.id]} 
                             alt={firstFileWithThumbnail.file_name}
@@ -737,13 +915,13 @@ export default function CupboardPageClient() {
                       </div>
                     )}
                     
-                    {!firstFileWithThumbnail && !firstFile && firstLink && (
+                    {!showPreview && firstLink && (
                       <div className="relative w-full h-48 bg-muted overflow-hidden rounded-t-lg flex items-center justify-center">
                         <LinkIcon className="h-16 w-16 text-muted-foreground" />
                       </div>
                     )}
 
-                    <CardHeader>
+                    <CardHeader className="px-6 pt-6">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <CardTitle className="text-lg">{item.title}</CardTitle>
@@ -758,7 +936,7 @@ export default function CupboardPageClient() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleEditClick(item)}
+                              onClick={(e) => handleEditClick(item, e)}
                               className="h-8 w-8"
                             >
                               <Edit2 className="h-4 w-4" />
@@ -766,7 +944,10 @@ export default function CupboardPageClient() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleDeleteItem(item)}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteItem(item)
+                              }}
                               className="h-8 w-8 text-destructive"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -778,50 +959,56 @@ export default function CupboardPageClient() {
                         <CardDescription className="mt-2">{item.description}</CardDescription>
                       )}
                     </CardHeader>
-                    <CardContent className="space-y-3 flex-1">
-                      {/* Files */}
+                    <CardContent className="space-y-3 flex-1 px-6 pb-6">
+                      {/* Files Carousel */}
                       {item.files && item.files.length > 0 && (
                         <div className="space-y-2">
-                          <p className="text-xs font-medium text-muted-foreground">Files ({item.files.length}):</p>
-                          {item.files.map((file) => (
-                            <div key={file.id} className="flex items-center gap-3 p-2 bg-muted rounded-lg hover:bg-muted/80 transition-colors">
-                              {thumbnailUrls[file.id] ? (
-                                <div className="h-16 w-16 bg-background rounded border border-border flex items-center justify-center flex-shrink-0 overflow-hidden p-1.5">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-medium text-muted-foreground">Files ({item.files.length})</p>
+                            {item.files.length > 1 && (
+                              <button
+                                onClick={(e) => handleDownloadAllFiles(item, e)}
+                                className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+                                title="Download all files"
+                              >
+                                <Download className="h-3 w-3" />
+                                Download All
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:bg-muted-foreground/20 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/30">
+                            {item.files.map((file) => (
+                              <div 
+                                key={file.id} 
+                                className="flex-shrink-0 w-20 h-20 bg-muted rounded-lg border border-border overflow-hidden group relative"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleDownloadFile(file)
+                                }}
+                                title={file.file_name}
+                              >
+                                {thumbnailUrls[file.id] ? (
                                   <img 
                                     src={thumbnailUrls[file.id]} 
                                     alt={file.file_name}
-                                    className="max-h-full max-w-full object-contain"
+                                    className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
                                   />
+                                ) : file.file_type?.startsWith('image/') ? (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                                  </div>
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <FileText className="h-8 w-8 text-muted-foreground" />
+                                  </div>
+                                )}
+                                {/* Hover overlay with download icon */}
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                  <Download className="h-5 w-5 text-white" />
                                 </div>
-                              ) : file.file_type?.startsWith('image/') ? (
-                                <div className="h-16 w-16 bg-background rounded border border-border flex items-center justify-center flex-shrink-0">
-                                  <ImageIcon className="h-8 w-8 text-muted-foreground" />
-                                </div>
-                              ) : (
-                                <div className="h-16 w-16 bg-background rounded border border-border flex items-center justify-center flex-shrink-0">
-                                  <FileText className="h-8 w-8 text-muted-foreground" />
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{file.file_name}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : 'Unknown size'}
-                                  {file.file_type && ` • ${file.file_type.split('/')[1]?.toUpperCase() || file.file_type}`}
-                                </p>
                               </div>
-                              <div className="flex gap-1 flex-shrink-0">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleDownloadFile(file)}
-                                  className="h-8 w-8"
-                                  title="Download"
-                                >
-                                  <Download className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -946,6 +1133,53 @@ export default function CupboardPageClient() {
                 )}
               </div>
             </div>
+
+            {/* Cover Image Section - Only in Edit Dialog */}
+            {showEditDialog && (
+              <div className="space-y-2">
+                <Label>Cover Image</Label>
+                <div className="space-y-2">
+                  {coverImagePreview && (
+                    <div className="relative w-full h-48 bg-muted rounded-lg overflow-hidden border">
+                      <img 
+                        src={coverImagePreview} 
+                        alt="Cover preview"
+                        className="w-full h-full object-cover"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        onClick={handleRemoveCoverImage}
+                        disabled={saving || uploading}
+                        className="absolute top-2 right-2"
+                        title="Remove cover image"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                  <input
+                    ref={coverImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleCoverImageSelect}
+                    className="hidden"
+                    disabled={saving || uploading}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => coverImageInputRef.current?.click()}
+                    disabled={saving || uploading}
+                    className="w-full"
+                  >
+                    <ImageIcon className="h-4 w-4 mr-2" />
+                    {coverImagePreview ? 'Change Cover Image' : 'Upload Cover Image'}
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Files Section */}
             <div className="space-y-2">
@@ -1118,6 +1352,173 @@ export default function CupboardPageClient() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Item Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {viewingItem && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{viewingItem.title}</DialogTitle>
+                {viewingItem.category && (
+                  <DialogDescription>
+                    <Badge variant="secondary">{viewingItem.category.name}</Badge>
+                  </DialogDescription>
+                )}
+              </DialogHeader>
+
+              <div className="space-y-6">
+                {/* Cover Image */}
+                {viewingItem.cover_image_path && coverImageUrls[viewingItem.id] && (
+                  <div className="w-full h-64 bg-muted rounded-lg overflow-hidden">
+                    <img 
+                      src={coverImageUrls[viewingItem.id]} 
+                      alt={viewingItem.title}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+
+                {/* Description */}
+                {viewingItem.description && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">Description</h3>
+                    <p className="text-sm text-muted-foreground">{viewingItem.description}</p>
+                  </div>
+                )}
+
+                {/* Files */}
+                {viewingItem.files && viewingItem.files.length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold">Files ({viewingItem.files.length})</h3>
+                      {viewingItem.files.length > 1 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDownloadAllFiles(viewingItem)}
+                          className="flex items-center gap-2"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download All
+                        </Button>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      {viewingItem.files.map((file) => (
+                        <div key={file.id} className="flex items-center gap-3 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors">
+                          {thumbnailUrls[file.id] ? (
+                            <div className="h-20 w-20 bg-background rounded border border-border flex items-center justify-center flex-shrink-0 overflow-hidden p-1.5">
+                              <img 
+                                src={thumbnailUrls[file.id]} 
+                                alt={file.file_name}
+                                className="max-h-full max-w-full object-contain"
+                              />
+                            </div>
+                          ) : file.file_type?.startsWith('image/') ? (
+                            <div className="h-20 w-20 bg-background rounded border border-border flex items-center justify-center flex-shrink-0">
+                              <ImageIcon className="h-10 w-10 text-muted-foreground" />
+                            </div>
+                          ) : (
+                            <div className="h-20 w-20 bg-background rounded border border-border flex items-center justify-center flex-shrink-0">
+                              <FileText className="h-10 w-10 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{file.file_name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : 'Unknown size'}
+                              {file.file_type && ` • ${file.file_type.split('/')[1]?.toUpperCase() || file.file_type}`}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDownloadFile(file)}
+                            className="flex-shrink-0"
+                          >
+                            <Download className="h-4 w-4 mr-2" />
+                            Download
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Links */}
+                {viewingItem.links && viewingItem.links.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-3">Links ({viewingItem.links.length})</h3>
+                    <div className="space-y-2">
+                      {viewingItem.links.map((link) => {
+                        // Try to extract domain for better link display
+                        let domain = ''
+                        try {
+                          const url = new URL(link.url)
+                          domain = url.hostname.replace('www.', '')
+                        } catch {}
+                        
+                        return (
+                          <div key={link.id} className="flex items-center gap-3 p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors">
+                            <div className="h-20 w-20 bg-background rounded border border-border flex items-center justify-center flex-shrink-0">
+                              <LinkIcon className="h-10 w-10 text-primary" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {link.label || domain || 'External Link'}
+                              </p>
+                              <a
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-muted-foreground hover:text-primary truncate block"
+                              >
+                                {link.url}
+                              </a>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(link.url, '_blank')}
+                              className="flex-shrink-0"
+                            >
+                              <ExternalLink className="h-4 w-4 mr-2" />
+                              Open
+                            </Button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Metadata */}
+                <div className="pt-4 border-t">
+                  <p className="text-xs text-muted-foreground">
+                    Added {format(new Date(viewingItem.created_at), 'MMM d, yyyy')}
+                  </p>
+                </div>
+              </div>
+
+              {isAdmin && (
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowViewDialog(false)}>
+                    Close
+                  </Button>
+                  <Button onClick={() => {
+                    setShowViewDialog(false)
+                    handleEditClick(viewingItem)
+                  }}>
+                    <Edit2 className="h-4 w-4 mr-2" />
+                    Edit
+                  </Button>
+                </DialogFooter>
+              )}
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

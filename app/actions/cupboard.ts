@@ -57,6 +57,7 @@ export interface CupboardItem {
   description: string | null
   category_id: string | null
   category?: CupboardCategory | null
+  cover_image_path: string | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -337,7 +338,8 @@ export async function updateCupboardItem(
   id: string,
   title: string,
   description: string | null,
-  categoryId: string | null
+  categoryId: string | null,
+  coverImagePath: string | null = null
 ) {
   const supabase = await createClient()
 
@@ -364,6 +366,7 @@ export async function updateCupboardItem(
         title,
         description,
         category_id: categoryId,
+        cover_image_path: coverImagePath,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -748,6 +751,47 @@ export async function getCupboardThumbnailUrl(thumbnailPath: string) {
   } catch (error) {
     console.error('Error generating thumbnail URL:', error)
     return { error: error instanceof Error ? error.message : 'Failed to generate thumbnail URL' }
+  }
+}
+
+/**
+ * Get cover image URL for a cupboard item
+ */
+export async function getCupboardCoverImageUrl(coverImagePath: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  try {
+    // Try cupboard bucket first, fallback to documents bucket for migrated files
+    let data, error
+    try {
+      const result = await supabase
+        .storage
+        .from('cupboard')
+        .createSignedUrl(coverImagePath, 3600) // 1 hour expiry
+      data = result.data
+      error = result.error
+    } catch {
+      // Fallback to documents bucket if cupboard doesn't exist yet
+      const result = await supabase
+        .storage
+        .from('documents')
+        .createSignedUrl(coverImagePath, 3600)
+      data = result.data
+      error = result.error
+    }
+
+    if (error) throw error
+    if (!data) throw new Error('No data returned from storage')
+
+    return { success: true, url: data.signedUrl }
+  } catch (error) {
+    console.error('Error generating cover image URL:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to generate cover image URL' }
   }
 }
 
