@@ -46,6 +46,9 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
   const [monthlyData, setMonthlyData] = useState<MonthlyProjectData[]>([])
   const [monthlyHours, setMonthlyHours] = useState<number | null>(null)
   const [rolloverHours, setRolloverHours] = useState<number | null>(null)
+  const [agreedDaysPerWeek, setAgreedDaysPerWeek] = useState<number | null>(null)
+  const [agreedDaysPerMonth, setAgreedDaysPerMonth] = useState<number | null>(null)
+  const [hoursPerDay, setHoursPerDay] = useState<number | null>(null)
   const [remainingProjectHours, setRemainingProjectHours] = useState<number>(0)
   const [shareLinks, setShareLinks] = useState<RetainerShareLink[]>([])
   const [showShareDialog, setShowShareDialog] = useState(false)
@@ -69,6 +72,9 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
         setMonthlyData(result.data)
         setMonthlyHours(result.monthly_hours ?? null)
         setRolloverHours(result.rollover_hours ?? null)
+        setAgreedDaysPerWeek(result.agreed_days_per_week ?? null)
+        setAgreedDaysPerMonth(result.agreed_days_per_month ?? null)
+        setHoursPerDay(result.hours_per_day ?? null)
         setRemainingProjectHours(result.remaining_project_hours ?? 0)
       }
     } catch (error) {
@@ -181,6 +187,15 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
     return project.tasks.reduce((total, task) => total + task.total_hours, 0)
   }
 
+  function getMonthTotalRolloverHours(monthData: MonthlyProjectData): number {
+    const hoursSplitByDay = getHoursSplitByDay(monthData)
+    let totalRollover = 0
+    hoursSplitByDay.forEach((split) => {
+      totalRollover += split.rolloverHours
+    })
+    return totalRollover
+  }
+
   function getHoursByDay(monthData: MonthlyProjectData): Map<string, number> {
     const hoursByDay = new Map<string, number>()
     
@@ -195,6 +210,68 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
     })
     
     return hoursByDay
+  }
+
+  /**
+   * Calculate monthly vs rollover hours split for each day in the month
+   * Uses per-day allocation: daily_allocation = monthly_hours / agreed_days
+   * Any hours over the daily allocation on a given day come from rollover
+   * Returns a map of date -> { monthlyHours, rolloverHours, totalHours }
+   */
+  function getHoursSplitByDay(monthData: MonthlyProjectData): Map<string, { monthlyHours: number; rolloverHours: number; totalHours: number }> {
+    const splitByDay = new Map<string, { monthlyHours: number; rolloverHours: number; totalHours: number }>()
+    
+    // Daily allocation is based on hours_per_day setting, not calculated from monthly_hours / agreed_days
+    // The agreed days is just informational - the actual daily cap is hours_per_day
+    const rolloverHoursAllocation = rolloverHours || 0
+    const dailyAllocation = hoursPerDay || 6 // Default to 6 if not set
+    
+    // Get all time entries grouped by date
+    const entriesByDate = new Map<string, number>()
+    monthData.projects.forEach(project => {
+      project.tasks.forEach(task => {
+        task.time_entries.forEach(entry => {
+          const current = entriesByDate.get(entry.date) || 0
+          entriesByDate.set(entry.date, current + entry.hours)
+        })
+      })
+    })
+    
+    // Track cumulative rollover usage to respect the limit
+    let cumulativeRolloverUsed = 0
+    
+    // Process each day
+    const sortedDates = Array.from(entriesByDate.keys()).sort()
+    
+    sortedDates.forEach(dateKey => {
+      const dayHours = entriesByDate.get(dateKey) || 0
+      
+      // Per-day allocation: monthly = min(dayHours, dailyAllocation), rollover = excess
+      let monthlyHoursUsed = 0
+      let rolloverHoursUsed = 0
+      
+      if (dailyAllocation > 0) {
+        // Calculate split for this day
+        monthlyHoursUsed = Math.min(dayHours, dailyAllocation)
+        const excessHours = Math.max(0, dayHours - dailyAllocation)
+        
+        // Check if we can use rollover for the excess
+        const rolloverAvailable = Math.max(0, rolloverHoursAllocation - cumulativeRolloverUsed)
+        rolloverHoursUsed = Math.min(excessHours, rolloverAvailable)
+        cumulativeRolloverUsed += rolloverHoursUsed
+      } else {
+        // No daily allocation configured - all hours go to monthly (legacy behavior)
+        monthlyHoursUsed = dayHours
+      }
+      
+      splitByDay.set(dateKey, {
+        monthlyHours: monthlyHoursUsed,
+        rolloverHours: rolloverHoursUsed,
+        totalHours: dayHours,
+      })
+    })
+    
+    return splitByDay
   }
 
   function getDateBreakdown(dateKey: string, monthData: MonthlyProjectData) {
@@ -237,6 +314,9 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
     const monthStart = startOfMonth(parseISO(`${monthKey}-01`))
     const monthEnd = endOfMonth(monthStart)
     const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd })
+    
+    // Get the split data for this month
+    const hoursSplitByDay = getHoursSplitByDay(monthData)
     
     // Create a grid with 5 columns (Monday to Friday)
     const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -293,35 +373,69 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                 
                 const dateKey = format(day, 'yyyy-MM-dd')
                 const hours = hoursByDay.get(dateKey) || 0
+                const split = hoursSplitByDay.get(dateKey)
                 const isToday = isSameDay(day, new Date())
                 
                 const hasTimeEntries = hours > 0
+                const hasRollover = split && split.rolloverHours > 0
                 
                 return (
                   <div
                     key={dateKey}
                     onClick={() => hasTimeEntries && handleDateClick(dateKey, monthData)}
                     className={cn(
-                      "aspect-square border rounded-lg p-2 flex flex-col items-center justify-center",
+                      "aspect-square border rounded-lg p-2 flex flex-col items-center justify-center relative",
                       hasTimeEntries ? "bg-primary/5 border-primary/20 cursor-pointer hover:bg-primary/10 transition-colors" : "bg-muted/30 border-dashed",
+                      hasRollover && "border-orange-500/50 bg-orange-50/50 dark:bg-orange-950/20",
                       isToday && "ring-2 ring-primary/50"
                     )}
                   >
                     <div className="text-xs font-medium text-muted-foreground mb-1">
                       {format(day, 'd')}
                     </div>
-                    <div className={cn(
-                      "text-lg font-bold",
-                      hours > 0 ? "text-foreground" : "text-muted-foreground"
-                    )}>
-                      {hours > 0 ? hours.toFixed(1) : '0'}h
-                    </div>
+                    {hasTimeEntries && split ? (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <div className="text-sm font-bold text-foreground">
+                          {split.totalHours.toFixed(1)}h
+                        </div>
+                        {split.rolloverHours > 0 && (
+                          <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400">
+                            +{split.rolloverHours.toFixed(1)} overflow
+                          </div>
+                        )}
+                        {split.monthlyHours > 0 && split.rolloverHours === 0 && (
+                          <div className="text-[10px] text-muted-foreground">
+                            monthly
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-lg font-bold text-muted-foreground">
+                        0h
+                      </div>
+                    )}
                   </div>
                 )
               })}
             </div>
           ))}
         </div>
+        
+        {/* Legend */}
+        {(monthlyHours || rolloverHours) && (
+          <div className="flex items-center gap-4 text-xs text-muted-foreground mt-4 pt-4 border-t">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded border border-primary/20 bg-primary/5" />
+              <span>Monthly hours</span>
+            </div>
+            {rolloverHours && rolloverHours > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded border border-orange-500/50 bg-orange-50/50 dark:bg-orange-950/20" />
+                <span>Overflow hours</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -382,7 +496,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Remaining Project Hours */}
                     <div className="space-y-2">
                       <div className="text-sm font-medium text-muted-foreground">
@@ -413,6 +527,28 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {monthlyHours ? `${monthlyHours.toFixed(1)}h allocated, ${currentMonthHours.toFixed(1)}h used` : 'No monthly hours set'}
+                          </div>
+                        </div>
+                      )
+                    })()}
+                    
+                    {/* Current Month Rollover Hours Remaining */}
+                    {(() => {
+                      const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
+                      const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
+                      const currentMonthRollover = currentMonthData ? getMonthTotalRolloverHours(currentMonthData) : 0
+                      const rolloverRemaining = rolloverHours ? rolloverHours - currentMonthRollover : null
+                      
+                      return (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-muted-foreground">
+                            Overflow Hours Remaining
+                          </div>
+                          <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                            {rolloverRemaining !== null ? `${Math.max(0, rolloverRemaining).toFixed(1)}h` : 'N/A'}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {rolloverHours ? `${rolloverHours.toFixed(1)}h total, ${currentMonthRollover.toFixed(1)}h used` : 'No overflow hours set'}
                           </div>
                         </div>
                       )
@@ -465,6 +601,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
               <Accordion type="multiple" className="w-full space-y-4">
                 {monthlyData.map((monthData) => {
                 const monthTotalHours = getMonthTotalHours(monthData)
+                const monthTotalRollover = getMonthTotalRolloverHours(monthData)
                 const monthLabel = formatMonth(monthData.month)
                 
                 // Calculate progress for this month
@@ -485,6 +622,11 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                               <CardDescription className="mt-0">
                                 {monthData.projects.length} project{monthData.projects.length !== 1 ? 's' : ''} • {monthTotalHours.toFixed(1)} hours
                                 {availableHours > 0 && ` of ${availableHours}h`}
+                                {monthTotalRollover > 0 && (
+                                  <span className="text-orange-600 dark:text-orange-400 ml-1">
+                                    • {monthTotalRollover.toFixed(1)}h overflow
+                                  </span>
+                                )}
                               </CardDescription>
                             </div>
                           </div>
@@ -502,6 +644,11 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                             )}>
                               {monthTotalHours.toFixed(1)}h
                             </Badge>
+                            {monthTotalRollover > 0 && (
+                              <Badge variant="outline" className="border-orange-500/50 text-orange-600 dark:text-orange-400">
+                                {monthTotalRollover.toFixed(1)}h overflow
+                              </Badge>
+                            )}
                           </div>
                         </div>
                       </AccordionTrigger>
@@ -576,6 +723,10 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
             const breakdown = getDateBreakdown(selectedDate, monthData)
             const totalHours = breakdown.reduce((sum, item) => sum + item.hours, 0)
             
+            // Get the split for this date
+            const hoursSplitByDay = getHoursSplitByDay(monthData)
+            const split = hoursSplitByDay.get(selectedDate)
+            
             // Group by project
             const byProject = breakdown.reduce((acc, item) => {
               if (!acc[item.projectName]) {
@@ -587,9 +738,27 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
 
             return (
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                  <span className="font-medium">Total Hours</span>
-                  <span className="text-2xl font-bold">{totalHours.toFixed(1)}h</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                    <span className="font-medium">Total Hours</span>
+                    <span className="text-2xl font-bold">{totalHours.toFixed(1)}h</span>
+                  </div>
+                  {split && (split.monthlyHours > 0 || split.rolloverHours > 0) && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                        <div className="text-xs text-muted-foreground mb-1">Monthly Hours</div>
+                        <div className="text-lg font-bold">{split.monthlyHours.toFixed(1)}h</div>
+                      </div>
+                      {split.rolloverHours > 0 && (
+                        <div className="p-3 bg-orange-50/50 dark:bg-orange-950/20 border border-orange-500/50 rounded-lg">
+                          <div className="text-xs text-muted-foreground mb-1">Overflow Hours</div>
+                          <div className="text-lg font-bold text-orange-600 dark:text-orange-400">
+                            {split.rolloverHours.toFixed(1)}h
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto">

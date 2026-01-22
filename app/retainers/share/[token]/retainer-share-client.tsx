@@ -34,6 +34,10 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
   const [clientName, setClientName] = useState<string>('')
   const [monthlyData, setMonthlyData] = useState<MonthlyProjectData[]>([])
   const [monthlyHours, setMonthlyHours] = useState<number | null>(null)
+  const [rolloverHours, setRolloverHours] = useState<number | null>(null)
+  const [agreedDaysPerWeek, setAgreedDaysPerWeek] = useState<number | null>(null)
+  const [agreedDaysPerMonth, setAgreedDaysPerMonth] = useState<number | null>(null)
+  const [hoursPerDay, setHoursPerDay] = useState<number | null>(null)
   const [remainingProjectHours, setRemainingProjectHours] = useState<number>(0)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showDateDialog, setShowDateDialog] = useState(false)
@@ -62,6 +66,10 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
 
       setClientName(shareResult.client.client_name)
       setMonthlyHours(shareResult.client.monthly_hours || null)
+      setRolloverHours(shareResult.client.rollover_hours || null)
+      setAgreedDaysPerWeek(shareResult.client.agreed_days_per_week || null)
+      setAgreedDaysPerMonth(shareResult.client.agreed_days_per_month || null)
+      setHoursPerDay(shareResult.client.hours_per_day || null)
 
       // Then load the retainer data using public version
       const dataResult = await getRetainerDataPublic(shareResult.client.client_name)
@@ -96,9 +104,10 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
     }
   }
 
-  // Convert hours to days (assuming 6-hour work day)
+  // Convert hours to days using the configured hours_per_day
   function hoursToDays(hours: number): number {
-    return hours / 6
+    const hoursPerWorkingDay = hoursPerDay || 6 // Default to 6 if not set
+    return hours / hoursPerWorkingDay
   }
 
   // Format days for display
@@ -121,6 +130,15 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
     return hoursToDays(totalHours)
   }
 
+  function getMonthTotalRolloverDays(monthData: MonthlyProjectData): number {
+    const daysSplitByDay = getDaysSplitByDay(monthData)
+    let totalRollover = 0
+    daysSplitByDay.forEach((split) => {
+      totalRollover += split.rolloverDays
+    })
+    return totalRollover
+  }
+
   function getDaysByDay(monthData: MonthlyProjectData): Map<string, number> {
     const daysByDay = new Map<string, number>()
     
@@ -135,6 +153,69 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
     })
     
     return daysByDay
+  }
+
+  /**
+   * Calculate monthly vs rollover hours split for each day in the month
+   * Uses per-day allocation: daily_allocation = monthly_hours / agreed_days
+   * Any hours over the daily allocation on a given day come from rollover
+   * Returns a map of date -> { monthlyDays, rolloverDays, totalDays }
+   * (converted from hours to days)
+   */
+  function getDaysSplitByDay(monthData: MonthlyProjectData): Map<string, { monthlyDays: number; rolloverDays: number; totalDays: number }> {
+    const splitByDay = new Map<string, { monthlyDays: number; rolloverDays: number; totalDays: number }>()
+    
+    // Daily allocation is based on hours_per_day setting, not calculated from monthly_hours / agreed_days
+    // The agreed days is just informational - the actual daily cap is hours_per_day
+    const rolloverHoursAllocation = rolloverHours || 0
+    const dailyAllocation = hoursPerDay || 6 // Default to 6 if not set
+    
+    // Get all time entries grouped by date
+    const entriesByDate = new Map<string, number>()
+    monthData.projects.forEach(project => {
+      project.tasks.forEach(task => {
+        task.time_entries.forEach(entry => {
+          const current = entriesByDate.get(entry.date) || 0
+          entriesByDate.set(entry.date, current + entry.hours)
+        })
+      })
+    })
+    
+    // Track cumulative rollover usage to respect the limit
+    let cumulativeRolloverUsed = 0
+    
+    // Process each day
+    const sortedDates = Array.from(entriesByDate.keys()).sort()
+    
+    sortedDates.forEach(dateKey => {
+      const dayHours = entriesByDate.get(dateKey) || 0
+      
+      // Per-day allocation: monthly = min(dayHours, dailyAllocation), rollover = excess
+      let monthlyHoursUsed = 0
+      let rolloverHoursUsed = 0
+      
+      if (dailyAllocation > 0) {
+        // Calculate split for this day
+        monthlyHoursUsed = Math.min(dayHours, dailyAllocation)
+        const excessHours = Math.max(0, dayHours - dailyAllocation)
+        
+        // Check if we can use rollover for the excess
+        const rolloverAvailable = Math.max(0, rolloverHoursAllocation - cumulativeRolloverUsed)
+        rolloverHoursUsed = Math.min(excessHours, rolloverAvailable)
+        cumulativeRolloverUsed += rolloverHoursUsed
+      } else {
+        // No daily allocation configured - all hours go to monthly (legacy behavior)
+        monthlyHoursUsed = dayHours
+      }
+      
+      splitByDay.set(dateKey, {
+        monthlyDays: hoursToDays(monthlyHoursUsed),
+        rolloverDays: hoursToDays(rolloverHoursUsed),
+        totalDays: hoursToDays(dayHours),
+      })
+    })
+    
+    return splitByDay
   }
 
   function getDateBreakdown(dateKey: string, monthData: MonthlyProjectData) {
@@ -177,6 +258,9 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
     const monthStart = startOfMonth(parseISO(`${monthKey}-01`))
     const monthEnd = endOfMonth(monthStart)
     const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd })
+    
+    // Get the split data for this month
+    const daysSplitByDay = getDaysSplitByDay(monthData)
     
     // Create a grid with 5 columns (Monday to Friday)
     const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -233,34 +317,68 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                 
                 const dateKey = format(day, 'yyyy-MM-dd')
                 const days = daysByDay.get(dateKey) || 0
+                const split = daysSplitByDay.get(dateKey)
                 const isToday = isSameDay(day, new Date())
                 const hasTimeEntries = days > 0
+                const hasRollover = split && split.rolloverDays > 0
                 
                 return (
                   <div
                     key={dateKey}
                     onClick={() => hasTimeEntries && handleDateClick(dateKey, monthData)}
                     className={cn(
-                      "aspect-square border rounded-lg p-2 flex flex-col items-center justify-center",
+                      "aspect-square border rounded-lg p-2 flex flex-col items-center justify-center relative",
                       hasTimeEntries ? "bg-primary/5 border-primary/20 cursor-pointer hover:bg-primary/10 transition-colors" : "bg-muted/30 border-dashed",
+                      hasRollover && "border-orange-500/50 bg-orange-50/50 dark:bg-orange-950/20",
                       isToday && "ring-2 ring-primary/50"
                     )}
                   >
                     <div className="text-xs font-medium text-muted-foreground mb-1">
                       {format(day, 'd')}
                     </div>
-                    <div className={cn(
-                      "text-lg font-bold",
-                      days > 0 ? "text-foreground" : "text-muted-foreground"
-                    )}>
-                      {formatDays(days)}d
-                    </div>
+                    {hasTimeEntries && split ? (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <div className="text-sm font-bold text-foreground">
+                          {formatDays(split.totalDays)}d
+                        </div>
+                        {split.rolloverDays > 0 && (
+                          <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400">
+                            +{formatDays(split.rolloverDays)} overflow
+                          </div>
+                        )}
+                        {split.monthlyDays > 0 && split.rolloverDays === 0 && (
+                          <div className="text-[10px] text-muted-foreground">
+                            monthly
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-lg font-bold text-muted-foreground">
+                        0.0d
+                      </div>
+                    )}
                   </div>
                 )
               })}
             </div>
           ))}
         </div>
+        
+        {/* Legend */}
+        {(monthlyHours || rolloverHours) && (
+          <div className="flex items-center gap-4 text-xs text-muted-foreground mt-4 pt-4 border-t">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded border border-primary/20 bg-primary/5" />
+              <span>Monthly days</span>
+            </div>
+            {rolloverHours && rolloverHours > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded border border-orange-500/50 bg-orange-50/50 dark:bg-orange-950/20" />
+                <span>Overflow days</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -310,7 +428,7 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Remaining Project Days */}
                     <div className="space-y-2">
                       <div className="text-sm font-medium text-muted-foreground">
@@ -342,6 +460,28 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {availableDays > 0 ? `${formatDays(availableDays)}d allocated, ${formatDays(currentMonthDays)}d used` : 'No monthly hours set'}
+                          </div>
+                        </div>
+                      )
+                    })()}
+                    
+                    {/* Current Month Rollover Days Remaining */}
+                    {(() => {
+                      const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
+                      const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
+                      const currentMonthRollover = currentMonthData ? getMonthTotalRolloverDays(currentMonthData) : 0
+                      const rolloverRemaining = rolloverHours ? hoursToDays(rolloverHours) - currentMonthRollover : null
+                      
+                      return (
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-muted-foreground">
+                            Overflow Days Remaining
+                          </div>
+                          <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                            {rolloverRemaining !== null ? `${formatDays(Math.max(0, rolloverRemaining))}d` : 'N/A'}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {rolloverHours ? `${formatDays(hoursToDays(rolloverHours))}d total, ${formatDays(currentMonthRollover)}d used` : 'No overflow hours set'}
                           </div>
                         </div>
                       )
@@ -396,6 +536,7 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
               <Accordion type="multiple" className="w-full space-y-4">
                 {monthlyData.map((monthData) => {
                 const monthTotalDays = getMonthTotalDays(monthData)
+                const monthTotalRollover = getMonthTotalRolloverDays(monthData)
                 const monthLabel = formatMonth(monthData.month)
                 
                 // Calculate progress for this month (convert monthly_hours to days)
@@ -416,6 +557,11 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                               <CardDescription className="mt-0">
                                 {monthData.projects.length} project{monthData.projects.length !== 1 ? 's' : ''} • {formatDays(monthTotalDays)} days
                                 {availableDays > 0 && ` of ${formatDays(availableDays)}`}
+                                {monthTotalRollover > 0 && (
+                                  <span className="text-orange-600 dark:text-orange-400 ml-1">
+                                    • {formatDays(monthTotalRollover)}d overflow
+                                  </span>
+                                )}
                               </CardDescription>
                             </div>
                           </div>
@@ -433,6 +579,11 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                             )}>
                               {formatDays(monthTotalDays)}d
                             </Badge>
+                            {monthTotalRollover > 0 && (
+                              <Badge variant="outline" className="border-orange-500/50 text-orange-600 dark:text-orange-400">
+                                {formatDays(monthTotalRollover)}d overflow
+                              </Badge>
+                            )}
                           </div>
                         </div>
                       </AccordionTrigger>
@@ -507,6 +658,10 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
             const breakdown = getDateBreakdown(selectedDate, monthData)
             const totalDays = breakdown.reduce((sum, item) => sum + item.days, 0)
             
+            // Get the split for this date
+            const daysSplitByDay = getDaysSplitByDay(monthData)
+            const split = daysSplitByDay.get(selectedDate)
+            
             // Group by project
             const byProject = breakdown.reduce((acc, item) => {
               if (!acc[item.projectName]) {
@@ -518,9 +673,27 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
 
             return (
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                  <span className="font-medium">Total Days</span>
-                  <span className="text-2xl font-bold">{formatDays(totalDays)}d</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                    <span className="font-medium">Total Days</span>
+                    <span className="text-2xl font-bold">{formatDays(totalDays)}d</span>
+                  </div>
+                  {split && (split.monthlyDays > 0 || split.rolloverDays > 0) && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                        <div className="text-xs text-muted-foreground mb-1">Monthly Days</div>
+                        <div className="text-lg font-bold">{formatDays(split.monthlyDays)}d</div>
+                      </div>
+                      {split.rolloverDays > 0 && (
+                        <div className="p-3 bg-orange-50/50 dark:bg-orange-950/20 border border-orange-500/50 rounded-lg">
+                          <div className="text-xs text-muted-foreground mb-1">Overflow Days</div>
+                          <div className="text-lg font-bold text-orange-600 dark:text-orange-400">
+                            {formatDays(split.rolloverDays)}d
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto">

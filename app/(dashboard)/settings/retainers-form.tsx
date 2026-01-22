@@ -52,6 +52,9 @@ export function RetainersForm() {
   const [monthlyHours, setMonthlyHours] = useState<string>('')
   const [rolloverHours, setRolloverHours] = useState<string>('')
   const [startDate, setStartDate] = useState<string>('')
+  const [agreedDaysPerWeek, setAgreedDaysPerWeek] = useState<string>('')
+  const [agreedDaysPerMonth, setAgreedDaysPerMonth] = useState<string>('')
+  const [hoursPerDay, setHoursPerDay] = useState<string>('')
   const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
@@ -145,6 +148,9 @@ export function RetainersForm() {
     setMonthlyHours(client.monthly_hours?.toString() || '')
     setRolloverHours(client.rollover_hours?.toString() || '')
     setStartDate(client.start_date || '')
+    setAgreedDaysPerWeek(client.agreed_days_per_week?.toString() || '')
+    setAgreedDaysPerMonth(client.agreed_days_per_month?.toString() || '')
+    setHoursPerDay(client.hours_per_day?.toString() || '6')
   }
 
   function handleCloseEdit() {
@@ -152,6 +158,9 @@ export function RetainersForm() {
     setMonthlyHours('')
     setRolloverHours('')
     setStartDate('')
+    setAgreedDaysPerWeek('')
+    setAgreedDaysPerMonth('')
+    setHoursPerDay('')
   }
 
   async function handleUpdate() {
@@ -163,7 +172,10 @@ export function RetainersForm() {
         editingClient.id,
         monthlyHours ? parseFloat(monthlyHours) : null,
         rolloverHours ? parseFloat(rolloverHours) : null,
-        startDate || null
+        startDate || null,
+        agreedDaysPerWeek ? parseFloat(agreedDaysPerWeek) : null,
+        agreedDaysPerMonth ? parseFloat(agreedDaysPerMonth) : null,
+        hoursPerDay ? parseFloat(hoursPerDay) : null
       )
       if (result.error) {
         toast.error('Error updating retainer', { description: result.error })
@@ -293,7 +305,7 @@ export function RetainersForm() {
           <DialogHeader>
             <DialogTitle>Edit Retainer Settings</DialogTitle>
             <DialogDescription>
-              Configure monthly hours, rollover hours, and start date for {editingClient?.client_name}
+              Configure monthly hours, overflow hours, and start date for {editingClient?.client_name}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -313,7 +325,7 @@ export function RetainersForm() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="rollover-hours">Rollover Hours</Label>
+              <Label htmlFor="rollover-hours">Overflow Hours</Label>
               <Input
                 id="rollover-hours"
                 type="number"
@@ -324,7 +336,7 @@ export function RetainersForm() {
                 placeholder="e.g. 5"
               />
               <p className="text-xs text-muted-foreground">
-                Number of hours that can roll over to the next month
+                Number of overflow hours available when daily allocation is exceeded
               </p>
             </div>
             <div className="space-y-2">
@@ -337,6 +349,53 @@ export function RetainersForm() {
               />
               <p className="text-xs text-muted-foreground">
                 Retainer start date. Project data before this date will be excluded.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="agreed-days-per-week">Agreed Days Per Week</Label>
+              <Input
+                id="agreed-days-per-week"
+                type="number"
+                step="0.5"
+                min="0"
+                max="7"
+                value={agreedDaysPerWeek}
+                onChange={(e) => setAgreedDaysPerWeek(e.target.value)}
+                placeholder="e.g. 5"
+              />
+              <p className="text-xs text-muted-foreground">
+                Number of days per week the retainer is active (e.g., 1-5). Used to calculate daily allocation.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="agreed-days-per-month">Agreed Days Per Month (Optional)</Label>
+              <Input
+                id="agreed-days-per-month"
+                type="number"
+                step="0.5"
+                min="0"
+                value={agreedDaysPerMonth}
+                onChange={(e) => setAgreedDaysPerMonth(e.target.value)}
+                placeholder="e.g. 20"
+              />
+              <p className="text-xs text-muted-foreground">
+                Number of days per month the retainer is active. If set, takes precedence over days per week.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hours-per-day">Hours Per Day</Label>
+              <Input
+                id="hours-per-day"
+                type="number"
+                step="0.5"
+                min="0"
+                max="24"
+                value={hoursPerDay}
+                onChange={(e) => setHoursPerDay(e.target.value)}
+                placeholder="e.g. 6"
+              />
+              <p className="text-xs text-muted-foreground">
+                Number of hours in a working day for this retainer. Used to convert hours to days in the retainer view. Default is 6 hours.
               </p>
             </div>
           </div>

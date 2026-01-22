@@ -11,6 +11,9 @@ export interface RetainerClient {
   monthly_hours: number | null
   rollover_hours: number | null
   start_date: string | null
+  agreed_days_per_week: number | null
+  agreed_days_per_month: number | null
+  hours_per_day: number | null
   created_at: string
   updated_at: string
 }
@@ -134,7 +137,10 @@ export async function updateRetainerClient(
   clientId: string,
   monthlyHours: number | null,
   rolloverHours: number | null,
-  startDate: string | null
+  startDate: string | null,
+  agreedDaysPerWeek: number | null,
+  agreedDaysPerMonth: number | null,
+  hoursPerDay: number | null
 ) {
   const supabase = await createClient()
 
@@ -161,6 +167,9 @@ export async function updateRetainerClient(
         monthly_hours: monthlyHours,
         rollover_hours: rolloverHours,
         start_date: startDate,
+        agreed_days_per_week: agreedDaysPerWeek,
+        agreed_days_per_month: agreedDaysPerMonth,
+        hours_per_day: hoursPerDay,
       })
       .eq('id', clientId)
       .select()
@@ -260,7 +269,7 @@ export async function getRetainerData(clientName: string, startDate?: string, en
     // Get retainer client info to check start_date and get monthly_hours
     const { data: retainerClient } = await supabase
       .from('retainer_clients')
-      .select('start_date, monthly_hours, rollover_hours')
+      .select('start_date, monthly_hours, rollover_hours, agreed_days_per_week, agreed_days_per_month, hours_per_day')
       .eq('client_name', clientName)
       .single()
 
@@ -483,6 +492,9 @@ export async function getRetainerData(clientName: string, startDate?: string, en
       data: filteredResult,
       monthly_hours: retainerClient?.monthly_hours || null,
       rollover_hours: retainerClient?.rollover_hours || null,
+      agreed_days_per_week: retainerClient?.agreed_days_per_week || null,
+      agreed_days_per_month: retainerClient?.agreed_days_per_month || null,
+      hours_per_day: retainerClient?.hours_per_day || null,
       remaining_project_hours: remainingProjectHours,
     }
   } catch (error) {

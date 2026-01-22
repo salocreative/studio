@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 
 export async function GET(request: Request) {
@@ -81,16 +81,25 @@ export async function GET(request: Request) {
 
       if (!existingProfile) {
         // Create user profile with default role (or use metadata from invitation)
-            const role = user.user_metadata?.role || 'manager'
-        const { error: insertError } = await supabase.from('users').insert({
-          id: user.id,
-          email: user.email!,
-          full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
-          role: role,
-        })
+        // Use admin client to bypass RLS since user doesn't exist yet
+        const role = user.user_metadata?.role || 'manager'
+        const adminClient = await createAdminClient()
         
-        if (insertError) {
-          console.error('Error creating user profile:', insertError)
+        if (adminClient) {
+          const { error: insertError } = await adminClient.from('users').insert({
+            id: user.id,
+            email: user.email!,
+            full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+            role: role,
+          })
+          
+          if (insertError) {
+            console.error('Error creating user profile:', insertError)
+          } else {
+            console.log('Successfully created user profile for:', user.email)
+          }
+        } else {
+          console.error('Admin client not available - cannot create user profile. User may need to be created manually.')
         }
       }
 
@@ -146,16 +155,26 @@ export async function GET(request: Request) {
         .maybeSingle()
 
       if (!existingProfile) {
-            const role = user.user_metadata?.role || 'manager'
-        const { error: insertError } = await supabase.from('users').insert({
-          id: user.id,
-          email: user.email!,
-          full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
-          role: role,
-        })
+        // Create user profile with default role (or use metadata from invitation)
+        // Use admin client to bypass RLS since user doesn't exist yet
+        const role = user.user_metadata?.role || 'manager'
+        const adminClient = await createAdminClient()
         
-        if (insertError) {
-          console.error('Error creating user profile:', insertError)
+        if (adminClient) {
+          const { error: insertError } = await adminClient.from('users').insert({
+            id: user.id,
+            email: user.email!,
+            full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+            role: role,
+          })
+          
+          if (insertError) {
+            console.error('Error creating user profile:', insertError)
+          } else {
+            console.log('Successfully created user profile for:', user.email)
+          }
+        } else {
+          console.error('Admin client not available - cannot create user profile. User may need to be created manually.')
         }
       }
       

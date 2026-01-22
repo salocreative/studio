@@ -16,7 +16,7 @@ export async function getRetainerDataPublic(clientName: string, startDate?: stri
     // Get retainer client info to check start_date
     const { data: retainerClient } = await adminClient
       .from('retainer_clients')
-      .select('start_date')
+      .select('start_date, monthly_hours, rollover_hours, agreed_days_per_week, agreed_days_per_month, hours_per_day')
       .eq('client_name', clientName)
       .single()
 
