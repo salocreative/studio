@@ -376,11 +376,19 @@ export async function getRetainerData(clientName: string, startDate?: string, en
           continue // Skip this task if it has no relevant months
         }
 
-        // Add task to each relevant month
+        // Add task to each relevant month with only that month's time entries
         months.forEach(monthKey => {
           if (!monthlyData[monthKey]) {
             monthlyData[monthKey] = []
           }
+
+          // Filter time entries to only those in this month
+          const entriesInMonth = taskTimeEntries.filter(te => {
+            const entryMonth = te.date.substring(0, 7) // YYYY-MM
+            return entryMonth === monthKey
+          })
+
+          const totalHours = entriesInMonth.reduce((sum, te) => sum + (te.hours || 0), 0)
 
           let monthProject = monthlyData[monthKey].find(p => p.id === project.id)
           if (!monthProject) {
@@ -393,15 +401,13 @@ export async function getRetainerData(clientName: string, startDate?: string, en
             monthlyData[monthKey].push(monthProject)
           }
 
-          const totalHours = taskTimeEntries.reduce((sum, te) => sum + (te.hours || 0), 0)
-
           monthProject.tasks.push({
             id: task.id,
             name: task.name,
             quoted_hours: task.quoted_hours,
             timeline_start: task.timeline_start,
             timeline_end: task.timeline_end,
-            time_entries: taskTimeEntries.map(te => ({
+            time_entries: entriesInMonth.map(te => ({
               id: te.id,
               date: te.date,
               hours: te.hours,

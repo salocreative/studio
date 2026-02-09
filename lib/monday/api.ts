@@ -7,6 +7,34 @@ import { createClient } from '@/lib/supabase/server'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
+const MONDAY_REQUEST_TIMEOUT_MS = 30_000
+const MONDAY_MAX_RETRIES = 3
+const MONDAY_RETRY_DELAY_MS = 1_000
+
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EPIPE',
+])
+
+function isTransientNetworkError(err: unknown): boolean {
+  const e = err as NodeJS.ErrnoException & { cause?: { code?: string } }
+  const code = e?.cause?.code ?? e?.code
+  if (code && TRANSIENT_NETWORK_CODES.has(code)) return true
+  if (err instanceof TypeError && err.message === 'fetch failed' && e?.cause?.code) {
+    return TRANSIENT_NETWORK_CODES.has(e.cause.code)
+  }
+  return false
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export interface MondayProject {
   id: string
   name: string
@@ -39,36 +67,67 @@ interface MondayApiResponse<T> {
 }
 
 /**
- * Make a GraphQL request to Monday.com API
+ * Make a GraphQL request to Monday.com API.
+ * Retries on transient network errors (ECONNRESET, ETIMEDOUT, etc.) with exponential backoff.
+ * Uses a request timeout to avoid hanging on slow or unresponsive connections.
  */
 async function mondayRequest<T>(
   accessToken: string,
   query: string,
   variables?: Record<string, any>
 ): Promise<T> {
-  const response = await fetch(MONDAY_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: accessToken,
-    },
-    body: JSON.stringify({
-      query,
-      variables,
-    }),
-  })
+  let lastError: unknown
+  for (let attempt = 0; attempt <= MONDAY_MAX_RETRIES; attempt++) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), MONDAY_REQUEST_TIMEOUT_MS)
 
-  if (!response.ok) {
-    throw new Error(`Monday.com API error: ${response.statusText}`)
+    try {
+      const response = await fetch(MONDAY_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: accessToken,
+        },
+        body: JSON.stringify({
+          query,
+          variables,
+        }),
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        throw new Error(`Monday.com API error: ${response.statusText}`)
+      }
+
+      const result: MondayApiResponse<T> = await response.json()
+
+      if (result.errors && result.errors.length > 0) {
+        throw new Error(`Monday.com API errors: ${result.errors.map((e) => e.message).join(', ')}`)
+      }
+
+      return result.data
+    } catch (err) {
+      clearTimeout(timeoutId)
+      lastError = err
+
+      const isAbort = err instanceof Error && err.name === 'AbortError'
+      const isTransient = isTransientNetworkError(err) || isAbort
+      const canRetry = isTransient && attempt < MONDAY_MAX_RETRIES
+
+      if (!canRetry) {
+        throw isAbort
+          ? new Error('Monday.com API request timed out')
+          : err
+      }
+
+      const delayMs = MONDAY_RETRY_DELAY_MS * Math.pow(2, attempt)
+      await sleep(delayMs)
+    }
   }
 
-  const result: MondayApiResponse<T> = await response.json()
-
-  if (result.errors && result.errors.length > 0) {
-    throw new Error(`Monday.com API errors: ${result.errors.map((e) => e.message).join(', ')}`)
-  }
-
-  return result.data
+  throw lastError
 }
 
 /**
@@ -729,19 +788,35 @@ export async function getMondayTasks(
   return tasks
 }
 
+export type SyncProgressEvent =
+  | { phase: 'fetching'; message: string; progress: number }
+  | { phase: 'checking'; message: string; progress: number }
+  | { phase: 'syncing'; message: string; projectIndex: number; totalProjects: number; projectName: string; progress: number }
+  | { phase: 'complete'; message: string; progress: number; projectsSynced: number; archived: number; deleted: number }
+  | { phase: 'error'; message: string }
+
 /**
  * Sync projects and tasks from Monday.com to Supabase
  * This should be called periodically or via webhook
- * 
- * Returns the number of projects synced
+ *
+ * Returns the number of projects synced.
+ * Optionally accepts onProgress callback for streaming progress updates.
  */
-export async function syncMondayData(accessToken: string): Promise<{ projectsSynced: number; archived: number; deleted: number }> {
+export async function syncMondayData(
+  accessToken: string,
+  onProgress?: (event: SyncProgressEvent) => void
+): Promise<{ projectsSynced: number; archived: number; deleted: number }> {
   const supabase = await createClient()
+  const report = (e: SyncProgressEvent) => onProgress?.(e)
 
   try {
+    report({ phase: 'fetching', message: 'Fetching projects from Monday.com...', progress: 0 })
+
     // 1. Fetch projects from Monday.com (from both active and completed boards)
     const mondayProjects = await getMondayProjects(accessToken, true)
-    
+
+    report({ phase: 'checking', message: 'Checking for removed projects...', progress: 0.05 })
+
     // Get completed board IDs
     const { data: completedBoards } = await supabase
       .from('monday_completed_boards')
@@ -824,8 +899,20 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
       }
     }
 
+    const totalProjects = mondayProjects.length
+
     // 3. Sync projects to Supabase
-    for (const project of mondayProjects) {
+    for (let i = 0; i < mondayProjects.length; i++) {
+      const project = mondayProjects[i]
+      const progress = 0.1 + 0.85 * (i / Math.max(1, totalProjects))
+      report({
+        phase: 'syncing',
+        message: `Syncing ${project.name}`,
+        projectIndex: i + 1,
+        totalProjects,
+        projectName: project.name,
+        progress,
+      })
       // Determine status based on board
       const isActive = activeBoardIds.has(project.board_id)
       const isCompleted = completedBoardIds.has(project.board_id)
@@ -1092,13 +1179,24 @@ export async function syncMondayData(accessToken: string): Promise<{ projectsSyn
       }
     }
 
-    return { 
+    const result = {
       projectsSynced: mondayProjects.length,
       archived,
-      deleted 
+      deleted,
     }
+    report({
+      phase: 'complete',
+      message: 'Sync complete',
+      progress: 1,
+      ...result,
+    })
+    return result
   } catch (error) {
     console.error('Error syncing Monday.com data:', error)
+    report({
+      phase: 'error',
+      message: error instanceof Error ? error.message : 'Sync failed',
+    })
     throw error
   }
 }
