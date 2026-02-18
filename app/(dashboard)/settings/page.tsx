@@ -417,7 +417,7 @@ export default function SettingsPage() {
                       <div>
                         <p className="font-medium">Manual Sync</p>
                         <p className="text-sm text-muted-foreground">
-                          Manually trigger a sync from Monday.com
+                          Manually trigger a sync from Monday.com. Progress and current project are shown while syncing.
                         </p>
                       </div>
                       <SyncButton />

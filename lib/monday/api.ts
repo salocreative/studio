@@ -290,13 +290,34 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
   
   // If no board-specific mappings, we can't sync (need at least one board mapped)
   if (mappedBoardIds.size === 0) {
-    // Check if there are global mappings - if so, we'd need to sync all boards
-    // For now, return empty - user should configure board-specific mappings
     return []
   }
-  
-  // Only fetch boards that have mappings
-  const boardsToSync = Array.from(mappedBoardIds)
+
+  const allBoardIds = Array.from(mappedBoardIds)
+
+  // Split into active boards (full scan) vs completed boards (fetch by ID only)
+  const { data: flexiCompletedBoard } = await supabase
+    .from('flexi_design_completed_board')
+    .select('monday_board_id')
+    .maybeSingle()
+  const allCompletedBoardIds = new Set(completedBoardIds)
+  if (flexiCompletedBoard?.monday_board_id) {
+    allCompletedBoardIds.add(flexiCompletedBoard.monday_board_id)
+  }
+  const activeBoardIds = allBoardIds.filter(id => !allCompletedBoardIds.has(id))
+  const completedBoardIdsList = allBoardIds.filter(id => allCompletedBoardIds.has(id))
+
+  // For completed boards: only fetch items we already have in DB (avoid scanning full board)
+  let completedItemIds: string[] = []
+  if (includeCompletedBoards && completedBoardIdsList.length > 0) {
+    const { data: existingCompleted } = await supabase
+      .from('monday_projects')
+      .select('monday_item_id')
+      .in('monday_board_id', completedBoardIdsList)
+    completedItemIds = (existingCompleted || []).map(p => p.monday_item_id).filter(Boolean)
+  }
+
+  const boardsToSync = activeBoardIds
   
   // Build a map of board_id -> column_type -> column_id for quick lookup
   const columnMappingsByBoard = new Map<string, Map<string, string>>()
@@ -371,58 +392,64 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     return globalMappings.get(columnType)
   }
 
-  // Build a query to get items from all boards
-  const query = `
+  type BoardItem = {
+    id: string
+    name: string
+    column_values: Array<{ id: string; text?: string; value?: string; type: string }>
+    board: { id: string }
+  }
+
+  const boardsQuery = `
     query($boardIds: [ID!]) {
       boards(ids: $boardIds) {
         id
         name
         items_page(limit: 500) {
+          cursor
           items {
             id
             name
-            column_values {
-              id
-              text
-              value
-              type
-            }
-            board {
-              id
-            }
+            column_values { id text value type }
+            board { id }
           }
         }
       }
     }
   `
 
-  // Only query the mapped boards
-  const boardIds = boardsToSync
-  const data = await mondayRequest<{
-    boards: Array<{
-      id: string
-      name: string
-      items_page: {
-        items: Array<{
+  const nextPageQuery = `
+    query($cursor: String!) {
+      next_items_page(cursor: $cursor) {
+        cursor
+        items {
+          id
+          name
+          column_values { id text value type }
+          board { id }
+        }
+      }
+    }
+  `
+
+  const data = boardsToSync.length > 0
+    ? await mondayRequest<{
+        boards: Array<{
           id: string
           name: string
-          column_values: Array<{
-            id: string
-            text?: string
-            value?: string
-            type: string
-          }>
-          board: {
-            id: string
-          }
+          items_page: { cursor?: string; items: BoardItem[] }
         }>
-      }
-    }>
-  }>(accessToken, query, { boardIds })
+      }>(accessToken, boardsQuery, { boardIds: boardsToSync })
+    : { boards: [] as Array<{ id: string; name: string; items_page: { cursor?: string; items: BoardItem[] } }> }
 
   const projects: MondayProject[] = []
+  const activeItemIds = new Set<string>()
 
+  type BoardInfo = { id: string; name: string }
+  const cursorQueue: { board: BoardInfo; cursor: string }[] = []
   for (const board of data.boards || []) {
+    if (board.items_page?.cursor) {
+      cursorQueue.push({ board: { id: board.id, name: board.name }, cursor: board.items_page.cursor })
+    }
     // Get client column ID for this board (from parent items)
     const clientColumnId = getColumnId(board.id, 'client', board.name)
     // Get agency column ID for this board (from parent items)
@@ -561,6 +588,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         }
       })
 
+      activeItemIds.add(item.id)
       projects.push({
         id: item.id,
         name: item.name,
@@ -573,6 +601,212 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
         board_name: board.name,
         column_values,
       })
+    }
+  }
+
+  // Paginate through boards with more than 500 items (cursor valid 60 min)
+  while (cursorQueue.length > 0) {
+    const { board, cursor } = cursorQueue.shift()!
+    const nextData = await mondayRequest<{ next_items_page: { cursor?: string; items: BoardItem[] } }>(
+      accessToken,
+      nextPageQuery,
+      { cursor }
+    )
+    const page = nextData.next_items_page
+    if (!page?.items?.length) continue
+    const clientColumnId = getColumnId(board.id, 'client', board.name)
+    const agencyColumnId = getColumnId(board.id, 'agency', board.name)
+    const isCompletedBoard = completedBoardIds.has(board.id)
+    const quoteValueColumnId = getColumnId(board.id, 'quote_value', board.name, isCompletedBoard)
+    const dueDateColumnId = getColumnId(board.id, 'due_date', board.name)
+    const completedDateColumnId = getColumnId(board.id, 'completed_date', board.name)
+    for (const item of page.items) {
+      const extractDateFromColumn = (columnId: string | undefined): string | undefined => {
+        if (!columnId || !item.column_values) return undefined
+        const dateColumn = item.column_values.find((cv) => cv.id === columnId)
+        if (!dateColumn) return undefined
+        if (dateColumn.value) {
+          try {
+            const value = JSON.parse(dateColumn.value)
+            if (value?.date) return value.date
+            if (dateColumn.text) {
+              const d = new Date(dateColumn.text)
+              return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : undefined
+            }
+          } catch {
+            if (dateColumn.text) {
+              const d = new Date(dateColumn.text)
+              return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : undefined
+            }
+          }
+        }
+        if (dateColumn.text) {
+          const d = new Date(dateColumn.text)
+          return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : undefined
+        }
+        return undefined
+      }
+      let client_name: string | undefined
+      if (clientColumnId) {
+        const col = item.column_values?.find((cv) => cv.id === clientColumnId)
+        if (col?.text) client_name = col.text
+      }
+      let agency: string | undefined
+      if (agencyColumnId) {
+        const col = item.column_values?.find((cv) => cv.id === agencyColumnId)
+        if (col?.text) agency = col.text
+      }
+      let completed_date = completedDateColumnId ? extractDateFromColumn(completedDateColumnId) : undefined
+      if (!completed_date) completed_date = extractDateFromColumn('date__1')
+      const due_date = dueDateColumnId ? extractDateFromColumn(dueDateColumnId) : undefined
+      let quote_value: number | undefined
+      if (quoteValueColumnId) {
+        const col = item.column_values?.find((cv) => cv.id === quoteValueColumnId)
+        if (col) {
+          if (col.value) {
+            try {
+              const v = JSON.parse(col.value)
+              quote_value = typeof v === 'number' ? v : parseFloat(String(v?.value ?? v))
+              if (isNaN(quote_value!)) quote_value = col.text ? parseFloat(col.text.replace(/[£,$,\s]/g, '')) : undefined
+            } catch {
+              if (col.text) quote_value = parseFloat(col.text.replace(/[£,$,\s]/g, ''))
+            }
+          } else if (col.text) quote_value = parseFloat(col.text.replace(/[£,$,\s]/g, ''))
+        }
+      }
+      const column_values: Record<string, any> = {}
+      item.column_values?.forEach((cv) => {
+        column_values[cv.id] = { text: cv.text, value: cv.value ? JSON.parse(cv.value) : null, type: cv.type }
+      })
+      activeItemIds.add(item.id)
+      projects.push({
+        id: item.id,
+        name: item.name,
+        board_id: board.id,
+        client_name,
+        agency,
+        completed_date,
+        due_date,
+        quote_value,
+        board_name: board.name,
+        column_values,
+      })
+    }
+    if (page.cursor) cursorQueue.push({ board, cursor: page.cursor })
+  }
+
+  // Fetch completed-board items by ID only (avoids scanning full completed boards)
+  const itemsToFetchById = new Set(completedItemIds)
+  if (includeCompletedBoards) {
+    const { data: activeDbProjects } = await supabase
+      .from('monday_projects')
+      .select('monday_item_id')
+      .in('status', ['active', 'lead'])
+    const possiblyMovedIds = (activeDbProjects || [])
+      .map(p => p.monday_item_id)
+      .filter((id): id is string => !!id && !activeItemIds.has(id))
+    possiblyMovedIds.forEach(id => itemsToFetchById.add(id))
+  }
+
+  if (itemsToFetchById.size > 0) {
+    const idsToFetch = Array.from(itemsToFetchById)
+    const BATCH_SIZE = 100
+    for (let i = 0; i < idsToFetch.length; i += BATCH_SIZE) {
+      const batch = idsToFetch.slice(i, i + BATCH_SIZE)
+      const itemsData = await mondayRequest<{ items: Array<BoardItem & { board: { id: string; name?: string } }> }>(
+        accessToken,
+        `query($itemIds: [ID!]) {
+          items(ids: $itemIds) {
+            id
+            name
+            column_values { id text value type }
+            board { id name }
+          }
+        }`,
+        { itemIds: batch }
+      )
+      for (const item of itemsData.items || []) {
+        const boardId = item.board?.id
+        const boardName = item.board?.name || ''
+        if (!boardId || !allCompletedBoardIds.has(boardId)) continue
+        const clientColumnId = getColumnId(boardId, 'client', boardName)
+        const agencyColumnId = getColumnId(boardId, 'agency', boardName)
+        const isCompletedBoard = true
+        const quoteValueColumnId = getColumnId(boardId, 'quote_value', boardName, isCompletedBoard)
+        const dueDateColumnId = getColumnId(boardId, 'due_date', boardName)
+        const completedDateColumnId = getColumnId(boardId, 'completed_date', boardName)
+        const extractDateFromColumn = (columnId: string | undefined): string | undefined => {
+          if (!columnId || !item.column_values) return undefined
+          const dateColumn = item.column_values.find((cv) => cv.id === columnId)
+          if (!dateColumn) return undefined
+          if (dateColumn.value) {
+            try {
+              const value = JSON.parse(dateColumn.value)
+              if (value?.date) return value.date
+              if (dateColumn.text) {
+                const d = new Date(dateColumn.text)
+                return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : undefined
+              }
+            } catch {
+              if (dateColumn.text) {
+                const d = new Date(dateColumn.text)
+                return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : undefined
+              }
+            }
+          }
+          if (dateColumn.text) {
+            const d = new Date(dateColumn.text)
+            return !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : undefined
+          }
+          return undefined
+        }
+        let client_name: string | undefined
+        if (clientColumnId) {
+          const col = item.column_values?.find((cv) => cv.id === clientColumnId)
+          if (col?.text) client_name = col.text
+        }
+        let agency: string | undefined
+        if (agencyColumnId) {
+          const col = item.column_values?.find((cv) => cv.id === agencyColumnId)
+          if (col?.text) agency = col.text
+        }
+        let completed_date = completedDateColumnId ? extractDateFromColumn(completedDateColumnId) : undefined
+        if (!completed_date) completed_date = extractDateFromColumn('date__1')
+        const due_date = dueDateColumnId ? extractDateFromColumn(dueDateColumnId) : undefined
+        let quote_value: number | undefined
+        if (quoteValueColumnId) {
+          const col = item.column_values?.find((cv) => cv.id === quoteValueColumnId)
+          if (col) {
+            if (col.value) {
+              try {
+                const v = JSON.parse(col.value)
+                quote_value = typeof v === 'number' ? v : parseFloat(String(v?.value ?? v))
+                if (isNaN(quote_value!)) quote_value = col.text ? parseFloat(col.text.replace(/[£,$,\s]/g, '')) : undefined
+              } catch {
+                if (col.text) quote_value = parseFloat(col.text.replace(/[£,$,\s]/g, ''))
+              }
+            } else if (col.text) {
+              quote_value = parseFloat(col.text.replace(/[£,$,\s]/g, ''))
+            }
+          }
+        }
+        const column_values: Record<string, any> = {}
+        item.column_values?.forEach((cv) => {
+          column_values[cv.id] = { text: cv.text, value: cv.value ? JSON.parse(cv.value) : null, type: cv.type }
+        })
+        projects.push({
+          id: item.id,
+          name: item.name,
+          board_id: boardId,
+          client_name,
+          agency,
+          completed_date,
+          due_date,
+          quote_value,
+          board_name: boardName || undefined,
+          column_values,
+        })
+      }
     }
   }
 

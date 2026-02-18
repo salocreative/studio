@@ -38,6 +38,23 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Respect sync interval: only run if enough time has passed since last sync
+    const settings = settingsResult.settings
+    const intervalMs = (settings.interval_minutes || 60) * 60 * 1000
+    if (settings.last_sync_at) {
+      const elapsed = Date.now() - new Date(settings.last_sync_at).getTime()
+      if (elapsed < intervalMs) {
+        return NextResponse.json(
+          {
+            message: 'Sync skipped: interval not reached',
+            skipped: true,
+            nextSyncIn: Math.ceil((intervalMs - elapsed) / 60000) + ' minutes',
+          },
+          { status: 200 }
+        )
+      }
+    }
+
     // Perform the sync (this function checks for admin, but in cron context we bypass)
     // We need to create a version that doesn't require user auth for cron
     const mondayApiToken = process.env.MONDAY_API_TOKEN

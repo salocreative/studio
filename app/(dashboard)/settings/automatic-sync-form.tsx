@@ -187,19 +187,16 @@ export function AutomaticSyncForm() {
           )}
 
           <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950 dark:border-blue-900 p-4">
-            <p className="text-sm font-medium mb-2">Cron Setup Required</p>
+            <p className="text-sm font-medium mb-2">How automatic sync runs</p>
             <p className="text-xs text-muted-foreground mb-2">
-              To enable automatic syncing, set up a cron job to call:
+              On Vercel, a cron job runs every 30 minutes. When it runs, sync executes only if at least {getIntervalDisplay(intervalMinutes)} have passed since the last sync.
             </p>
-            <code className="text-xs bg-background border rounded px-2 py-1 block break-all">
+            <p className="text-xs text-muted-foreground mb-2">
+              To use an external cron (e.g. EasyCron) instead, call this URL with a GET request and header <code className="bg-background border rounded px-1">X-Cron-Secret: your_secret_key</code>. Set <code className="bg-background border rounded px-1">CRON_SECRET</code> in your environment to match.
+            </p>
+            <code className="text-xs bg-background border rounded px-2 py-1 block break-all mt-1">
               {typeof window !== 'undefined' ? `${window.location.origin}/api/sync/cron` : 'https://your-domain.com/api/sync/cron'}
             </code>
-            <p className="text-xs text-muted-foreground mt-2">
-              Include the header: <code className="bg-background border rounded px-1">X-Cron-Secret: your_secret_key</code>
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Set <code className="bg-background border rounded px-1">CRON_SECRET</code> in your environment variables, then use Vercel Cron Jobs, EasyCron, or similar service to call this endpoint every {getIntervalDisplay(intervalMinutes)}.
-            </p>
           </div>
         </div>
       )}

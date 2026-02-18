@@ -1,9 +1,6 @@
 {
   "crons": [
-    {
-      "path": "/api/cron/sync-scorecard",
-      "schedule": "0 20 * * 0"
-    }
+    { "path": "/api/cron/sync-scorecard", "schedule": "0 20 * * 0" },
+    { "path": "/api/sync/cron", "schedule": "*/30 * * * *" }
   ]
 }
-
