@@ -175,7 +175,7 @@ async function calculateAutomatedMetric(
             format(quarterEnd, 'yyyy-MM-dd')
           )
           
-          if (financialData.error || !financialData.revenue) return null
+          if ('error' in financialData || !financialData.revenue) return null
           return (financialData.revenue / target) * 100
         } else if (financialType === 'profit_percentage') {
           // % Profit for Quarter to Date
@@ -187,7 +187,7 @@ async function calculateAutomatedMetric(
             format(quarterEnd, 'yyyy-MM-dd')
           )
           
-          if (financialData.error || !financialData.revenue || financialData.revenue === 0) return null
+          if ('error' in financialData || !financialData.revenue || financialData.revenue === 0) return null
           const profit = financialData.revenue - (financialData.expenses || 0)
           return (profit / financialData.revenue) * 100
         } else if (financialType === 'pipeline_value') {
