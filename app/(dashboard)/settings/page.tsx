@@ -42,7 +42,7 @@ import { LeadsStatusConfigForm } from './leads-status-config-form'
 import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
 import { RetainersForm } from './retainers-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
-import { getUsers, createUser, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
+import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
 import { toast } from 'sonner'
 
 interface User {
@@ -63,10 +63,14 @@ export default function SettingsPage() {
   const [users, setUsers] = useState<User[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
+  const [showExistingForm, setShowExistingForm] = useState(false)
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<'admin' | 'designer' | 'manager'>('manager')
+  const [existingEmail, setExistingEmail] = useState('')
+  const [existingRole, setExistingRole] = useState<'admin' | 'designer' | 'manager'>('manager')
   const [submitting, setSubmitting] = useState(false)
+  const [submittingExisting, setSubmittingExisting] = useState(false)
 
   // Load users on mount
   useEffect(() => {
@@ -111,6 +115,28 @@ export default function SettingsPage() {
       toast.error('An error occurred while creating the user')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleAddExistingUser(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmittingExisting(true)
+    try {
+      const result = await linkExistingUserByEmail(existingEmail, existingRole)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        setExistingEmail('')
+        setExistingRole('manager')
+        setShowExistingForm(false)
+        await loadUsers()
+        toast.success('User added. They now appear in the list below and you can change their role.')
+      }
+    } catch (error) {
+      console.error('Error adding existing user:', error)
+      toast.error('Failed to add existing user')
+    } finally {
+      setSubmittingExisting(false)
     }
   }
 
@@ -294,6 +320,66 @@ export default function SettingsPage() {
                   </Card>
                 )}
 
+                {showExistingForm && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Add existing user</CardTitle>
+                      <CardDescription>
+                        For someone who has already signed in (e.g. with Google) but does not appear in the list below. Enter their email and role to add them so you can manage permissions.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <form onSubmit={handleAddExistingUser} className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="existingEmail">Email *</Label>
+                          <Input
+                            id="existingEmail"
+                            type="email"
+                            placeholder="name@example.com"
+                            value={existingEmail}
+                            onChange={(e) => setExistingEmail(e.target.value)}
+                            required
+                            disabled={submittingExisting}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="existingRole">Role</Label>
+                          <Select value={existingRole} onValueChange={(value: any) => setExistingRole(value)}>
+                            <SelectTrigger id="existingRole">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="admin">Admin</SelectItem>
+                              <SelectItem value="designer">Designer</SelectItem>
+                              <SelectItem value="manager">Manager</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => { setShowExistingForm(false); setExistingEmail('') }}
+                            disabled={submittingExisting}
+                          >
+                            Cancel
+                          </Button>
+                          <Button type="submit" disabled={submittingExisting}>
+                            {submittingExisting ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Adding...
+                              </>
+                            ) : (
+                              'Add to team'
+                            )}
+                          </Button>
+                        </div>
+                      </form>
+                    </CardContent>
+                  </Card>
+                )}
+
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
@@ -302,10 +388,18 @@ export default function SettingsPage() {
                         Manage roles, exclude from utilization calculations, and remove team members from the platform
                       </CardDescription>
                     </div>
-                    <Button onClick={() => setShowAddForm(!showAddForm)}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Member
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        variant={showExistingForm ? 'secondary' : 'outline'}
+                        onClick={() => { setShowExistingForm(!showExistingForm); setShowAddForm(false) }}
+                      >
+                        Add existing user
+                      </Button>
+                      <Button onClick={() => { setShowAddForm(!showAddForm); setShowExistingForm(false) }}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Invite new
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     {loadingUsers ? (

@@ -50,7 +50,6 @@ import {
   deleteCupboardFile,
   addCupboardLink,
   deleteCupboardLink,
-  getCupboardFileDownloadUrl,
   getCupboardThumbnailUrl,
   getCupboardCoverImageUrl,
   checkIsAdmin,
@@ -686,62 +685,51 @@ export default function CupboardPageClient() {
     }
   }
 
-  async function handleDownloadFile(file: CupboardFile) {
-    try {
-      const result = await getCupboardFileDownloadUrl(file.file_path)
-      if (result.error) {
-        toast.error('Error downloading file', { description: result.error })
-      } else if (result.success && result.url) {
-        window.open(result.url, '_blank')
-      }
-    } catch (error) {
-      console.error('Error downloading file:', error)
-      toast.error('Failed to download file')
-    }
+  function handleDownloadFile(file: CupboardFile) {
+    const params = new URLSearchParams({
+      path: file.file_path,
+      name: file.file_name || 'download',
+    })
+    const url = `/api/cupboard/download?${params.toString()}`
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.file_name || 'download'
+    link.rel = 'noopener noreferrer'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
-  async function handleDownloadAllFiles(item: CupboardItem, e?: React.MouseEvent) {
+  function handleDownloadAllFiles(item: CupboardItem, e?: React.MouseEvent) {
     e?.stopPropagation() // Prevent card click
-    
+
     if (!item.files || item.files.length === 0) {
       return
     }
 
     if (item.files.length === 1) {
-      // If only one file, just download it
       handleDownloadFile(item.files[0])
       return
     }
 
-    try {
-      // Show loading toast
-      const loadingToast = toast.loading(`Downloading ${item.files.length} files...`)
-
-      // Download all files - open each in a new tab
-      // Note: Browsers may block multiple popups, so we'll open them with a slight delay
-      for (let i = 0; i < item.files.length; i++) {
-        const file = item.files[i]
-        const result = await getCupboardFileDownloadUrl(file.file_path)
-        if (result.success && result.url) {
-          // Use setTimeout to stagger downloads and avoid browser blocking
-          setTimeout(() => {
-            const link = document.createElement('a')
-            link.href = result.url!
-            link.download = file.file_name
-            link.target = '_blank'
-            document.body.appendChild(link)
-            link.click()
-            document.body.removeChild(link)
-          }, i * 200) // 200ms delay between each download
-        }
-      }
-
-      toast.dismiss(loadingToast)
-      toast.success(`Started downloading ${item.files.length} files`)
-    } catch (error) {
-      console.error('Error downloading all files:', error)
-      toast.error('Failed to download all files')
+    // Stagger same-origin download links so the browser handles each file
+    for (let i = 0; i < item.files.length; i++) {
+      const file = item.files[i]
+      setTimeout(() => {
+        const params = new URLSearchParams({
+          path: file.file_path,
+          name: file.file_name || 'download',
+        })
+        const link = document.createElement('a')
+        link.href = `/api/cupboard/download?${params.toString()}`
+        link.download = file.file_name || 'download'
+        link.rel = 'noopener noreferrer'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      }, i * 300)
     }
+    toast.success(`Downloading ${item.files.length} files`)
   }
 
   async function handleCreateCategory() {

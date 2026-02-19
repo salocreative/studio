@@ -232,6 +232,96 @@ export async function createUser(
 }
 
 /**
+ * Add an existing auth user to the team (e.g. someone who signed in with Google but isn't in the list).
+ * Looks up the user by email in Supabase Auth and creates their profile in public.users if missing.
+ */
+export async function linkExistingUserByEmail(
+  email: string,
+  role: 'admin' | 'designer' | 'manager' = 'manager'
+) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
+  const trimmedEmail = email.trim().toLowerCase()
+  if (!trimmedEmail) {
+    return { error: 'Please enter an email address.' }
+  }
+
+  try {
+    // Check if they already have a profile in public.users
+    const { data: existingProfile } = await adminClient
+      .from('users')
+      .select('id, email')
+      .eq('email', trimmedEmail)
+      .is('deleted_at', null)
+      .maybeSingle()
+
+    if (existingProfile) {
+      return { error: 'This user is already in the team list. You can change their role above.' }
+    }
+
+    // Find the auth user by email (list users and filter)
+    const { data: listData, error: listError } = await adminClient.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    })
+
+    if (listError) {
+      console.error('Error listing users:', listError)
+      return { error: listError.message || 'Failed to look up user.' }
+    }
+
+    const authUser = listData?.users?.find(
+      (u) => u.email?.toLowerCase() === trimmedEmail
+    )
+
+    if (!authUser) {
+      return {
+        error:
+          'No account found with this email. They need to sign in once (e.g. with Google) before you can add them.',
+      }
+    }
+
+    // Create profile in public.users
+    const { error: insertError } = await adminClient.from('users').insert({
+      id: authUser.id,
+      email: authUser.email!,
+      full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || null,
+      role,
+    })
+
+    if (insertError) {
+      console.error('Error creating user profile:', insertError)
+      return { error: insertError.message || 'Failed to add user to team.' }
+    }
+
+    return { success: true }
+  } catch (err) {
+    console.error('Error in linkExistingUserByEmail:', err)
+    return { error: err instanceof Error ? err.message : 'Failed to add existing user.' }
+  }
+}
+
+/**
  * Update user role
  */
 export async function updateUserRole(
