@@ -152,9 +152,14 @@ async function getMondayBoards(accessToken: string): Promise<Array<{ id: string;
 }
 
 /**
- * Get projects (items) from Monday.com boards
+ * Get projects (items) from Monday.com boards.
+ * When syncAllBoards is true, all boards (active + completed) are scanned fully; use for full resync.
  */
-export async function getMondayProjects(accessToken: string, includeCompletedBoards: boolean = false): Promise<MondayProject[]> {
+export async function getMondayProjects(
+  accessToken: string,
+  includeCompletedBoards: boolean = false,
+  syncAllBoards: boolean = false
+): Promise<MondayProject[]> {
   // Get column mappings from Supabase to determine which boards to sync
   const supabase = await createClient()
   const { data: allMappings } = await supabase
@@ -207,7 +212,8 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
       }
     }
     
-    // Also include Flexi-Design completed board if configured
+    // Also include Flexi-Design completed board if configured.
+    // Always include it so we never miss completed Flexi-Design projects (fetch-by-ID list).
     const { data: flexiDesignCompletedBoard } = await supabase
       .from('flexi_design_completed_board')
       .select('monday_board_id, board_name')
@@ -215,76 +221,9 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     
     if (flexiDesignCompletedBoard?.monday_board_id) {
       const completedBoardId = flexiDesignCompletedBoard.monday_board_id
-      
-      // Check if it has its own column mappings
-      const hasOwnMappings = allMappings?.some(m => m.board_id === completedBoardId)
-      
-      if (hasOwnMappings) {
-        // Has its own mappings, include it
-        mappedBoardIds.add(completedBoardId)
-        completedBoardIds.add(completedBoardId)
-      } else {
-        // No own mappings - check if it's a Flexi-Design board (by name) and inherit from other Flexi-Design boards
-        const isFlexiDesignBoard = flexiDesignCompletedBoard.board_name?.toLowerCase().includes('flexi') ?? false
-        
-        if (isFlexiDesignBoard) {
-          // Find any Flexi-Design board that has mappings to inherit from
-          // We need to fetch board names from Monday.com API to identify Flexi-Design boards with mappings
-          const mondayApiToken = process.env.MONDAY_API_TOKEN
-          if (mondayApiToken) {
-            try {
-              // Get all board IDs that have mappings
-              const boardIdsWithMappings = Array.from(new Set(
-                allMappings?.filter(m => m.board_id).map((m: any) => m.board_id) || []
-              ))
-              
-              if (boardIdsWithMappings.length > 0) {
-                // Fetch board names to identify Flexi-Design boards
-                const MONDAY_API_URL = 'https://api.monday.com/v2'
-                const query = `
-                  query($boardIds: [ID!]) {
-                    boards(ids: $boardIds) {
-                      id
-                      name
-                    }
-                  }
-                `
-                
-                const response = await fetch(MONDAY_API_URL, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: mondayApiToken,
-                  },
-                  body: JSON.stringify({ query, variables: { boardIds: boardIdsWithMappings } }),
-                })
-                
-                if (response.ok) {
-                  const result = await response.json()
-                  if (!result.errors && result.data?.boards) {
-                    // Find a Flexi-Design board that has mappings
-                    const flexiBoardWithMappings = result.data.boards.find(
-                      (board: { id: string; name: string }) => 
-                        board.name.toLowerCase().includes('flexi') && 
-                        boardIdsWithMappings.includes(board.id)
-                    )
-                    
-                    if (flexiBoardWithMappings) {
-                      // Found a Flexi-Design board with mappings - include completed board
-                      // Mappings will be inherited in the column lookup function
-                      mappedBoardIds.add(completedBoardId)
-                      // Note: Flexi-Design boards can inherit, so we don't add to completedBoardIds
-                      // (they have special inheritance logic in getColumnId)
-                    }
-                  }
-                }
-              }
-            } catch (error) {
-              console.error('Error checking Flexi-Design board mappings:', error)
-            }
-          }
-        }
-      }
+      mappedBoardIds.add(completedBoardId)
+      completedBoardIds.add(completedBoardId)
+      // Column mappings: use own mappings if present; otherwise getColumnId will inherit from other Flexi boards
     }
   }
   
@@ -307,9 +246,10 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
   const activeBoardIds = allBoardIds.filter(id => !allCompletedBoardIds.has(id))
   const completedBoardIdsList = allBoardIds.filter(id => allCompletedBoardIds.has(id))
 
-  // For completed boards: only fetch items we already have in DB (avoid scanning full board)
+  // For completed boards: only fetch items we already have in DB (avoid scanning full board).
+  // When syncAllBoards, we scan all boards so no fetch-by-ID.
   let completedItemIds: string[] = []
-  if (includeCompletedBoards && completedBoardIdsList.length > 0) {
+  if (includeCompletedBoards && completedBoardIdsList.length > 0 && !syncAllBoards) {
     const { data: existingCompleted } = await supabase
       .from('monday_projects')
       .select('monday_item_id')
@@ -317,7 +257,7 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     completedItemIds = (existingCompleted || []).map(p => p.monday_item_id).filter(Boolean)
   }
 
-  const boardsToSync = activeBoardIds
+  const boardsToSync = syncAllBoards ? allBoardIds : activeBoardIds
   
   // Build a map of board_id -> column_type -> column_id for quick lookup
   const columnMappingsByBoard = new Map<string, Map<string, string>>()
@@ -695,9 +635,9 @@ export async function getMondayProjects(accessToken: string, includeCompletedBoa
     if (page.cursor) cursorQueue.push({ board, cursor: page.cursor })
   }
 
-  // Fetch completed-board items by ID only (avoids scanning full completed boards)
+  // Fetch completed-board items by ID only when not doing full resync (avoids scanning full completed boards)
   const itemsToFetchById = new Set(completedItemIds)
-  if (includeCompletedBoards) {
+  if (includeCompletedBoards && !syncAllBoards) {
     const { data: activeDbProjects } = await supabase
       .from('monday_projects')
       .select('monday_item_id')
@@ -1038,16 +978,21 @@ export type SyncProgressEvent =
  */
 export async function syncMondayData(
   accessToken: string,
-  onProgress?: (event: SyncProgressEvent) => void
+  onProgress?: (event: SyncProgressEvent) => void,
+  syncAllBoards: boolean = false
 ): Promise<{ projectsSynced: number; archived: number; deleted: number }> {
   const supabase = await createClient()
   const report = (e: SyncProgressEvent) => onProgress?.(e)
 
   try {
-    report({ phase: 'fetching', message: 'Fetching projects from Monday.com...', progress: 0 })
+    report({
+      phase: 'fetching',
+      message: syncAllBoards ? 'Fetching all boards from Monday.com...' : 'Fetching projects from Monday.com...',
+      progress: 0,
+    })
 
-    // 1. Fetch projects from Monday.com (from both active and completed boards)
-    const mondayProjects = await getMondayProjects(accessToken, true)
+    // 1. Fetch projects from Monday.com (active + completed; syncAllBoards = full scan of all boards)
+    const mondayProjects = await getMondayProjects(accessToken, true, syncAllBoards)
 
     report({ phase: 'checking', message: 'Checking for removed projects...', progress: 0.05 })
 

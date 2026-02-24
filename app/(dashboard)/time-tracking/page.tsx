@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Trash2, RefreshCw } from 'lucide-react'
 import { format, addDays, startOfDay, isSameDay, getDay, nextMonday, isWeekend, startOfMonth, endOfMonth, eachDayOfInterval, getDaysInMonth, addMonths, subMonths } from 'date-fns'
 import { getProjectsWithTasks, getTimeEntries, deleteTimeEntry } from '@/app/actions/time-tracking'
 import { ProjectTaskSelector } from './components/project-task-selector'
@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -70,6 +71,9 @@ export default function TimeTrackingPage() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [users, setUsers] = useState<User[]>([])
   const [selectedUserId, setSelectedUserId] = useState<string | undefined>(undefined)
+  const [syncing, setSyncing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState(0)
+  const [syncStatus, setSyncStatus] = useState('')
 
   useEffect(() => {
     checkAdminAndLoadUsers()
@@ -171,6 +175,77 @@ export default function TimeTrackingPage() {
     loadData() // Refresh favorites
   }
 
+  const handleQuickSync = async () => {
+    setSyncing(true)
+    setSyncProgress(0)
+    setSyncStatus('Starting sync...')
+    try {
+      const res = await fetch('/api/sync/monday', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ syncAllBoards: false }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `Sync failed (${res.status})`)
+      }
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('No response body')
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          let event: {
+            phase?: string
+            message?: string
+            progress?: number
+            projectName?: string
+            projectIndex?: number
+            totalProjects?: number
+            projectsSynced?: number
+            archived?: number
+            deleted?: number
+          }
+          try {
+            event = JSON.parse(line.slice(6))
+          } catch {
+            continue
+          }
+          setSyncStatus(event.message ?? '')
+          if (event.progress != null) setSyncProgress(Math.round(event.progress * 100))
+          if (event.phase === 'syncing' && event.projectName) {
+            setSyncStatus(`Syncing: ${event.projectName} (${(event.projectIndex ?? 0) + 1} of ${event.totalProjects ?? 0})`)
+          }
+          if (event.phase === 'error') throw new Error(event.message ?? 'Sync failed')
+          if (event.phase === 'complete') {
+            setSyncProgress(100)
+            const parts = [`Synced ${event.projectsSynced ?? 0} projects`]
+            if ((event.archived ?? 0) > 0) parts.push(`${event.archived} archived`)
+            if ((event.deleted ?? 0) > 0) parts.push(`${event.deleted} deleted`)
+            const completeMessage = parts.join(', ') + ' from Monday.com'
+            setSyncStatus(completeMessage)
+            await loadData()
+            toast.success(completeMessage)
+            setTimeout(() => setSyncing(false), 1500)
+            return
+          }
+        }
+      }
+      setSyncing(false)
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : 'Sync failed')
+      toast.error(error instanceof Error ? error.message : 'Sync failed')
+      setTimeout(() => setSyncing(false), 2000)
+    }
+  }
+
   const handleDeleteEntry = async (entryId: string) => {
     // Find the entry to check if project is locked
     const entry = timeEntries.find(e => e.id === entryId)
@@ -247,6 +322,15 @@ export default function TimeTrackingPage() {
               <CalendarIcon className="mr-2 h-4 w-4" />
               Calendar
             </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleQuickSync}
+              disabled={syncing}
+              title="Quick sync projects from Monday.com"
+            >
+              <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
+            </Button>
           </div>
         </div>
       </div>
@@ -281,6 +365,26 @@ export default function TimeTrackingPage() {
           />
         )}
       </div>
+
+      {/* Quick Sync progress modal */}
+      <Dialog open={syncing}>
+        <DialogContent
+          className="sm:max-w-md"
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          showCloseButton={false}
+        >
+          <DialogHeader>
+            <DialogTitle>Syncing from Monday.com</DialogTitle>
+            <DialogDescription>
+              {syncStatus || 'Preparing...'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <Progress value={syncProgress} className="h-2" />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {selectedTask && selectedProject && (
         <TimeEntryForm

@@ -17,14 +17,19 @@ export function SyncButton() {
   const [status, setStatus] = useState('')
   const [result, setResult] = useState<{ message: string; error?: string } | null>(null)
 
-  async function handleSync() {
+  async function handleSync(syncAllBoards: boolean = false) {
     setIsLoading(true)
     setProgress(0)
     setStatus('')
     setResult(null)
 
     try {
-      const res = await fetch('/api/sync/monday', { method: 'POST', credentials: 'include' })
+      const res = await fetch('/api/sync/monday', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ syncAllBoards }),
+      })
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -88,9 +93,19 @@ export function SyncButton() {
 
   return (
     <div className="flex min-w-[200px] flex-col items-end gap-2">
-      <Button onClick={handleSync} disabled={isLoading}>
-        {isLoading ? 'Syncing...' : 'Sync Now'}
-      </Button>
+      <div className="flex flex-col gap-2 w-full">
+        <div className="flex gap-2">
+          <Button onClick={() => handleSync(false)} disabled={isLoading} variant="secondary">
+            {isLoading ? 'Syncing...' : 'Quick Sync'}
+          </Button>
+          <Button onClick={() => handleSync(true)} disabled={isLoading}>
+            {isLoading ? 'Syncing...' : 'Sync all Boards'}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Quick Sync: active boards and known completed items. Sync all Boards: full scan of every board (use to restore history).
+        </p>
+      </div>
       {isLoading && (
         <div className="w-full space-y-1">
           <Progress value={progress} className="h-2" />

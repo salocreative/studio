@@ -9,9 +9,10 @@ function sseMessage(data: SyncProgressEvent): string {
 /**
  * POST /api/sync/monday
  * Streams Monday.com sync progress via Server-Sent Events.
+ * Body: { syncAllBoards?: boolean } — when true, scans all boards (full resync).
  * Requires admin authentication.
  */
-export async function POST() {
+export async function POST(request: Request) {
   const supabase = await createClient()
 
   const {
@@ -27,8 +28,17 @@ export async function POST() {
     .eq('id', user.id)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized: Admin access required' }, { status: 403 })
+  let syncAllBoards = false
+  try {
+    const body = await request.json().catch(() => ({}))
+    syncAllBoards = !!body?.syncAllBoards
+  } catch {
+    // ignore
+  }
+
+  // Quick Sync (syncAllBoards: false) is allowed for all employees; Sync all Boards requires admin
+  if (syncAllBoards && userProfile?.role !== 'admin') {
+    return NextResponse.json({ error: 'Unauthorized: Admin access required for full sync' }, { status: 403 })
   }
 
   const mondayApiToken = process.env.MONDAY_API_TOKEN
@@ -48,7 +58,7 @@ export async function POST() {
       }
 
       try {
-        await syncMondayData(mondayApiToken, send)
+        await syncMondayData(mondayApiToken, send, syncAllBoards)
       } catch (error) {
         send({
           phase: 'error',
