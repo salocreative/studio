@@ -49,6 +49,19 @@ export async function POST(request: Request) {
     )
   }
 
+  // Read "avoid deletion" setting so manual sync respects it (same as cron). Default true (safe) if unset or column missing.
+  let avoidDeletion = true
+  try {
+    const { data: syncSettings } = await supabase
+      .from('monday_sync_settings')
+      .select('avoid_deletion')
+      .eq('id', '00000000-0000-0000-0000-000000000000')
+      .maybeSingle()
+    avoidDeletion = syncSettings?.avoid_deletion !== false
+  } catch {
+    // Column may not exist before migration 041; default to safe (no deletion)
+  }
+
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder()
@@ -58,7 +71,7 @@ export async function POST(request: Request) {
       }
 
       try {
-        await syncMondayData(mondayApiToken, send, syncAllBoards)
+        await syncMondayData(mondayApiToken, send, syncAllBoards, avoidDeletion)
       } catch (error) {
         send({
           phase: 'error',

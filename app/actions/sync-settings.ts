@@ -6,6 +6,7 @@ export interface SyncSettings {
   id: string
   enabled: boolean
   interval_minutes: number
+  avoid_deletion?: boolean
   last_sync_at: string | null
   next_sync_at: string | null
   created_at: string
@@ -68,7 +69,8 @@ export async function getSyncSettings() {
  */
 export async function updateSyncSettings(
   enabled: boolean,
-  intervalMinutes: number
+  intervalMinutes: number,
+  avoidDeletion: boolean = true
 ) {
   const supabase = await createClient()
 
@@ -109,6 +111,7 @@ export async function updateSyncSettings(
         id: '00000000-0000-0000-0000-000000000000',
         enabled,
         interval_minutes: intervalMinutes,
+        avoid_deletion: avoidDeletion,
         next_sync_at: nextSyncAt,
       }, {
         onConflict: 'id'

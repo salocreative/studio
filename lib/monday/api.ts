@@ -666,7 +666,7 @@ export async function getMondayProjects(
         { itemIds: batch }
       )
       for (const item of itemsData.items || []) {
-        const boardId = item.board?.id
+        const boardId = item.board?.id != null ? String(item.board.id) : ''
         const boardName = item.board?.name || ''
         if (!boardId || !allCompletedBoardIds.has(boardId)) continue
         const clientColumnId = getColumnId(boardId, 'client', boardName)
@@ -979,7 +979,8 @@ export type SyncProgressEvent =
 export async function syncMondayData(
   accessToken: string,
   onProgress?: (event: SyncProgressEvent) => void,
-  syncAllBoards: boolean = false
+  syncAllBoards: boolean = false,
+  avoidDeletion: boolean = true
 ): Promise<{ projectsSynced: number; archived: number; deleted: number }> {
   const supabase = await createClient()
   const report = (e: SyncProgressEvent) => onProgress?.(e)
@@ -1019,6 +1020,10 @@ export async function syncMondayData(
     
     const flexiDesignCompletedBoardId = flexiDesignCompletedBoard?.monday_board_id || null
     
+    // Boards we treat as "completed" - never archive/delete projects on these (safeguard if fetch-by-ID missed them)
+    const completedBoardIdsForSafeguard = new Set(completedBoardIds)
+    if (flexiDesignCompletedBoardId) completedBoardIdsForSafeguard.add(flexiDesignCompletedBoardId)
+    
     // Get column mappings to determine active boards
     const { data: allMappings } = await supabase
       .from('monday_column_mappings')
@@ -1038,15 +1043,26 @@ export async function syncMondayData(
     let archived = 0
     let deleted = 0
 
-    // 2. Check existing projects - archive or delete if not found in Monday
-    if (existingProjects) {
+    // 2. Check existing projects - archive or delete if not found in Monday (unless avoidDeletion is set)
+    if (existingProjects && !avoidDeletion) {
       for (const existingProject of existingProjects) {
         // Skip if project still exists in Monday
         if (mondayProjectIds.has(existingProject.monday_item_id)) {
           continue
         }
         
-        // Project no longer exists in Monday.com - handle deletion/archival
+        // Safeguard: never archive or delete projects on completed boards (Flexi completed, monday_completed_boards).
+        // Quick sync only fetches completed items by ID; if that list was incomplete or API failed, we must not remove them.
+        const projectBoardId = existingProject.monday_board_id != null ? String(existingProject.monday_board_id) : ''
+        if (projectBoardId && completedBoardIdsForSafeguard.has(projectBoardId)) {
+          continue
+        }
+        // Also never remove projects we've marked as locked (completed) - preserves history if board ID was missing
+        if (existingProject.status === 'locked') {
+          continue
+        }
+        
+        // Project no longer exists in Monday.com (and is not on a completed board) - handle deletion/archival
         // Check if project has time tracking data
         const { data: timeEntries } = await supabase
           .from('time_entries')

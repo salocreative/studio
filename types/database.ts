@@ -273,6 +273,7 @@ export interface Database {
           id: string
           enabled: boolean
           interval_minutes: number
+          avoid_deletion: boolean
           last_sync_at: string | null
           next_sync_at: string | null
           created_at: string
@@ -282,6 +283,7 @@ export interface Database {
           id?: string
           enabled?: boolean
           interval_minutes?: number
+          avoid_deletion?: boolean
           last_sync_at?: string | null
           next_sync_at?: string | null
           created_at?: string
@@ -291,6 +293,7 @@ export interface Database {
           id?: string
           enabled?: boolean
           interval_minutes?: number
+          avoid_deletion?: boolean
           last_sync_at?: string | null
           next_sync_at?: string | null
           created_at?: string

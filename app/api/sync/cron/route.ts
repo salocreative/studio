@@ -65,9 +65,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Import and call sync directly
+    // Import and call sync directly (respect avoid_deletion setting)
     const { syncMondayData } = await import('@/lib/monday/api')
-    const result = await syncMondayData(mondayApiToken)
+    const avoidDeletion = settings.avoid_deletion !== false
+    const result = await syncMondayData(mondayApiToken, undefined, false, avoidDeletion)
 
     // Update sync timestamp
     await updateSyncTimestamp()

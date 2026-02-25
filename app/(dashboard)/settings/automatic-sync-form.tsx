@@ -17,6 +17,7 @@ export function AutomaticSyncForm() {
   const [saving, setSaving] = useState(false)
   const [enabled, setEnabled] = useState(false)
   const [intervalMinutes, setIntervalMinutes] = useState(60)
+  const [avoidDeletion, setAvoidDeletion] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -43,6 +44,7 @@ export function AutomaticSyncForm() {
           setSettings(result.settings)
           setEnabled(result.settings.enabled)
           setIntervalMinutes(result.settings.interval_minutes)
+          setAvoidDeletion(result.settings.avoid_deletion !== false)
         }
       }
     } catch (error) {
@@ -62,7 +64,7 @@ export function AutomaticSyncForm() {
 
     setSaving(true)
     try {
-      const result = await updateSyncSettings(enabled, intervalMinutes)
+      const result = await updateSyncSettings(enabled, intervalMinutes, avoidDeletion)
       if (result.error) {
         toast.error('Error updating sync settings', { description: result.error })
       } else {
@@ -143,6 +145,21 @@ export function AutomaticSyncForm() {
           id="sync-enabled"
           checked={enabled}
           onCheckedChange={setEnabled}
+          disabled={saving}
+        />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <Label htmlFor="avoid-deletion" className="text-base">Avoid deleting or archiving projects</Label>
+          <p className="text-sm text-muted-foreground">
+            When on, sync only adds and updates projects; it never archives or deletes. Turn off to allow removal of projects that no longer exist in Monday.com.
+          </p>
+        </div>
+        <Switch
+          id="avoid-deletion"
+          checked={avoidDeletion}
+          onCheckedChange={setAvoidDeletion}
           disabled={saving}
         />
       </div>
