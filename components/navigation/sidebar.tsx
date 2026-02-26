@@ -87,6 +87,12 @@ export const navigation: NavItem[] = [
     roles: ['admin'], // Admin only
   },
   {
+    title: 'Time Reports',
+    href: '/time-reports',
+    icon: FileText,
+    roles: ['admin', 'manager'],
+  },
+  {
     title: 'Customers',
     href: '/customers',
     icon: Users,
