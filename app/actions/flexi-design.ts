@@ -614,6 +614,78 @@ export async function updateFlexiDesignClientCredit(
   }
 }
 
+export async function updateFlexiDesignCreditTransaction(
+  transactionId: string,
+  updates: { hours?: number; transaction_date?: string }
+) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const payload: Record<string, any> = {}
+  if (typeof updates.hours === 'number') payload.hours = updates.hours
+  if (typeof updates.transaction_date === 'string') payload.transaction_date = updates.transaction_date
+  if (Object.keys(payload).length === 0) return { error: 'No updates provided' }
+
+  try {
+    const { data, error } = await supabase
+      .from('flexi_design_credit_transactions')
+      .update(payload)
+      .eq('id', transactionId)
+      .select('id, client_id, hours, transaction_date, created_at, created_by')
+      .single()
+
+    if (error) throw error
+    return { success: true, transaction: data }
+  } catch (error) {
+    console.error('Error updating credit transaction:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to update credit transaction' }
+  }
+}
+
+export async function deleteFlexiDesignCreditTransaction(transactionId: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  try {
+    const { error } = await supabase
+      .from('flexi_design_credit_transactions')
+      .delete()
+      .eq('id', transactionId)
+
+    if (error) throw error
+    return { success: true }
+  } catch (error) {
+    console.error('Error deleting credit transaction:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to delete credit transaction' }
+  }
+}
+
 export interface FlexiDesignShareLink {
   id: string
   flexi_design_client_id: string

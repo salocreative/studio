@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Plus, History, Link as LinkIcon, Copy, Check, Loader2 } from 'lucide-react'
+import { ArrowLeft, Plus, History, Link as LinkIcon, Copy, Check, Loader2, Pencil, Trash2 } from 'lucide-react'
 import { 
   getFlexiDesignClients, 
   getFlexiDesignClientDetail, 
@@ -16,6 +16,8 @@ import {
   getFlexiDesignShareLinks,
   createFlexiDesignShareLink,
   deactivateFlexiDesignShareLink,
+  updateFlexiDesignCreditTransaction,
+  deleteFlexiDesignCreditTransaction,
   type FlexiDesignShareLink
 } from '@/app/actions/flexi-design'
 import { format, differenceInMonths, parseISO } from 'date-fns'
@@ -80,6 +82,11 @@ function FlexiDesignPageContent() {
   const [showShareDialog, setShowShareDialog] = useState(false)
   const [creatingLink, setCreatingLink] = useState(false)
   const [copiedLink, setCopiedLink] = useState<string | null>(null)
+  const [showEditTransactionDialog, setShowEditTransactionDialog] = useState(false)
+  const [editingTransaction, setEditingTransaction] = useState<ClientDetail['credit_transactions'][number] | null>(null)
+  const [editTransactionHours, setEditTransactionHours] = useState('')
+  const [editTransactionDate, setEditTransactionDate] = useState('')
+  const [savingTransaction, setSavingTransaction] = useState(false)
 
   useEffect(() => {
     loadClients()
@@ -196,6 +203,71 @@ function FlexiDesignPageContent() {
     } catch (error) {
       console.error('Error deactivating link:', error)
       toast.error('Error deactivating link')
+    }
+  }
+
+  function openEditTransactionDialog(transaction: NonNullable<ClientDetail['credit_transactions']>[number]) {
+    setEditingTransaction(transaction)
+    setEditTransactionHours(String(transaction.hours))
+    setEditTransactionDate(transaction.transaction_date)
+    setShowEditTransactionDialog(true)
+  }
+
+  async function handleSaveEditedTransaction() {
+    if (!editingTransaction) return
+
+    const hours = parseFloat(editTransactionHours)
+    if (Number.isNaN(hours)) {
+      toast.error('Please enter a valid number of hours')
+      return
+    }
+
+    setSavingTransaction(true)
+    try {
+      const result = await updateFlexiDesignCreditTransaction(editingTransaction.id, {
+        hours,
+        transaction_date: editTransactionDate,
+      })
+
+      if (result.error) {
+        toast.error('Error updating transaction', { description: result.error })
+        return
+      }
+
+      toast.success('Transaction updated')
+
+      if (clientName) {
+        await loadClientDetail(clientName)
+      }
+
+      setShowEditTransactionDialog(false)
+      setEditingTransaction(null)
+    } catch (error) {
+      console.error('Error updating transaction:', error)
+      toast.error('Error updating transaction')
+    } finally {
+      setSavingTransaction(false)
+    }
+  }
+
+  async function handleDeleteTransaction(transactionId: string) {
+    const confirmed = window.confirm('Delete this credit entry? This cannot be undone.')
+    if (!confirmed) return
+
+    try {
+      const result = await deleteFlexiDesignCreditTransaction(transactionId)
+      if (result.error) {
+        toast.error('Error deleting transaction', { description: result.error })
+        return
+      }
+      toast.success('Transaction deleted')
+
+      if (clientName) {
+        await loadClientDetail(clientName)
+      }
+    } catch (error) {
+      console.error('Error deleting transaction:', error)
+      toast.error('Error deleting transaction')
     }
   }
 
@@ -674,8 +746,26 @@ function FlexiDesignPageContent() {
                           Transaction Date: {format(new Date(transaction.transaction_date), 'MMM d, yyyy')}
                         </div>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Added {format(new Date(transaction.created_at), 'MMM d, yyyy')}
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs text-muted-foreground mr-2">
+                          Added {format(new Date(transaction.created_at), 'MMM d, yyyy')}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditTransactionDialog(transaction)}
+                          title="Edit credit entry"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteTransaction(transaction.id)}
+                          title="Delete credit entry"
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -685,6 +775,54 @@ function FlexiDesignPageContent() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowCreditHistoryDialog(false)}>
                 Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Credit Transaction Dialog */}
+        <Dialog open={showEditTransactionDialog} onOpenChange={setShowEditTransactionDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit credit entry</DialogTitle>
+              <DialogDescription>
+                Update hours or transaction date.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="edit-hours">Hours</Label>
+                <Input
+                  id="edit-hours"
+                  type="number"
+                  value={editTransactionHours}
+                  onChange={(e) => setEditTransactionHours(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-date">Transaction date</Label>
+                <Input
+                  id="edit-date"
+                  type="date"
+                  value={editTransactionDate}
+                  onChange={(e) => setEditTransactionDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowEditTransactionDialog(false)
+                  setEditingTransaction(null)
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleSaveEditedTransaction} disabled={savingTransaction}>
+                {savingTransaction ? 'Saving...' : 'Save changes'}
               </Button>
             </DialogFooter>
           </DialogContent>
