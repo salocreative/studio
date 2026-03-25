@@ -83,7 +83,7 @@ function FlexiDesignPageContent() {
   const [creatingLink, setCreatingLink] = useState(false)
   const [copiedLink, setCopiedLink] = useState<string | null>(null)
   const [showEditTransactionDialog, setShowEditTransactionDialog] = useState(false)
-  const [editingTransaction, setEditingTransaction] = useState<ClientDetail['credit_transactions'][number] | null>(null)
+  const [editingTransaction, setEditingTransaction] = useState<NonNullable<ClientDetail['credit_transactions']>[number] | null>(null)
   const [editTransactionHours, setEditTransactionHours] = useState('')
   const [editTransactionDate, setEditTransactionDate] = useState('')
   const [savingTransaction, setSavingTransaction] = useState(false)
