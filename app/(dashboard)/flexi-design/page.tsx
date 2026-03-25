@@ -88,12 +88,17 @@ function FlexiDesignPageContent() {
   useEffect(() => {
     if (clientName) {
       loadClientDetail(clientName)
-      loadShareLinks()
     } else {
       setClientDetail(null)
       setShareLinks([])
     }
   }, [clientName])
+
+  useEffect(() => {
+    if (clientDetail?.client_name) {
+      loadShareLinks()
+    }
+  }, [clientDetail?.id, clientDetail?.client_name])
 
   async function loadClients() {
     setLoading(true)
@@ -161,10 +166,10 @@ function FlexiDesignPageContent() {
   }
 
   async function handleCreateShareLink() {
-    if (!clientDetail?.id) return
+    if (!clientDetail?.client_name) return
     setCreatingLink(true)
     try {
-      const result = await createFlexiDesignShareLink(clientDetail.id)
+      const result = await createFlexiDesignShareLink(clientDetail.client_name)
       if (result.error) {
         toast.error('Error creating share link', { description: result.error })
       } else if (result.success && result.shareLink) {

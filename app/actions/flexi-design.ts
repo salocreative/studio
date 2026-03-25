@@ -627,7 +627,7 @@ export interface FlexiDesignShareLink {
 /**
  * Create a public share link for a Flexi-Design client (admin only)
  */
-export async function createFlexiDesignShareLink(flexiDesignClientId: string, expiresAt?: string) {
+export async function createFlexiDesignShareLink(clientName: string, expiresAt?: string) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -647,6 +647,27 @@ export async function createFlexiDesignShareLink(flexiDesignClientId: string, ex
   }
 
   try {
+    // Ensure the client exists in flexi_design_clients so we have an id to reference.
+    // Some clients can appear via Monday projects before any credit has been added.
+    const { data: existingClient, error: existingClientError } = await supabase
+      .from('flexi_design_clients')
+      .select('id')
+      .eq('client_name', clientName)
+      .maybeSingle()
+
+    if (existingClientError) throw existingClientError
+
+    let flexiDesignClientId = existingClient?.id as string | undefined
+    if (!flexiDesignClientId) {
+      const { data: createdClient, error: createdClientError } = await supabase
+        .from('flexi_design_clients')
+        .insert({ client_name: clientName, remaining_hours: 0 })
+        .select('id')
+        .single()
+      if (createdClientError) throw createdClientError
+      flexiDesignClientId = createdClient.id as string
+    }
+
     // Generate a unique token
     const shareToken = crypto.randomBytes(32).toString('hex')
 
