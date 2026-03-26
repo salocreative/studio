@@ -1,8 +1,6 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/server'
-import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
-import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
 
 /**
  * Get Flexi-Design client data for public view (by client name)
@@ -15,14 +13,67 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
   }
 
   try {
-    // Get Flexi-Design board IDs
-    const flexiDesignBoardIds = await getFlexiDesignBoardIds()
-    
-    // Get Flexi-Design completed board ID
-    const completedBoardResult = await getFlexiDesignCompletedBoard()
-    const completedBoardId = completedBoardResult.success && completedBoardResult.board 
-      ? completedBoardResult.board.monday_board_id 
-      : null
+    // Resolve Flexi-Design board IDs using service role reads (public share views have no user session).
+    const { data: mappings, error: mappingsError } = await adminClient
+      .from('monday_column_mappings')
+      .select('board_id')
+      .not('board_id', 'is', null)
+
+    if (mappingsError) throw mappingsError
+
+    const allMappedBoardIds = Array.from(
+      new Set((mappings || []).map((m: any) => m.board_id).filter(Boolean))
+    ) as string[]
+
+    const mondayApiToken = process.env.MONDAY_API_TOKEN
+    if (!mondayApiToken) {
+      return { error: 'Flexi-Design configuration unavailable (Missing MONDAY_API_TOKEN)' }
+    }
+
+    let flexiDesignBoardIds = new Set<string>()
+    if (allMappedBoardIds.length > 0) {
+      const MONDAY_API_URL = 'https://api.monday.com/v2'
+      const query = `
+        query($boardIds: [ID!]) {
+          boards(ids: $boardIds) {
+            id
+            name
+          }
+        }
+      `
+
+      const response = await fetch(MONDAY_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: mondayApiToken,
+        },
+        body: JSON.stringify({ query, variables: { boardIds: allMappedBoardIds } }),
+      })
+
+      if (!response.ok) {
+        return { error: 'Flexi-Design configuration unavailable (Unable to query Monday boards)' }
+      }
+
+      const result = await response.json()
+      if (result.errors) {
+        return { error: 'Flexi-Design configuration unavailable (Monday API error)' }
+      }
+
+      result.data?.boards?.forEach((board: { id: string; name: string }) => {
+        if (board.name?.toLowerCase?.().includes('flexi')) {
+          flexiDesignBoardIds.add(String(board.id))
+        }
+      })
+    }
+
+    const { data: completedBoardRow, error: completedBoardError } = await adminClient
+      .from('flexi_design_completed_board')
+      .select('monday_board_id')
+      .maybeSingle()
+
+    if (completedBoardError) throw completedBoardError
+    const completedBoardId = completedBoardRow?.monday_board_id || null
     
     // Get client from database
     let clientData: any = null
@@ -38,14 +89,16 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
 
     clientData = data
 
+    if (flexiDesignBoardIds.size === 0) {
+      return { error: 'No Flexi-Design boards configured' }
+    }
+
     // Filter out completed board from active board IDs
     const activeBoardIds = Array.from(flexiDesignBoardIds).filter(
-      boardId => !completedBoardId || boardId !== completedBoardId
+      (boardId) => !completedBoardId || boardId !== completedBoardId
     )
 
-    // Get all active projects for this client.
-    // If Flexi board IDs cannot be resolved (common in external/shared contexts),
-    // fall back to client_name-only filtering so the share page still renders.
+    // Get all active projects for this client, scoped to Flexi-Design boards only.
     let projectsQuery = adminClient
       .from('monday_projects')
       .select('id, name, status, created_at, quoted_hours')
@@ -55,6 +108,9 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
 
     if (activeBoardIds.length > 0) {
       projectsQuery = projectsQuery.in('monday_board_id', activeBoardIds)
+    } else {
+      // Only completed board exists; no active boards → return no active projects
+      projectsQuery = projectsQuery.in('monday_board_id', ['__none__'])
     }
 
     const { data: projects, error: projectsError } = await projectsQuery
