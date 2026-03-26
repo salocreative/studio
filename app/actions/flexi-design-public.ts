@@ -24,10 +24,6 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
       ? completedBoardResult.board.monday_board_id 
       : null
     
-    if (flexiDesignBoardIds.size === 0) {
-      return { error: 'No Flexi-Design boards configured' }
-    }
-
     // Get client from database
     let clientData: any = null
     const { data, error: clientError } = await adminClient
@@ -47,14 +43,21 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
       boardId => !completedBoardId || boardId !== completedBoardId
     )
 
-    // Get all active projects for this client
-    const { data: projects, error: projectsError } = await adminClient
+    // Get all active projects for this client.
+    // If Flexi board IDs cannot be resolved (common in external/shared contexts),
+    // fall back to client_name-only filtering so the share page still renders.
+    let projectsQuery = adminClient
       .from('monday_projects')
       .select('id, name, status, created_at, quoted_hours')
-      .in('monday_board_id', activeBoardIds)
       .eq('client_name', clientName)
       .in('status', ['active', 'archived', 'locked'])
       .order('created_at', { ascending: false })
+
+    if (activeBoardIds.length > 0) {
+      projectsQuery = projectsQuery.in('monday_board_id', activeBoardIds)
+    }
+
+    const { data: projects, error: projectsError } = await projectsQuery
 
     if (projectsError) throw projectsError
 
