@@ -50,8 +50,7 @@ import {
   deleteCupboardFile,
   addCupboardLink,
   deleteCupboardLink,
-  getCupboardThumbnailUrl,
-  getCupboardCoverImageUrl,
+  getCupboardSignedUrls,
   checkCanManageCupboard,
   type CupboardItem,
   type CupboardCategory,
@@ -80,6 +79,7 @@ export default function CupboardPageClient() {
   const [loading, setLoading] = useState(true)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | 'all'>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
   const [showCategoryDialog, setShowCategoryDialog] = useState(false)
@@ -112,8 +112,16 @@ export default function CupboardPageClient() {
   useEffect(() => {
     checkManageStatus()
     loadCategories()
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchQuery(searchQuery), 250)
+    return () => clearTimeout(t)
+  }, [searchQuery])
+
+  useEffect(() => {
     loadItems()
-  }, [selectedCategoryId, searchQuery])
+  }, [selectedCategoryId, debouncedSearchQuery])
 
   async function checkManageStatus() {
     try {
@@ -143,45 +151,42 @@ export default function CupboardPageClient() {
     try {
       const result = await getCupboardItems(
         selectedCategoryId === 'all' ? undefined : selectedCategoryId,
-        searchQuery.trim() || undefined
+        debouncedSearchQuery.trim() || undefined
       )
       if (result.error) {
         toast.error('Error loading items', { description: result.error })
       } else if (result.success && result.items) {
         setItems(result.items)
-        
-        // Load thumbnail URLs for files with thumbnails
-        const fileThumbUrls: Record<string, string> = {}
-        await Promise.all(
-          result.items
-            .flatMap(item => item.files || [])
-            .filter(file => file.thumbnail_path)
-            .map(async (file) => {
-              if (file.thumbnail_path) {
-                const thumbResult = await getCupboardThumbnailUrl(file.thumbnail_path)
-                if (thumbResult.success && thumbResult.url) {
-                  fileThumbUrls[file.id] = thumbResult.url
-                }
-              }
-            })
-        )
-        setThumbnailUrls(fileThumbUrls)
 
-        // Load cover image URLs for items with cover images
-        const itemCoverUrls: Record<string, string> = {}
-        await Promise.all(
-          result.items
-            .filter(item => item.cover_image_path)
-            .map(async (item) => {
-              if (item.cover_image_path) {
-                const coverResult = await getCupboardCoverImageUrl(item.cover_image_path)
-                if (coverResult.success && coverResult.url) {
-                  itemCoverUrls[item.id] = coverResult.url
-                }
+        const thumbPaths = result.items
+          .flatMap(item => item.files || [])
+          .map(file => file.thumbnail_path)
+          .filter(Boolean) as string[]
+
+        const coverPaths = result.items
+          .map(item => item.cover_image_path)
+          .filter(Boolean) as string[]
+
+        const signed = await getCupboardSignedUrls([...thumbPaths, ...coverPaths])
+        if (signed.success && signed.urls) {
+          const fileThumbUrls: Record<string, string> = {}
+          for (const item of result.items) {
+            for (const file of item.files || []) {
+              if (file.thumbnail_path && signed.urls[file.thumbnail_path]) {
+                fileThumbUrls[file.id] = signed.urls[file.thumbnail_path]
               }
-            })
-        )
-        setCoverImageUrls(itemCoverUrls)
+            }
+          }
+          setThumbnailUrls(fileThumbUrls)
+
+          const itemCoverUrls: Record<string, string> = {}
+          for (const item of result.items) {
+            if (item.cover_image_path && signed.urls[item.cover_image_path]) {
+              itemCoverUrls[item.id] = signed.urls[item.cover_image_path]
+            }
+          }
+          setCoverImageUrls(itemCoverUrls)
+        }
       }
     } catch (error) {
       console.error('Error loading items:', error)

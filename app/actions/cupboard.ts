@@ -182,7 +182,9 @@ export async function getCupboardItems(categoryId?: string, searchQuery?: string
       .from('cupboard_items')
       .select(`
         *,
-        category:cupboard_categories(*)
+        category:cupboard_categories(*),
+        files:cupboard_files(*),
+        links:cupboard_links(*)
       `)
       .order('created_at', { ascending: false })
 
@@ -196,40 +198,70 @@ export async function getCupboardItems(categoryId?: string, searchQuery?: string
       query = query.or(`title.ilike.${searchTerm},description.ilike.${searchTerm}`)
     }
 
+    // Order nested relations
+    query = query
+      .order('display_order', { referencedTable: 'cupboard_files', ascending: true })
+      .order('display_order', { referencedTable: 'cupboard_links', ascending: true })
+
     const { data, error } = await query
 
     if (error) throw error
 
-    const items = (data || []) as any[]
-
-    // Load files and links for each item
-    const itemsWithRelations = await Promise.all(
-      items.map(async (item) => {
-        const [filesResult, linksResult] = await Promise.all([
-          supabase
-            .from('cupboard_files')
-            .select('*')
-            .eq('item_id', item.id)
-            .order('display_order', { ascending: true }),
-          supabase
-            .from('cupboard_links')
-            .select('*')
-            .eq('item_id', item.id)
-            .order('display_order', { ascending: true }),
-        ])
-
-        return {
-          ...item,
-          files: (filesResult.data || []) as CupboardFile[],
-          links: (linksResult.data || []) as CupboardLink[],
-        } as CupboardItem
-      })
-    )
-
-    return { success: true, items: itemsWithRelations }
+    return { success: true, items: (data || []) as unknown as CupboardItem[] }
   } catch (error) {
     console.error('Error fetching cupboard items:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch items' }
+  }
+}
+
+/**
+ * Batch-create signed URLs for cupboard/documents buckets.
+ * Returns a map of file path -> signed URL.
+ */
+export async function getCupboardSignedUrls(filePaths: string[], expiresIn: number = 3600) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const uniquePaths = Array.from(new Set((filePaths || []).filter(Boolean)))
+  if (uniquePaths.length === 0) return { success: true, urls: {} as Record<string, string> }
+
+  try {
+    const urls: Record<string, string> = {}
+
+    // Attempt in cupboard bucket first
+    let remaining = uniquePaths
+    try {
+      const { data, error } = await supabase.storage
+        .from('cupboard')
+        .createSignedUrls(remaining, expiresIn)
+      if (error) throw error
+      for (const r of data || []) {
+        if (r?.signedUrl && r?.path) urls[r.path] = r.signedUrl
+      }
+      remaining = remaining.filter((p) => !urls[p])
+    } catch {
+      // ignore and fall back per-path below
+    }
+
+    // Fallback to documents bucket for any missing
+    if (remaining.length > 0) {
+      const { data, error } = await supabase.storage
+        .from('documents')
+        .createSignedUrls(remaining, expiresIn)
+      if (error) throw error
+      for (const r of data || []) {
+        if (r?.signedUrl && r?.path) urls[r.path] = r.signedUrl
+      }
+    }
+
+    return { success: true, urls }
+  } catch (error) {
+    console.error('Error generating signed URLs:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to generate signed URLs' }
   }
 }
 
