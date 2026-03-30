@@ -52,7 +52,7 @@ import {
   deleteCupboardLink,
   getCupboardThumbnailUrl,
   getCupboardCoverImageUrl,
-  checkIsAdmin,
+  checkCanManageCupboard,
   type CupboardItem,
   type CupboardCategory,
   type CupboardFile,
@@ -103,25 +103,25 @@ export default function CupboardPageClient() {
   // Category management
   const [newCategoryName, setNewCategoryName] = useState('')
 
-  // Check if user is admin
-  const [isAdmin, setIsAdmin] = useState(false)
+  // Check if user can manage cupboard (admin/manager)
+  const [canManage, setCanManage] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const coverImageInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    checkAdminStatus()
+    checkManageStatus()
     loadCategories()
     loadItems()
   }, [selectedCategoryId, searchQuery])
 
-  async function checkAdminStatus() {
+  async function checkManageStatus() {
     try {
-      const result = await checkIsAdmin()
-      setIsAdmin(result.isAdmin)
+      const result = await checkCanManageCupboard()
+      setCanManage(result.canManage)
     } catch (error) {
       console.error('Error checking admin status:', error)
-      setIsAdmin(false)
+      setCanManage(false)
     }
   }
 
@@ -808,7 +808,7 @@ export default function CupboardPageClient() {
                 className="pl-9"
               />
             </div>
-            {isAdmin && (
+            {canManage && (
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setShowCategoryDialog(true)}>
                   <FolderOpen className="h-4 w-4 mr-2" />
@@ -854,7 +854,7 @@ export default function CupboardPageClient() {
                 <FileText className="h-12 w-12 text-muted-foreground mb-4" />
                 <p className="text-lg font-medium mb-2">No items found</p>
                 <p className="text-sm text-muted-foreground text-center">
-                  {searchQuery ? 'Try adjusting your search query' : isAdmin ? 'Get started by adding your first item' : 'No items available yet'}
+                  {searchQuery ? 'Try adjusting your search query' : canManage ? 'Get started by adding your first item' : 'No items available yet'}
                 </p>
               </CardContent>
             </Card>
@@ -919,7 +919,7 @@ export default function CupboardPageClient() {
                             </Badge>
                           )}
                         </div>
-                        {isAdmin && (
+                        {canManage && (
                           <div className="flex gap-1">
                             <Button
                               variant="ghost"
@@ -1491,7 +1491,7 @@ export default function CupboardPageClient() {
                 </div>
               </div>
 
-              {isAdmin && (
+              {canManage && (
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setShowViewDialog(false)}>
                     Close

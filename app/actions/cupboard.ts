@@ -3,14 +3,14 @@
 import { createClient } from '@/lib/supabase/server'
 
 /**
- * Check if current user is admin
+ * Check if current user is an admin or manager
  */
-export async function checkIsAdmin() {
+export async function checkCanManageCupboard() {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
-    return { isAdmin: false }
+    return { canManage: false }
   }
 
   const { data: userProfile } = await supabase
@@ -20,7 +20,7 @@ export async function checkIsAdmin() {
     .is('deleted_at', null)
     .single()
 
-  return { isAdmin: userProfile?.role === 'admin' }
+  return { canManage: userProfile?.role === 'admin' || userProfile?.role === 'manager' }
 }
 
 export interface CupboardCategory {
@@ -92,7 +92,7 @@ export async function getCupboardCategories() {
 }
 
 /**
- * Create a new cupboard category (admin only)
+ * Create a new cupboard category (admin/manager)
  */
 export async function createCupboardCategory(name: string, displayOrder: number = 0) {
   const supabase = await createClient()
@@ -109,8 +109,8 @@ export async function createCupboardCategory(name: string, displayOrder: number 
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -130,7 +130,7 @@ export async function createCupboardCategory(name: string, displayOrder: number 
 }
 
 /**
- * Delete a cupboard category (admin only)
+ * Delete a cupboard category (admin/manager)
  */
 export async function deleteCupboardCategory(categoryId: string) {
   const supabase = await createClient()
@@ -147,8 +147,8 @@ export async function deleteCupboardCategory(categoryId: string) {
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -284,7 +284,7 @@ export async function getCupboardItem(id: string) {
 }
 
 /**
- * Create a new cupboard item (admin only)
+ * Create a new cupboard item (admin/manager)
  * Files and links are handled separately after item creation
  */
 export async function createCupboardItem(
@@ -306,8 +306,8 @@ export async function createCupboardItem(
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -332,7 +332,7 @@ export async function createCupboardItem(
 }
 
 /**
- * Update a cupboard item (admin only)
+ * Update a cupboard item (admin/manager)
  */
 export async function updateCupboardItem(
   id: string,
@@ -355,8 +355,8 @@ export async function updateCupboardItem(
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -383,7 +383,7 @@ export async function updateCupboardItem(
 }
 
 /**
- * Delete a cupboard item (admin only)
+ * Delete a cupboard item (admin/manager)
  * This will cascade delete associated files and links
  */
 export async function deleteCupboardItem(id: string) {
@@ -401,8 +401,8 @@ export async function deleteCupboardItem(id: string) {
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -457,7 +457,7 @@ export async function deleteCupboardItem(id: string) {
 }
 
 /**
- * Add a file to a cupboard item (admin only)
+ * Add a file to a cupboard item (admin/manager)
  */
 export async function addCupboardFile(
   itemId: string,
@@ -482,8 +482,8 @@ export async function addCupboardFile(
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -511,7 +511,7 @@ export async function addCupboardFile(
 }
 
 /**
- * Delete a cupboard file (admin only)
+ * Delete a cupboard file (admin/manager)
  */
 export async function deleteCupboardFile(fileId: string) {
   const supabase = await createClient()
@@ -528,8 +528,8 @@ export async function deleteCupboardFile(fileId: string) {
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -581,7 +581,7 @@ export async function deleteCupboardFile(fileId: string) {
 }
 
 /**
- * Add a link to a cupboard item (admin only)
+ * Add a link to a cupboard item (admin/manager)
  */
 export async function addCupboardLink(
   itemId: string,
@@ -603,8 +603,8 @@ export async function addCupboardLink(
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
@@ -636,7 +636,7 @@ export async function addCupboardLink(
 }
 
 /**
- * Delete a cupboard link (admin only)
+ * Delete a cupboard link (admin/manager)
  */
 export async function deleteCupboardLink(linkId: string) {
   const supabase = await createClient()
@@ -653,8 +653,8 @@ export async function deleteCupboardLink(linkId: string) {
     .is('deleted_at', null)
     .single()
 
-  if (userProfile?.role !== 'admin') {
-    return { error: 'Unauthorized: Admin access required' }
+  if (userProfile?.role !== 'admin' && userProfile?.role !== 'manager') {
+    return { error: 'Unauthorized: Admin or manager access required' }
   }
 
   try {
