@@ -370,9 +370,9 @@ function FlexiDesignPageContent() {
     // Ensure at least 1 month to avoid division by zero
     const months = Math.max(1, monthsDiff + 1)
     
-    // Total quoted hours from all projects
-    const totalQuoted = (clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)
-    
+    // quoted_hours_used from the server is already active + completed quoted (credit consumption)
+    const totalQuoted = clientDetail.quoted_hours_used || 0
+
     return totalQuoted / months
   }
 
@@ -438,8 +438,8 @@ function FlexiDesignPageContent() {
                     <div className={cn(
                       "text-3xl font-bold",
                       getCreditStatusColor(
-                        clientDetail.remaining_hours, 
-                        (clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)
+                        clientDetail.remaining_hours,
+                        clientDetail.quoted_hours_used || 0
                       )
                     )}>
                       {clientDetail.remaining_hours.toFixed(1)}
@@ -459,17 +459,21 @@ function FlexiDesignPageContent() {
                   </CardContent>
                 </Card>
 
-                {/* Box 3: Total Hours Used */}
+                {/* Box 3: Quoted total (credits consumed) — server already sums active + completed quoted */}
                 <Card>
                   <CardHeader className="pb-1">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Total hours used
+                      Total quoted (credits)
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold">
-                      {((clientDetail.quoted_hours_used || 0) + (clientDetail.completed_quoted_hours || 0)).toFixed(1)}
+                      {(clientDetail.quoted_hours_used || 0).toFixed(1)}
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Logged:{' '}
+                      {((clientDetail.hours_used || 0) + (clientDetail.completed_logged_hours || 0)).toFixed(1)}h
+                    </p>
                   </CardContent>
                 </Card>
 

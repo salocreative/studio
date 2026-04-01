@@ -484,8 +484,9 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       id: clientData?.id || '',
       client_name: clientName,
       remaining_hours: remainingHours,
-      hours_used: totalHoursUsed, // logged hours for internal tracking (performance only)
-      quoted_hours_used: totalEstimatedHours, // total quoted hours (estimated) for credit deduction
+      hours_used: totalHoursUsed, // logged hours on active Flexi boards only (sum of time_entries)
+      // Sum of quoted_hours on active + completed Flexi projects — do not add completed_quoted_hours again in UI
+      quoted_hours_used: totalEstimatedHours,
       total_projects: projectsWithHours.length,
       projects: projectsWithHours,
       credit_transactions: creditTransactions,
