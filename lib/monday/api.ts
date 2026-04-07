@@ -3,7 +3,8 @@
  * This will be used to sync projects and tasks from Monday.com
  */
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
@@ -158,10 +159,12 @@ async function getMondayBoards(accessToken: string): Promise<Array<{ id: string;
 export async function getMondayProjects(
   accessToken: string,
   includeCompletedBoards: boolean = false,
-  syncAllBoards: boolean = false
+  syncAllBoards: boolean = false,
+  /** Service-role client for sync (bypasses RLS); defaults to user-scoped client */
+  dbClient?: SupabaseClient
 ): Promise<MondayProject[]> {
   // Get column mappings from Supabase to determine which boards to sync
-  const supabase = await createClient()
+  const supabase = dbClient ?? (await createClient())
   const { data: allMappings } = await supabase
     .from('monday_column_mappings')
     .select('monday_column_id, column_type, board_id, workspace_id')
@@ -760,10 +763,12 @@ export async function getMondayTasks(
   accessToken: string,
   projectId: string,
   boardId?: string,
-  boardName?: string
+  boardName?: string,
+  /** Service-role client for sync (bypasses RLS); defaults to user-scoped client */
+  dbClient?: SupabaseClient
 ): Promise<MondayTask[]> {
   // Get column mappings for subtasks (quoted_hours, timeline)
-  const supabase = await createClient()
+  const supabase = dbClient ?? (await createClient())
   const { data: allMappings } = await supabase
     .from('monday_column_mappings')
     .select('monday_column_id, column_type, board_id')
@@ -982,7 +987,17 @@ export async function syncMondayData(
   syncAllBoards: boolean = false,
   avoidDeletion: boolean = true
 ): Promise<{ projectsSynced: number; archived: number; deleted: number }> {
-  const supabase = await createClient()
+  // Use service role so sync can write monday_projects / monday_tasks and read admin-only config tables.
+  // RLS only allows admins to mutate projects/tasks; designers' JWT would otherwise fail every upsert.
+  const admin = await createAdminClient()
+  if (!admin) {
+    const err = new Error(
+      'Monday sync is not configured: missing SUPABASE_SERVICE_ROLE_KEY on the server'
+    )
+    onProgress?.({ phase: 'error', message: err.message })
+    throw err
+  }
+  const supabase = admin
   const report = (e: SyncProgressEvent) => onProgress?.(e)
 
   try {
@@ -993,7 +1008,7 @@ export async function syncMondayData(
     })
 
     // 1. Fetch projects from Monday.com (active + completed; syncAllBoards = full scan of all boards)
-    const mondayProjects = await getMondayProjects(accessToken, true, syncAllBoards)
+    const mondayProjects = await getMondayProjects(accessToken, true, syncAllBoards, admin)
 
     report({ phase: 'checking', message: 'Checking for removed projects...', progress: 0.05 })
 
@@ -1264,7 +1279,13 @@ export async function syncMondayData(
 
       if (projectRecord) {
         const isProjectLocked = projectRecord.status === 'locked'
-        const mondayTasks = await getMondayTasks(accessToken, project.id, project.board_id, project.board_name)
+        const mondayTasks = await getMondayTasks(
+          accessToken,
+          project.id,
+          project.board_id,
+          project.board_name,
+          admin
+        )
 
         // Get existing tasks to preserve quoted_hours for locked projects
         const { data: existingTasks } = await supabase
