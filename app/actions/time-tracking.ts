@@ -18,6 +18,47 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
   }
 
   try {
+    const buildProjectsWithMetrics = async (projects: any[], tasks: any[], favoriteTaskIds: Set<string>) => {
+      const projectIds = projects.map((p) => p.id)
+      const { data: allTimeEntries, error: timeEntriesError } = await supabase
+        .from('time_entries')
+        .select('project_id, task_id, hours')
+        .in('project_id', projectIds)
+
+      if (timeEntriesError) throw timeEntriesError
+
+      const timeEntriesByProject: Record<string, number> = {}
+      const timeEntriesByTask: Record<string, number> = {}
+      for (const entry of allTimeEntries || []) {
+        timeEntriesByProject[entry.project_id] = (timeEntriesByProject[entry.project_id] || 0) + Number(entry.hours)
+        if (entry.task_id) {
+          timeEntriesByTask[entry.task_id] = (timeEntriesByTask[entry.task_id] || 0) + Number(entry.hours)
+        }
+      }
+
+      return projects.map((project) => {
+        const projectTasks = (tasks || [])
+          .filter((task) => task.project_id === project.id)
+          .map((task) => {
+            const loggedHours = timeEntriesByTask[task.id] || 0
+            const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : null
+
+            return {
+              ...task,
+              is_favorite: favoriteTaskIds.has(task.id),
+              logged_hours: loggedHours,
+              time_left: quotedHours !== null ? Math.max(0, quotedHours - loggedHours) : null,
+            }
+          })
+
+        return {
+          ...project,
+          total_logged_hours: timeEntriesByProject[project.id] || 0,
+          tasks: projectTasks,
+        }
+      })
+    }
+
     // Build query for active projects
     let projectsQuery = supabase
       .from('monday_projects')
@@ -85,20 +126,7 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
 
           const favoriteTaskIds = new Set(favorites?.map((f) => f.task_id) || [])
 
-          // Group tasks by project
-          const projectsWithTasks = filteredProjects.map((project) => {
-            const projectTasks = (tasks || [])
-              .filter((task) => task.project_id === project.id)
-              .map((task) => ({
-                ...task,
-                is_favorite: favoriteTaskIds.has(task.id),
-              }))
-
-            return {
-              ...project,
-              tasks: projectTasks,
-            }
-          })
+          const projectsWithTasks = await buildProjectsWithMetrics(filteredProjects, tasks || [], favoriteTaskIds)
 
           return { success: true, projects: projectsWithTasks }
         }
@@ -136,20 +164,7 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
     // Get assigned tasks (check if user's Monday ID is in assigned_user_ids array)
     // For now, we'll show all tasks - can filter by assignment later
 
-    // Group tasks by project
-    const projectsWithTasks = (projects || []).map((project) => {
-      const projectTasks = (tasks || [])
-        .filter((task) => task.project_id === project.id)
-        .map((task) => ({
-          ...task,
-          is_favorite: favoriteTaskIds.has(task.id),
-        }))
-
-      return {
-        ...project,
-        tasks: projectTasks,
-      }
-    })
+    const projectsWithTasks = await buildProjectsWithMetrics(projects || [], tasks || [], favoriteTaskIds)
 
     return { success: true, projects: projectsWithTasks }
   } catch (error) {

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Search, Star, StarOff } from 'lucide-react'
+import { CheckCircle2, Search, Star, StarOff } from 'lucide-react'
 import { toggleFavoriteTask } from '@/app/actions/time-tracking'
 import { cn } from '@/lib/utils'
 
@@ -13,6 +13,9 @@ interface Task {
   id: string
   name: string
   quoted_hours?: number | null
+  logged_hours?: number | null
+  time_left?: number | null
+  monday_data?: Record<string, any> | null
   is_favorite?: boolean
 }
 
@@ -20,6 +23,8 @@ interface Project {
   id: string
   name: string
   client_name?: string | null
+  quoted_hours?: number | null
+  total_logged_hours?: number | null
   tasks: Task[]
 }
 
@@ -113,6 +118,46 @@ export function ProjectTaskSelector({
   }
 
   const uniqueClients = getUniqueClients()
+
+  const getCompletionFromStatus = (task: Task): boolean | null => {
+    if (!task.monday_data || typeof task.monday_data !== 'object') return null
+
+    const statusColumns = Object.values(task.monday_data).filter((column: any) => column?.type === 'status')
+    if (statusColumns.length === 0) return null
+
+    const completedPattern = /\b(done|complete|completed|closed)\b/i
+
+    for (const column of statusColumns) {
+      const textValue = typeof column?.text === 'string' ? column.text : ''
+      const parsedValue = column?.value
+      const labelFromValue =
+        typeof parsedValue?.label === 'string'
+          ? parsedValue.label
+          : typeof parsedValue?.label?.text === 'string'
+            ? parsedValue.label.text
+            : ''
+
+      if (completedPattern.test(textValue) || completedPattern.test(labelFromValue)) {
+        return true
+      }
+    }
+
+    return false
+  }
+  const projectHoursById = useMemo(() => {
+    return projects.reduce<Record<string, { estimatedHours: number; remainingHours: number }>>((acc, project) => {
+      const taskQuotedTotal = project.tasks.reduce((sum, task) => sum + (task.quoted_hours || 0), 0)
+      const estimatedHours = taskQuotedTotal > 0 ? taskQuotedTotal : (project.quoted_hours || 0)
+      const totalLoggedHours = project.total_logged_hours || 0
+
+      acc[project.id] = {
+        estimatedHours,
+        remainingHours: Math.max(0, estimatedHours - totalLoggedHours),
+      }
+
+      return acc
+    }, {})
+  }, [projects])
 
   return (
     <div className="space-y-4">
@@ -211,6 +256,13 @@ export function ProjectTaskSelector({
                         {project.client_name}
                       </div>
                     )}
+                    {projectHoursById[project.id]?.estimatedHours > 0 && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {projectHoursById[project.id].remainingHours === projectHoursById[project.id].estimatedHours
+                          ? 'Not started'
+                          : `${projectHoursById[project.id].remainingHours.toFixed(1)}h remaining / ${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`}
+                      </div>
+                    )}
                   </div>
                   <Badge variant="secondary">
                     {project.tasks.length} task{project.tasks.length !== 1 ? 's' : ''}
@@ -219,36 +271,55 @@ export function ProjectTaskSelector({
 
                 {expandedProjects.has(project.id) && (
                   <div className="border-t bg-muted/30">
-                    {project.tasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="w-full px-4 py-2 flex items-center justify-between hover:bg-accent transition-colors border-b last:border-b-0"
-                      >
-                        <button
-                          onClick={() => onSelectTask(task, project)}
-                          className="flex-1 text-left"
+                    {project.tasks.map((task) => {
+                      const remainingHours = task.time_left ?? Math.max(0, (task.quoted_hours || 0) - (task.logged_hours || 0))
+                      const completionFromStatus = getCompletionFromStatus(task)
+                      const isCompleted = completionFromStatus ?? Boolean(task.quoted_hours && (task.logged_hours || 0) > 0 && remainingHours === 0)
+
+                      return (
+                        <div
+                          key={task.id}
+                          className={cn(
+                            "w-full px-4 py-2 flex items-center justify-between transition-colors border-b last:border-b-0",
+                            isCompleted ? "bg-green-500/10 hover:bg-green-500/15" : "hover:bg-accent"
+                          )}
                         >
-                          <div className="font-medium">{task.name}</div>
-                          {task.quoted_hours && (
-                            <div className="text-xs text-muted-foreground">
-                              Quoted: {task.quoted_hours}h
+                          <button
+                            onClick={() => onSelectTask(task, project)}
+                            className="flex-1 text-left"
+                          >
+                            <div className="font-medium flex items-center gap-2">
+                              {task.name}
+                              {isCompleted && (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Completed
+                                </span>
+                              )}
                             </div>
-                          )}
-                        </button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={(e) => handleToggleFavorite(task.id, e)}
-                        >
-                          {task.is_favorite ? (
-                            <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                          ) : (
-                            <StarOff className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                    ))}
+                            {task.quoted_hours && (
+                              <div className={cn("text-xs text-muted-foreground", isCompleted && "text-green-700/90 dark:text-green-300")}>
+                                {remainingHours === task.quoted_hours
+                                  ? 'Not started'
+                                  : `${remainingHours.toFixed(1)}h remaining / ${task.quoted_hours.toFixed(1)}h estimated`}
+                              </div>
+                            )}
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={(e) => handleToggleFavorite(task.id, e)}
+                          >
+                            {task.is_favorite ? (
+                              <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                            ) : (
+                              <StarOff className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>

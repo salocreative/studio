@@ -33,6 +33,9 @@ interface Task {
   id: string
   name: string
   quoted_hours?: number | null
+  logged_hours?: number | null
+  time_left?: number | null
+  monday_data?: Record<string, any> | null
   is_favorite?: boolean
 }
 
@@ -40,6 +43,8 @@ interface Project {
   id: string
   name: string
   client_name?: string | null
+  quoted_hours?: number | null
+  total_logged_hours?: number | null
   status?: 'active' | 'archived' | 'locked'
   tasks: Task[]
 }
