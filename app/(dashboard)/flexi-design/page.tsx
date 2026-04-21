@@ -335,6 +335,49 @@ function FlexiDesignPageContent() {
     return 'text-foreground'
   }
 
+  // Group completed projects by completion month (falling back to created_at)
+  const completedProjectsByMonth = (() => {
+    if (!clientDetail?.completed_projects || clientDetail.completed_projects.length === 0) {
+      return [] as Array<{
+        monthKey: string
+        monthLabel: string
+        projects: FlexiDesignProject[]
+        totalQuoted: number
+        totalLogged: number
+      }>
+    }
+
+    const groups = new Map<string, { monthLabel: string; monthDate: Date; projects: FlexiDesignProject[]; totalQuoted: number; totalLogged: number }>()
+
+    for (const project of clientDetail.completed_projects) {
+      const dateSource = project.completed_date || project.created_at
+      if (!dateSource) continue
+      const date = parseISO(dateSource)
+      if (Number.isNaN(date.getTime())) continue
+
+      const monthKey = format(date, 'yyyy-MM')
+      const monthLabel = format(date, 'MMMM yyyy')
+      const existing = groups.get(monthKey)
+      if (existing) {
+        existing.projects.push(project)
+        existing.totalQuoted += project.quoted_hours || 0
+        existing.totalLogged += project.total_logged_hours || 0
+      } else {
+        groups.set(monthKey, {
+          monthLabel,
+          monthDate: new Date(date.getFullYear(), date.getMonth(), 1),
+          projects: [project],
+          totalQuoted: project.quoted_hours || 0,
+          totalLogged: project.total_logged_hours || 0,
+        })
+      }
+    }
+
+    return Array.from(groups.entries())
+      .map(([monthKey, value]) => ({ monthKey, ...value }))
+      .sort((a, b) => b.monthDate.getTime() - a.monthDate.getTime())
+  })()
+
   // Calculate average hours per month
   const calculateAvgHoursPerMonth = () => {
     if (!clientDetail) return 0
@@ -539,38 +582,62 @@ function FlexiDesignPageContent() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Completed Projects</CardTitle>
-                    <CardDescription>Projects from the completed board</CardDescription>
+                    <CardDescription>Grouped by completion month</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {!clientDetail.completed_projects || clientDetail.completed_projects.length === 0 ? (
+                    {completedProjectsByMonth.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
                         No completed projects found
                       </div>
                     ) : (
-                      <div className="space-y-2">
-                        {clientDetail.completed_projects.map((project) => (
-                          <div
-                            key={project.id}
-                            className="flex items-center justify-between p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium truncate">{project.name}</div>
-                              <div className="text-xs text-muted-foreground mt-0.5">
-                                {project.completed_date
-                                  ? format(new Date(project.completed_date), 'MMM d, yyyy')
-                                  : format(new Date(project.created_at), 'MMM d, yyyy')}
-                                {project.total_logged_hours > 0 && (
-                                  <span className="ml-2">• {project.total_logged_hours.toFixed(1)} logged</span>
+                      <div className="space-y-5">
+                        {completedProjectsByMonth.map((group) => (
+                          <div key={group.monthKey} className="space-y-2">
+                            <div className="flex items-center justify-between border-b pb-1.5">
+                              <div className="flex items-baseline gap-2">
+                                <div className="font-semibold text-sm">{group.monthLabel}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {group.projects.length} project{group.projects.length !== 1 ? 's' : ''}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-bold text-primary">
+                                  {group.totalQuoted.toFixed(1)} credits
+                                </div>
+                                {group.totalLogged > 0 && (
+                                  <div className="text-[10px] text-muted-foreground leading-tight">
+                                    {group.totalLogged.toFixed(1)}h logged
+                                  </div>
                                 )}
                               </div>
                             </div>
-                            {project.quoted_hours && (
-                              <div className="ml-4 text-right">
-                                <div className="text-lg font-bold text-primary">
-                                  {project.quoted_hours.toFixed(1)}
+                            <div className="space-y-2">
+                              {group.projects.map((project) => (
+                                <div
+                                  key={project.id}
+                                  className="flex items-center justify-between p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-medium truncate">{project.name}</div>
+                                    <div className="text-xs text-muted-foreground mt-0.5">
+                                      {project.completed_date
+                                        ? format(new Date(project.completed_date), 'MMM d, yyyy')
+                                        : format(new Date(project.created_at), 'MMM d, yyyy')}
+                                      {project.total_logged_hours > 0 && (
+                                        <span className="ml-2">• {project.total_logged_hours.toFixed(1)} logged</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {project.quoted_hours && (
+                                    <div className="ml-4 text-right">
+                                      <div className="text-lg font-bold text-primary">
+                                        {project.quoted_hours.toFixed(1)}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            )}
+                              ))}
+                            </div>
                           </div>
                         ))}
                       </div>

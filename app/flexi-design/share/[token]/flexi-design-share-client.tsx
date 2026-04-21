@@ -90,6 +90,40 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
     return credits.toFixed(1)
   }
 
+  const completedProjectsByMonth = (() => {
+    const groups = new Map<string, { monthLabel: string; monthDate: Date; projects: Project[]; totalQuoted: number }>()
+
+    for (const project of completedProjects) {
+      const dateSource = project.completed_date || project.created_at
+      if (!dateSource) continue
+      try {
+        const date = parseISO(dateSource)
+        if (Number.isNaN(date.getTime())) continue
+
+        const monthKey = format(date, 'yyyy-MM')
+        const monthLabel = format(date, 'MMMM yyyy')
+        const existing = groups.get(monthKey)
+        if (existing) {
+          existing.projects.push(project)
+          existing.totalQuoted += project.quoted_hours || 0
+        } else {
+          groups.set(monthKey, {
+            monthLabel,
+            monthDate: new Date(date.getFullYear(), date.getMonth(), 1),
+            projects: [project],
+            totalQuoted: project.quoted_hours || 0,
+          })
+        }
+      } catch {
+        continue
+      }
+    }
+
+    return Array.from(groups.entries())
+      .map(([monthKey, value]) => ({ monthKey, ...value }))
+      .sort((a, b) => b.monthDate.getTime() - a.monthDate.getTime())
+  })()
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -214,7 +248,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
           </CardContent>
         </Card>
 
-        {/* Completed Projects */}
+        {/* Completed Projects grouped by month */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -222,31 +256,48 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
               Completed Projects ({completedProjects.length})
             </CardTitle>
             <CardDescription>
-              Projects that have been finished
+              Grouped by completion month
             </CardDescription>
           </CardHeader>
           <CardContent>
             {completedProjects.length === 0 ? (
               <p className="text-muted-foreground text-center py-8">No completed projects</p>
             ) : (
-              <div className="space-y-3">
-                {completedProjects.map((project) => (
-                  <div
-                    key={project.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="flex-1">
-                      <h3 className="font-medium">{project.name}</h3>
-                      <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                        {project.completed_date && (
-                          <span>Completed {formatDate(project.completed_date)}</span>
-                        )}
-                        {project.quoted_hours !== null && (
-                          <span>{formatCredits(project.quoted_hours)} credits</span>
-                        )}
+              <div className="space-y-6">
+                {completedProjectsByMonth.map((group) => (
+                  <div key={group.monthKey} className="space-y-3">
+                    <div className="flex items-center justify-between border-b pb-2">
+                      <div className="flex items-baseline gap-2">
+                        <h3 className="font-semibold">{group.monthLabel}</h3>
+                        <span className="text-sm text-muted-foreground">
+                          {group.projects.length} project{group.projects.length !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div className="text-sm font-semibold text-primary">
+                        {formatCredits(group.totalQuoted)} credits
                       </div>
                     </div>
-                    <Badge variant="default">{project.status}</Badge>
+                    <div className="space-y-3">
+                      {group.projects.map((project) => (
+                        <div
+                          key={project.id}
+                          className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex-1">
+                            <h3 className="font-medium">{project.name}</h3>
+                            <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                              {project.completed_date && (
+                                <span>Completed {formatDate(project.completed_date)}</span>
+                              )}
+                              {project.quoted_hours !== null && (
+                                <span>{formatCredits(project.quoted_hours)} credits</span>
+                              )}
+                            </div>
+                          </div>
+                          <Badge variant="default">{project.status}</Badge>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
