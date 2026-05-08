@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Clock } from 'lucide-react'
+import { createTimeEntry, updateTimeEntry } from '@/app/actions/time-tracking'
 
 interface Task {
   id: string
@@ -100,7 +101,6 @@ export function TimeEntryForm({
     }
 
     try {
-      const { createTimeEntry, updateTimeEntry } = await import('@/app/actions/time-tracking')
       const result = isEdit
         ? await updateTimeEntry(existingEntry!.id, hoursNum, notes || undefined, targetUserId)
         : await createTimeEntry(
@@ -122,7 +122,20 @@ export function TimeEntryForm({
         onSuccess()
       }
     } catch (err) {
-      setError(isEdit ? 'Could not save your changes' : 'An error occurred while creating the time entry')
+      console.error('TimeEntryForm:', err)
+      const fromUnknown =
+        err instanceof Error && err.message
+          ? err.message
+          : typeof err === 'object' &&
+              err !== null &&
+              'message' in err &&
+              typeof (err as { message: unknown }).message === 'string'
+            ? (err as { message: string }).message
+            : null
+      setError(
+        fromUnknown ||
+          (isEdit ? 'Could not save your changes' : 'Could not save the time entry. Please try again.')
+      )
     } finally {
       setLoading(false)
     }
