@@ -5,7 +5,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { 
   Table,
   TableBody,
@@ -14,27 +13,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Loader2, TrendingUp, TrendingDown, Minus, Edit2, Check, X, ChevronDown, ChevronRight } from 'lucide-react'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Loader2, TrendingUp, TrendingDown, ChevronDown, ChevronRight } from 'lucide-react'
 import { 
   getScorecardCategories, 
   getScorecardMetrics,
   getScorecardEntriesForWeeks,
-  updateScorecardEntry,
-  createScorecardEntry,
   type ScorecardCategory,
   type ScorecardMetric,
   type ScorecardEntry
 } from '@/app/actions/scorecard'
 import { toast } from 'sonner'
-import { format, startOfWeek, addWeeks, subWeeks, eachWeekOfInterval } from 'date-fns'
+import { format, startOfWeek, addWeeks, subWeeks } from 'date-fns'
 import { cn } from '@/lib/utils'
 
 interface EntryWithMetric extends ScorecardEntry {
@@ -56,10 +45,8 @@ export default function ScorecardPageClient() {
     return format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd')
   })
   const [numWeeks, setNumWeeks] = useState(8) // Show 8 weeks by default
+  const [carouselStartIndex, setCarouselStartIndex] = useState(0)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
-  const [editingWeek, setEditingWeek] = useState<string | null>(null)
-  const [editValues, setEditValues] = useState<Record<string, { value: string; target: string; notes: string }>>({})
-  const [saving, setSaving] = useState(false)
   const tableScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -69,8 +56,8 @@ export default function ScorecardPageClient() {
   // Scroll to the right (current week) when table loads or week data changes
   useEffect(() => {
     if (tableScrollRef.current && weekData.length > 0) {
-      // Scroll to the far right to show the current week
-      tableScrollRef.current.scrollLeft = tableScrollRef.current.scrollWidth
+      // Keep the table positioned on the left, where the current week column is shown first.
+      tableScrollRef.current.scrollLeft = 0
     }
   }, [weekData])
 
@@ -124,9 +111,10 @@ export default function ScorecardPageClient() {
         entries: entriesResult.success && entriesResult.entriesByWeek
           ? (entriesResult.entriesByWeek[weekStart] || [])
           : [],
-      }))
+      })).reverse()
 
       setWeekData(weeks)
+      setCarouselStartIndex(0)
     } catch (error) {
       console.error('Error loading data:', error)
       toast.error('Error loading data')
@@ -145,73 +133,6 @@ export default function ScorecardPageClient() {
     setExpandedCategories(newExpanded)
   }
 
-  function handleStartEdit(weekStart: string) {
-    setEditingWeek(weekStart)
-    const week = weekData.find(w => w.weekStart === weekStart)
-    if (week) {
-      const editState: Record<string, { value: string; target: string; notes: string }> = {}
-      week.entries.forEach(entry => {
-        editState[entry.metric_id] = {
-          value: entry.value.toString(),
-          target: entry.target_value?.toString() || '',
-          notes: entry.notes || '',
-        }
-      })
-      setEditValues(editState)
-    }
-  }
-
-  function handleCancelEdit() {
-    setEditingWeek(null)
-    setEditValues({})
-  }
-
-  function handleCloseEditDialog() {
-    if (!saving) {
-      handleCancelEdit()
-    }
-  }
-
-  async function handleSaveWeek() {
-    if (!editingWeek) return
-
-    setSaving(true)
-    try {
-      const week = weekData.find(w => w.weekStart === editingWeek)
-      if (!week) return
-
-      const savePromises = week.entries.map(async (entry) => {
-        const editData = editValues[entry.metric_id]
-        if (!editData) return
-
-        const value = parseFloat(editData.value)
-        const target = editData.target ? parseFloat(editData.target) : null
-
-        if (isNaN(value)) {
-          toast.error(`Invalid value for ${entry.metric?.name}`)
-          return
-        }
-
-        if (entry.id) {
-          return updateScorecardEntry(entry.id, value, target, editData.notes || null)
-        } else {
-          return createScorecardEntry(entry.metric_id, editingWeek, value, target, editData.notes || null)
-        }
-      })
-
-      await Promise.all(savePromises)
-      toast.success('Week data saved successfully')
-      setEditingWeek(null)
-      setEditValues({})
-      await loadData()
-    } catch (error) {
-      console.error('Error saving week data:', error)
-      toast.error('Error saving week data')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   function navigateWeeks(direction: 'prev' | 'next') {
     const currentDate = new Date(currentWeekStart)
     const newDate = direction === 'next' 
@@ -223,6 +144,43 @@ export default function ScorecardPageClient() {
   function goToCurrentWeek() {
     const today = new Date()
     setCurrentWeekStart(format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd'))
+  }
+
+  const visibleWeekCount = 3
+  const visibleWeeks = weekData.slice(carouselStartIndex, carouselStartIndex + visibleWeekCount)
+  const canGoToOlderWeeks = carouselStartIndex + visibleWeekCount < weekData.length
+  const canGoToNewerWeeks = carouselStartIndex > 0
+
+  const automatedMetrics = metrics.filter(metric => metric.is_automated)
+  const automatedMetricIds = new Set(automatedMetrics.map(metric => metric.id))
+  const currentWeek = weekData[0]
+  const currentWeekTrackedMetricIds = new Set(
+    (currentWeek?.entries || []).filter(entry => entry.id).map(entry => entry.metric_id)
+  )
+
+  const stableAutomations = automatedMetrics.filter((metric) => {
+    if (!metric.automation_source) return false
+    if (metric.automation_source === 'capacity') return false
+    const isApproximateLeadMetric =
+      metric.automation_source === 'leads' &&
+      ['intro_calls', 'inbound'].includes(metric.automation_config?.type)
+    return !isApproximateLeadMetric
+  })
+
+  const partialAutomations = automatedMetrics.filter((metric) => {
+    return metric.automation_source === 'leads' && ['intro_calls', 'inbound'].includes(metric.automation_config?.type)
+  })
+
+  const needsWorkAutomations = automatedMetrics.filter((metric) => {
+    return !metric.automation_source || metric.automation_source === 'capacity'
+  })
+
+  function goToOlderWeeks() {
+    setCarouselStartIndex(prev => Math.min(prev + visibleWeekCount, Math.max(weekData.length - visibleWeekCount, 0)))
+  }
+
+  function goToNewerWeeks() {
+    setCarouselStartIndex(prev => Math.max(prev - visibleWeekCount, 0))
   }
 
   function getWeekComparison(currentEntry: EntryWithMetric | undefined, previousEntry: EntryWithMetric | undefined) {
@@ -254,23 +212,23 @@ export default function ScorecardPageClient() {
       <Card>
         <CardHeader>
           <CardTitle>Scorecard Overview</CardTitle>
-          <CardDescription>Weekly key metrics across all categories</CardDescription>
+          <CardDescription>Weekly automated metrics across all categories</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4">
-            <Button variant="outline" onClick={() => navigateWeeks('prev')}>
-              ← Previous {numWeeks} Weeks
+            <Button variant="outline" onClick={goToNewerWeeks} disabled={!canGoToNewerWeeks}>
+              ← Newer 3 Weeks
             </Button>
             <div className="flex-1 text-center">
               <div className="font-semibold">
-                Showing {numWeeks} weeks
+                Showing {Math.min(visibleWeekCount, weekData.length)} of {weekData.length} weeks
               </div>
               <Button variant="ghost" size="sm" onClick={goToCurrentWeek} className="mt-2">
                 Go to Current Week
               </Button>
             </div>
-            <Button variant="outline" onClick={() => navigateWeeks('next')}>
-              Next {numWeeks} Weeks →
+            <Button variant="outline" onClick={goToOlderWeeks} disabled={!canGoToOlderWeeks}>
+              Older 3 Weeks →
             </Button>
             <div className="flex items-center gap-2">
               <Label htmlFor="num-weeks" className="text-sm">Weeks:</Label>
@@ -288,6 +246,32 @@ export default function ScorecardPageClient() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Automation Health</CardTitle>
+          <CardDescription>Status of currently tracked automated metrics</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border p-4">
+              <div className="text-sm text-muted-foreground">Stable Automations</div>
+              <div className="text-2xl font-semibold">{stableAutomations.length}</div>
+            </div>
+            <div className="rounded-lg border p-4">
+              <div className="text-sm text-muted-foreground">Partial / Proxy Logic</div>
+              <div className="text-2xl font-semibold">{partialAutomations.length}</div>
+            </div>
+            <div className="rounded-lg border p-4">
+              <div className="text-sm text-muted-foreground">Needs Backend Work</div>
+              <div className="text-2xl font-semibold">{needsWorkAutomations.length}</div>
+            </div>
+          </div>
+          <div className="mt-4 text-sm text-muted-foreground">
+            Current week entries synced: {currentWeekTrackedMetricIds.size} / {automatedMetrics.length}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Table */}
       <Card>
         <CardContent className="p-0">
@@ -296,13 +280,11 @@ export default function ScorecardPageClient() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="sticky left-0 z-10 bg-background min-w-[250px] border-r">Metric</TableHead>
-                  {weekData.map((week, index) => {
+                  {visibleWeeks.map((week, index) => {
                     const weekStartDate = new Date(week.weekStart)
                     const weekEndDate = new Date(weekStartDate)
                     weekEndDate.setDate(weekEndDate.getDate() + 6)
-                    const isCurrentWeek = index === weekData.length - 1
-                    const isEditing = editingWeek === week.weekStart
-
+                    const isCurrentWeek = index === 0 && carouselStartIndex === 0
                     return (
                       <TableHead 
                         key={week.weekStart} 
@@ -316,14 +298,6 @@ export default function ScorecardPageClient() {
                             {format(weekStartDate, 'MMM d')} - {format(weekEndDate, 'MMM d')}
                           </div>
                           {isCurrentWeek && <span className="text-xs text-muted-foreground">Current</span>}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleStartEdit(week.weekStart)}
-                          >
-                            <Edit2 className="h-4 w-4 mr-1" />
-                            Edit
-                          </Button>
                         </div>
                       </TableHead>
                     )
@@ -332,7 +306,7 @@ export default function ScorecardPageClient() {
               </TableHeader>
               <TableBody>
                 {categories.map((category) => {
-                  const categoryMetrics = metrics.filter(m => m.category_id === category.id)
+                  const categoryMetrics = automatedMetrics.filter(m => m.category_id === category.id)
                   const isExpanded = expandedCategories.has(category.id)
 
                   return (
@@ -352,8 +326,10 @@ export default function ScorecardPageClient() {
                             {category.name}
                           </button>
                         </TableCell>
-                        {weekData.map((week) => {
-                          const categoryEntries = week.entries.filter(e => e.metric?.category_id === category.id)
+                        {visibleWeeks.map((week) => {
+                          const categoryEntries = week.entries.filter(
+                            e => e.metric?.category_id === category.id && automatedMetricIds.has(e.metric_id)
+                          )
                           const totalValue = categoryEntries.reduce((sum, e) => sum + e.value, 0)
                           return (
                             <TableCell key={week.weekStart} className="text-center">
@@ -386,16 +362,20 @@ export default function ScorecardPageClient() {
                                 </div>
                               )}
                             </TableCell>
-                            {weekData.map((week, weekIndex) => {
+                            {visibleWeeks.map((week, weekIndex) => {
                               const entry = week.entries.find(e => e.metric_id === metric.id)
-                              const previousWeek = weekIndex > 0 ? weekData[weekIndex - 1] : null
+                              const previousWeek = visibleWeeks[weekIndex + 1] || null
                               const previousEntry = previousWeek?.entries.find(e => e.metric_id === metric.id)
-                              const comparison = getWeekComparison(entry, previousEntry)
+                              const hasPersistedEntry = Boolean(entry?.id)
+                              const hasPersistedPreviousEntry = Boolean(previousEntry?.id)
+                              const comparison = hasPersistedEntry && hasPersistedPreviousEntry
+                                ? getWeekComparison(entry, previousEntry)
+                                : null
 
                               return (
                                 <TableCell key={week.weekStart} className="text-center">
                                   <div className="space-y-1">
-                                    {entry ? (
+                                    {entry && hasPersistedEntry ? (
                                       <>
                                         <div className="font-semibold">
                                           {entry.value.toLocaleString()} {metric.unit || ''}
@@ -444,158 +424,6 @@ export default function ScorecardPageClient() {
         </CardContent>
       </Card>
 
-      {/* Edit Week Dialog */}
-      <Dialog open={!!editingWeek} onOpenChange={handleCloseEditDialog}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              Edit Week: {editingWeek ? (() => {
-                const weekStart = new Date(editingWeek)
-                const weekEnd = new Date(weekStart)
-                weekEnd.setDate(weekEnd.getDate() + 6)
-                return `${format(weekStart, 'MMM d')} - ${format(weekEnd, 'MMM d')}`
-              })() : ''}
-            </DialogTitle>
-            <DialogDescription>
-              Edit values for manual metrics. Automated metrics are read-only and updated automatically.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6 py-4">
-            {categories.map((category) => {
-              const categoryMetrics = metrics.filter(m => m.category_id === category.id)
-              const editableMetrics = categoryMetrics.filter(m => !m.is_automated)
-
-              if (editableMetrics.length === 0) return null
-
-              return (
-                <div key={category.id} className="space-y-4">
-                  <h3 className="text-lg font-semibold border-b pb-2">{category.name}</h3>
-                  <div className="space-y-4">
-                    {editableMetrics.map((metric) => {
-                      const week = weekData.find(w => w.weekStart === editingWeek)
-                      const entry = week?.entries.find(e => e.metric_id === metric.id)
-                      const editData = editValues[metric.id] || {
-                        value: entry?.value.toString() || '0',
-                        target: entry?.target_value?.toString() || '',
-                        notes: entry?.notes || '',
-                      }
-
-                      return (
-                        <div key={metric.id} className="space-y-2 p-4 border rounded-lg">
-                          <div className="space-y-1">
-                            <Label className="font-medium">{metric.name}</Label>
-                            {metric.description && (
-                              <p className="text-sm text-muted-foreground">{metric.description}</p>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label htmlFor={`value-${metric.id}`}>
-                                Value {metric.unit && `(${metric.unit})`}
-                              </Label>
-                              <Input
-                                id={`value-${metric.id}`}
-                                type="number"
-                                step="0.01"
-                                value={editData.value}
-                                onChange={(e) => {
-                                  setEditValues(prev => ({
-                                    ...prev,
-                                    [metric.id]: {
-                                      ...prev[metric.id],
-                                      value: e.target.value,
-                                      target: prev[metric.id]?.target || editData.target,
-                                      notes: prev[metric.id]?.notes || editData.notes,
-                                    }
-                                  }))
-                                }}
-                                placeholder="Enter value"
-                              />
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label htmlFor={`target-${metric.id}`}>
-                                Target {metric.unit && `(${metric.unit})`}
-                              </Label>
-                              <Input
-                                id={`target-${metric.id}`}
-                                type="number"
-                                step="0.01"
-                                value={editData.target}
-                                onChange={(e) => {
-                                  setEditValues(prev => ({
-                                    ...prev,
-                                    [metric.id]: {
-                                      ...prev[metric.id],
-                                      value: prev[metric.id]?.value || editData.value,
-                                      target: e.target.value,
-                                      notes: prev[metric.id]?.notes || editData.notes,
-                                    }
-                                  }))
-                                }}
-                                placeholder="Enter target (optional)"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor={`notes-${metric.id}`}>Notes</Label>
-                            <Textarea
-                              id={`notes-${metric.id}`}
-                              value={editData.notes}
-                              onChange={(e) => {
-                                setEditValues(prev => ({
-                                  ...prev,
-                                  [metric.id]: {
-                                    ...prev[metric.id],
-                                    value: prev[metric.id]?.value || editData.value,
-                                    target: prev[metric.id]?.target || editData.target,
-                                    notes: e.target.value,
-                                  }
-                                }))
-                              }}
-                              placeholder="Add notes..."
-                              rows={3}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={handleCancelEdit}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveWeek}
-              disabled={saving}
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Check className="mr-2 h-4 w-4" />
-                  Save Changes
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

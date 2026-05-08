@@ -115,12 +115,40 @@ export async function getScorecardEntries(weekStartDate: string) {
 async function calculateAutomatedMetric(
   metric: ScorecardMetric,
   weekStart: Date,
-  weekEnd: Date
+  weekEnd: Date,
+  dbClient?: Awaited<ReturnType<typeof createAdminClient>>
 ): Promise<number | null> {
   const weekStartStr = format(weekStart, 'yyyy-MM-dd')
   const weekEndStr = format(weekEnd, 'yyyy-MM-dd')
+  const supabase = dbClient || await createClient()
 
   try {
+    const parseNumericColumnValue = (column: any): number | null => {
+      if (!column) return null
+      if (typeof column.value === 'number') return column.value
+      if (typeof column.value === 'string') {
+        const parsed = parseFloat(column.value)
+        return isNaN(parsed) ? null : parsed
+      }
+      if (column.value && typeof column.value === 'object' && column.value.value !== undefined) {
+        const parsed = parseFloat(String(column.value.value))
+        return isNaN(parsed) ? null : parsed
+      }
+      if (column.text) {
+        const parsed = parseFloat(String(column.text).replace(/[£,$,%\s]/g, ''))
+        return isNaN(parsed) ? null : parsed
+      }
+      return null
+    }
+
+    const getColumnText = (column: any): string => {
+      if (typeof column === 'string' || typeof column === 'number') {
+        return String(column).trim()
+      }
+      const text = column?.text ?? column?.label ?? column?.value
+      return text ? String(text).trim() : ''
+    }
+
     switch (metric.automation_source) {
       case 'time_tracking':
         // Calculate billable hours for the week
@@ -132,33 +160,138 @@ async function calculateAutomatedMetric(
         return totalHours
 
       case 'leads':
-        // Count leads based on automation_config
-        const leadsResult = await getLeads()
-        if (leadsResult.error || !leadsResult.leads) return null
-        
-        const leads = leadsResult.leads.filter((lead: any) => {
-          if (!lead.created_at) return false
-          const createdDate = new Date(lead.created_at)
-          return createdDate >= weekStart && createdDate <= weekEnd
+        // Sales metrics sourced from Monday leads board snapshots in monday_projects.
+        // NOTE: created_at/updated_at are sync snapshots, so weekly values depend on regular sync cadence.
+        const boardId = metric.automation_config?.boardId || metric.automation_config?.board_id || '18390907727'
+        const metricName = metric.name.toLowerCase()
+        const inferredType =
+          metricName.includes('new lead') ? 'new_leads'
+          : metricName.includes('average likelihood') ? 'average_likelihood'
+          : metricName.includes('pipeline') ? 'pipeline_amount'
+          : metricName.includes('quote') && metricName.includes('amount') ? 'quotes_amount_total'
+          : metricName.includes('quote') ? 'quotes_submitted'
+          : undefined
+
+        const leadType = metric.automation_config?.type || inferredType || 'all'
+        const likelihoodColumnId = metric.automation_config?.likelihoodColumnId || 'numeric_mm20j92n'
+        const valueColumnId = metric.automation_config?.valueColumnId || 'numbers'
+        const statusColumnId = metric.automation_config?.statusColumnId || 'status'
+        const quotedStatus = String(metric.automation_config?.quotedStatus || 'Quoted').toLowerCase()
+        const activeGroupTitle = metric.automation_config?.activeGroupTitle
+          ? String(metric.automation_config.activeGroupTitle).toLowerCase()
+          : 'active leads'
+        const activeGroupId = metric.automation_config?.activeGroupId
+          ? String(metric.automation_config.activeGroupId)
+          : ''
+
+        const { data: boardItems, error: boardItemsError } = await supabase
+          .from('monday_projects')
+          .select('id, created_at, updated_at, quote_value, monday_data')
+          .eq('monday_board_id', String(boardId).trim())
+
+        if (boardItemsError || !boardItems) return null
+
+        const mondayGroupFromData = (mondayData: unknown): { id: string; title: string } => {
+          if (!mondayData || typeof mondayData !== 'object') return { id: '', title: '' }
+          const md = mondayData as Record<string, unknown>
+          const meta = md.__monday_group
+          if (meta && typeof meta === 'object' && meta !== null) {
+            const g = meta as { id?: unknown; title?: unknown }
+            return {
+              id: g.id != null ? String(g.id).trim() : '',
+              title: g.title != null ? String(g.title).trim() : '',
+            }
+          }
+          const idRaw = md._group_id
+          const titleRaw = md._group_title
+          const id =
+            typeof idRaw === 'string' || typeof idRaw === 'number'
+              ? String(idRaw).trim()
+              : getColumnText(idRaw)
+          const title =
+            typeof titleRaw === 'string'
+              ? titleRaw.trim()
+              : getColumnText(titleRaw)
+          return { id, title }
+        }
+
+        const activeBoardItems = boardItems.filter((item: any) => {
+          const { id: groupId, title: groupTitle } = mondayGroupFromData(item.monday_data)
+          const titleLc = groupTitle.toLowerCase()
+          // Match by group id when configured, or fall back to title (handles API / sync variance).
+          if (activeGroupId) {
+            return groupId === activeGroupId || titleLc === activeGroupTitle
+          }
+          return titleLc === activeGroupTitle
         })
 
-        const leadType = metric.automation_config?.type || 'all'
-        if (leadType === 'new_connections') {
-          // New lead connections made - count new leads created this week
-          return leads.length
-        } else if (leadType === 'intro_calls') {
-          // Intro calls completed - would need to check lead status or a custom field
-          // For now, count leads with a status that suggests a call happened
-          return leads.filter((l: any) => l.status && !['new', 'stuck', 'blocked'].includes(l.status.toLowerCase())).length
-        } else if (leadType === 'quotes_submitted') {
-          // Quotes/proposals submitted - count leads with quote_value
-          return leads.filter((l: any) => l.quote_value && l.quote_value > 0).length
-        } else if (leadType === 'inbound') {
-          // Inbound leads - would need a field to distinguish inbound vs outbound
-          // For now, return all leads
-          return leads.length
+        const weekCreatedItems = activeBoardItems.filter((item: any) => {
+          const created = new Date(item.created_at)
+          return created >= weekStart && created <= weekEnd
+        })
+
+        const weekUpdatedItems = activeBoardItems.filter((item: any) => {
+          const updated = new Date(item.updated_at)
+          return updated >= weekStart && updated <= weekEnd
+        })
+
+        const quotedItems = activeBoardItems.filter((item: any) => {
+          const statusValue = getColumnText(item.monday_data?.[statusColumnId]).toLowerCase()
+          return statusValue === quotedStatus
+        })
+
+        if (leadType === 'new_connections' || leadType === 'new_leads') {
+          return weekCreatedItems.length
         }
-        return leads.length
+
+        if (leadType === 'average_likelihood') {
+          const likelihoodValues = activeBoardItems
+            .map((item: any) => parseNumericColumnValue(item.monday_data?.[likelihoodColumnId]))
+            .filter((value: number | null): value is number => value !== null)
+          if (likelihoodValues.length === 0) return null
+          return likelihoodValues.reduce((sum, value) => sum + value, 0) / likelihoodValues.length
+        }
+
+        if (leadType === 'pipeline_amount') {
+          return activeBoardItems.reduce((sum: number, item: any) => {
+            const mappedValue = parseNumericColumnValue(item.monday_data?.[valueColumnId])
+            const numericValue = mappedValue ?? (item.quote_value ? Number(item.quote_value) : 0)
+            return sum + (isNaN(numericValue) ? 0 : numericValue)
+          }, 0)
+        }
+
+        if (leadType === 'quotes_submitted' || leadType === 'quotes_count') {
+          return quotedItems.length
+        }
+
+        if (leadType === 'quotes_amount_total') {
+          return quotedItems.reduce((sum: number, item: any) => {
+            const mappedValue = parseNumericColumnValue(item.monday_data?.[valueColumnId])
+            const numericValue = mappedValue ?? (item.quote_value ? Number(item.quote_value) : 0)
+            return sum + (isNaN(numericValue) ? 0 : numericValue)
+          }, 0)
+        }
+
+        if (leadType === 'quotes_new_this_week') {
+          // Approximates "newly quoted this week" using updated_at snapshot timing.
+          return weekUpdatedItems.filter((item: any) => {
+            const statusValue = getColumnText(item.monday_data?.[statusColumnId]).toLowerCase()
+            return statusValue === quotedStatus
+          }).length
+        }
+
+        if (leadType === 'quotes_new_amount_this_week') {
+          // Approximates newly quoted amount this week using updated_at snapshot timing.
+          return weekUpdatedItems.reduce((sum: number, item: any) => {
+            const statusValue = getColumnText(item.monday_data?.[statusColumnId]).toLowerCase()
+            if (statusValue !== quotedStatus) return sum
+            const mappedValue = parseNumericColumnValue(item.monday_data?.[valueColumnId])
+            const numericValue = mappedValue ?? (item.quote_value ? Number(item.quote_value) : 0)
+            return sum + (isNaN(numericValue) ? 0 : numericValue)
+          }, 0)
+        }
+
+        return weekCreatedItems.length
 
       case 'xero':
         // Financial metrics from Xero
@@ -255,7 +388,7 @@ export async function syncScorecardWeek(weekStartDate: string) {
     for (const metric of automatedMetrics) {
       try {
         // Calculate the automated value
-        const calculatedValue = await calculateAutomatedMetric(metric, weekStart, weekEnd)
+        const calculatedValue = await calculateAutomatedMetric(metric, weekStart, weekEnd, adminClient)
         
         if (calculatedValue === null) {
           // Skip if calculation returned null (no data available)

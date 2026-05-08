@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, CheckCircle2, Clock, TrendingUp } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Loader2, CheckCircle2, Clock, TrendingUp, History } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { getFlexiDesignClientByToken } from '@/app/actions/flexi-design'
 import { getFlexiDesignClientDataPublic } from '@/app/actions/flexi-design-public'
@@ -31,12 +33,21 @@ interface ClientData {
   avg_hours_per_month: number
 }
 
+interface CreditTransaction {
+  id: string
+  hours: number
+  transaction_date: string
+  created_at: string
+}
+
 export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareClientProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [clientData, setClientData] = useState<ClientData | null>(null)
   const [activeProjects, setActiveProjects] = useState<Project[]>([])
   const [completedProjects, setCompletedProjects] = useState<Project[]>([])
+  const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([])
+  const [showCreditHistoryDialog, setShowCreditHistoryDialog] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -68,6 +79,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         setClientData(dataResult.client)
         setActiveProjects(dataResult.activeProjects || [])
         setCompletedProjects(dataResult.completedProjects || [])
+        setCreditTransactions(dataResult.creditTransactions || [])
       }
     } catch (error) {
       console.error('Error loading share data:', error)
@@ -158,9 +170,18 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
     <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="space-y-2">
-          <h1 className="text-3xl font-bold">{clientData.client_name}</h1>
-          <p className="text-muted-foreground">Flexi-Design Account Overview</p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-2">
+            <h1 className="text-3xl font-bold">{clientData.client_name}</h1>
+            <p className="text-muted-foreground">Flexi-Design Account Overview</p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => setShowCreditHistoryDialog(true)}
+          >
+            <History className="mr-2 h-4 w-4" />
+            Credit History
+          </Button>
         </div>
 
         {/* Stats Grid */}
@@ -305,6 +326,51 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
           </CardContent>
         </Card>
       </div>
+
+      {/* Credit History Dialog */}
+      <Dialog open={showCreditHistoryDialog} onOpenChange={setShowCreditHistoryDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Credit History</DialogTitle>
+            <DialogDescription>
+              History of all credit additions for {clientData.client_name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {creditTransactions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No credit transactions yet
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                {creditTransactions.map((transaction) => (
+                  <div
+                    key={transaction.id}
+                    className="flex items-center justify-between p-3 border rounded-lg"
+                  >
+                    <div className="flex-1">
+                      <div className="font-medium text-green-600">
+                        +{formatCredits(transaction.hours)} credits
+                      </div>
+                      <div className="text-sm text-muted-foreground mt-0.5">
+                        Transaction Date: {formatDate(transaction.transaction_date)}
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Added {formatDate(transaction.created_at)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreditHistoryDialog(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

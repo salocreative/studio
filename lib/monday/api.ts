@@ -340,6 +340,7 @@ export async function getMondayProjects(
     name: string
     column_values: Array<{ id: string; text?: string; value?: string; type: string }>
     board: { id: string }
+    group?: { id: string; title: string }
   }
 
   const boardsQuery = `
@@ -354,6 +355,7 @@ export async function getMondayProjects(
             name
             column_values { id text value type }
             board { id }
+            group { id title }
           }
         }
       }
@@ -369,6 +371,7 @@ export async function getMondayProjects(
           name
           column_values { id text value type }
           board { id }
+          group { id title }
         }
       }
     }
@@ -530,6 +533,13 @@ export async function getMondayProjects(
           type: cv.type,
         }
       })
+      if (item.group?.id || item.group?.title) {
+        const gid = item.group?.id != null ? String(item.group.id) : ''
+        const gtitle = item.group?.title != null ? String(item.group.title) : ''
+        if (gid) column_values._group_id = gid
+        if (gtitle) column_values._group_title = gtitle
+        column_values.__monday_group = { id: gid, title: gtitle }
+      }
 
       activeItemIds.add(item.id)
       projects.push({
@@ -621,6 +631,13 @@ export async function getMondayProjects(
       item.column_values?.forEach((cv) => {
         column_values[cv.id] = { text: cv.text, value: cv.value ? JSON.parse(cv.value) : null, type: cv.type }
       })
+      if (item.group?.id || item.group?.title) {
+        const gid = item.group?.id != null ? String(item.group.id) : ''
+        const gtitle = item.group?.title != null ? String(item.group.title) : ''
+        if (gid) column_values._group_id = gid
+        if (gtitle) column_values._group_title = gtitle
+        column_values.__monday_group = { id: gid, title: gtitle }
+      }
       activeItemIds.add(item.id)
       projects.push({
         id: item.id,
@@ -664,6 +681,7 @@ export async function getMondayProjects(
             name
             column_values { id text value type }
             board { id name }
+            group { id title }
           }
         }`,
         { itemIds: batch }
@@ -737,6 +755,13 @@ export async function getMondayProjects(
         item.column_values?.forEach((cv) => {
           column_values[cv.id] = { text: cv.text, value: cv.value ? JSON.parse(cv.value) : null, type: cv.type }
         })
+        if (item.group?.id || item.group?.title) {
+          const gid = item.group?.id != null ? String(item.group.id) : ''
+          const gtitle = item.group?.title != null ? String(item.group.title) : ''
+          if (gid) column_values._group_id = gid
+          if (gtitle) column_values._group_title = gtitle
+          column_values.__monday_group = { id: gid, title: gtitle }
+        }
         projects.push({
           id: item.id,
           name: item.name,

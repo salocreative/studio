@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Trash2, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Pencil, Trash2, RefreshCw } from 'lucide-react'
 import { format, addDays, startOfDay, isSameDay, getDay, nextMonday, isWeekend, startOfMonth, endOfMonth, eachDayOfInterval, getDaysInMonth, addMonths, subMonths } from 'date-fns'
 import { getProjectsWithTasks, getTimeEntries, deleteTimeEntry } from '@/app/actions/time-tracking'
 import { ProjectTaskSelector } from './components/project-task-selector'
@@ -79,6 +79,13 @@ export default function TimeTrackingPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState(0)
   const [syncStatus, setSyncStatus] = useState('')
+  const [existingTimeEntry, setExistingTimeEntry] = useState<{
+    id: string
+    hours: number
+    notes?: string | null
+  } | null>(null)
+  /** When parent's time-entry dialog succeeds, CalendarView refreshes monthly aggregates. */
+  const [calendarMonthRefreshSignal, setCalendarMonthRefreshSignal] = useState(0)
 
   useEffect(() => {
     checkAdminAndLoadUsers()
@@ -169,13 +176,44 @@ export default function TimeTrackingPage() {
   
 
   const handleSelectTask = (task: Task, project: Project) => {
+    setExistingTimeEntry(null)
     setSelectedTask(task)
     setSelectedProject(project)
+  }
+
+  function resolveEntryContext(entry: TimeEntry): { task: Task; project: Project } {
+    const fullProject =
+      projects.find((p) => p.id === entry.project.id) ?? {
+        ...entry.project,
+        quoted_hours: entry.project.quoted_hours ?? null,
+        total_logged_hours: entry.project.total_logged_hours ?? null,
+        tasks: [] as Task[],
+      }
+    const fullTask =
+      fullProject.tasks?.find((t) => t.id === entry.task.id) ?? entry.task
+    return { task: fullTask, project: fullProject }
+  }
+
+  const handleEditEntry = (entry: TimeEntry) => {
+    if (entry.project.status === 'locked') {
+      toast.error('Cannot edit time entries for locked projects')
+      return
+    }
+    const { task, project } = resolveEntryContext(entry)
+    setSelectedTask(task)
+    setSelectedProject(project)
+    setExistingTimeEntry({
+      id: entry.id,
+      hours: entry.hours,
+      notes: entry.notes ?? null,
+    })
   }
 
   const handleTimeEntrySuccess = () => {
     setSelectedTask(null)
     setSelectedProject(null)
+    setExistingTimeEntry(null)
+    setCalendarMonthRefreshSignal((t) => t + 1)
     loadTimeEntries()
     loadData() // Refresh favorites
   }
@@ -352,6 +390,7 @@ export default function TimeTrackingPage() {
             timeEntries={timeEntries}
             onSelectTask={handleSelectTask}
             onDeleteEntry={handleDeleteEntry}
+            onEditEntry={handleEditEntry}
             loading={loading}
             boardType={boardType}
             onBoardTypeChange={setBoardType}
@@ -362,11 +401,12 @@ export default function TimeTrackingPage() {
             onDateSelect={setSelectedDate}
             onDeleteEntry={handleDeleteEntry}
             projects={projects}
-            onSelectTask={handleSelectTask}
+            onEditEntry={handleEditEntry}
             boardType={boardType}
             onBoardTypeChange={setBoardType}
             onTimeEntrySuccess={handleTimeEntrySuccess}
             targetUserId={selectedUserId}
+            monthRefreshSignal={calendarMonthRefreshSignal}
           />
         )}
       </div>
@@ -400,8 +440,10 @@ export default function TimeTrackingPage() {
           onCancel={() => {
             setSelectedTask(null)
             setSelectedProject(null)
+            setExistingTimeEntry(null)
           }}
           targetUserId={selectedUserId}
+          existingEntry={existingTimeEntry}
         />
       )}
     </div>
@@ -418,6 +460,7 @@ function DailyView({
   timeEntries,
   onSelectTask,
   onDeleteEntry,
+  onEditEntry,
   loading,
   boardType,
   onBoardTypeChange,
@@ -431,6 +474,7 @@ function DailyView({
   timeEntries: TimeEntry[]
   onSelectTask: (task: Task, project: Project) => void
   onDeleteEntry: (entryId: string) => void
+  onEditEntry: (entry: TimeEntry) => void
   loading: boolean
   boardType: 'main' | 'flexi-design'
   onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
@@ -526,13 +570,24 @@ function DailyView({
                           </div>
                         </div>
                         {!isLocked && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => onDeleteEntry(entry.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Edit time entry"
+                              onClick={() => onEditEntry(entry)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Delete time entry"
+                              onClick={() => onDeleteEntry(entry.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -570,21 +625,23 @@ function CalendarView({
   onDateSelect,
   onDeleteEntry,
   projects,
-  onSelectTask,
+  onEditEntry,
   boardType,
   onBoardTypeChange,
   onTimeEntrySuccess,
   targetUserId,
+  monthRefreshSignal,
 }: {
   selectedDate: Date
   onDateSelect: (date: Date) => void
   onDeleteEntry: (entryId: string) => void
   projects: Project[]
-  onSelectTask: (task: Task, project: Project) => void
+  onEditEntry: (entry: TimeEntry) => void
   boardType: 'main' | 'flexi-design'
   onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
   onTimeEntrySuccess: () => void
   targetUserId?: string
+  monthRefreshSignal: number
 }) {
   const [selectedMonth, setSelectedMonth] = useState(new Date())
   const [monthTimeEntries, setMonthTimeEntries] = useState<Record<string, number>>({})
@@ -615,11 +672,7 @@ function CalendarView({
     if (selectedMonthValue.getTime() !== currentMonthValue.getTime()) {
       setSelectedMonth(selectedMonthValue)
     }
-    // Reload calendar data - this will trigger the useEffect to reload entries
-    setReloadTrigger(prev => prev + 1)
-    // Call parent success handler (which might do other things)
     onTimeEntrySuccess()
-    // Clear selected task/project
     setCalendarTask(null)
     setCalendarProject(null)
   }
@@ -661,7 +714,7 @@ function CalendarView({
     }
 
     loadMonthTimeEntries()
-  }, [selectedMonth, reloadTrigger, targetUserId])
+  }, [selectedMonth, reloadTrigger, targetUserId, monthRefreshSignal])
 
   // Load time entries for selected date
   useEffect(() => {
@@ -904,13 +957,24 @@ function CalendarView({
                             <div className="font-medium">{entry.hours}h</div>
                           </div>
                           {!isLocked && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDeleteEntry(entry.id)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Edit time entry"
+                                onClick={() => onEditEntry(entry)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Delete time entry"
+                                onClick={() => handleDeleteEntry(entry.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
                           )}
                         </div>
                       </div>

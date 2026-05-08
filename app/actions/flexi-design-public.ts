@@ -151,14 +151,27 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
 
     // Get total deposited from credit transactions
     let totalDeposited = 0
+    let creditTransactions: Array<{
+      id: string
+      hours: number
+      transaction_date: string
+      created_at: string
+    }> = []
     if (clientData) {
       const { data: transactions } = await adminClient
         .from('flexi_design_credit_transactions')
-        .select('hours')
+        .select('id, hours, transaction_date, created_at')
         .eq('client_id', clientData.id)
-      
+        .order('transaction_date', { ascending: false })
+
       if (transactions) {
         totalDeposited = transactions.reduce((sum, tx: any) => sum + Number(tx.hours), 0)
+        creditTransactions = transactions.map((tx: any) => ({
+          id: tx.id,
+          hours: Number(tx.hours),
+          transaction_date: tx.transaction_date,
+          created_at: tx.created_at,
+        }))
       }
     }
 
@@ -221,6 +234,7 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
         created_at: p.created_at,
         completed_date: p.completed_date,
       })),
+      creditTransactions,
     }
   } catch (error) {
     console.error('Error fetching Flexi-Design client data:', error)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +27,12 @@ interface Project {
   status?: 'active' | 'archived' | 'locked'
 }
 
+interface ExistingTimeEntry {
+  id: string
+  hours: number
+  notes?: string | null
+}
+
 interface TimeEntryFormProps {
   task: Task | null
   project: Project | null
@@ -34,6 +40,8 @@ interface TimeEntryFormProps {
   onSuccess: () => void
   onCancel: () => void
   targetUserId?: string
+  /** When set, the form updates this entry instead of creating a new one */
+  existingEntry?: ExistingTimeEntry | null
 }
 
 export function TimeEntryForm({
@@ -43,15 +51,30 @@ export function TimeEntryForm({
   onSuccess,
   onCancel,
   targetUserId,
+  existingEntry,
 }: TimeEntryFormProps) {
-  const [hours, setHours] = useState<string>('')
-  const [notes, setNotes] = useState('')
+  const [hours, setHours] = useState<string>(
+    existingEntry != null ? String(existingEntry.hours) : ''
+  )
+  const [notes, setNotes] = useState(existingEntry?.notes ?? '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (existingEntry) {
+      setHours(String(existingEntry.hours))
+      setNotes(existingEntry.notes ?? '')
+    } else {
+      setHours('')
+      setNotes('')
+    }
+    setError(null)
+  }, [existingEntry])
 
   if (!task || !project) return null
 
   const isLocked = project.status === 'locked'
+  const isEdit = existingEntry != null
 
   const handleQuickAdd = (h: number) => {
     if (isLocked) return
@@ -77,25 +100,29 @@ export function TimeEntryForm({
     }
 
     try {
-      const { createTimeEntry } = await import('@/app/actions/time-tracking')
-      const result = await createTimeEntry(
-        task.id,
-        project.id,
-        date,
-        hoursNum,
-        notes || undefined,
-        targetUserId
-      )
+      const { createTimeEntry, updateTimeEntry } = await import('@/app/actions/time-tracking')
+      const result = isEdit
+        ? await updateTimeEntry(existingEntry!.id, hoursNum, notes || undefined, targetUserId)
+        : await createTimeEntry(
+            task.id,
+            project.id,
+            date,
+            hoursNum,
+            notes || undefined,
+            targetUserId
+          )
 
       if (result.error) {
         setError(result.error)
       } else {
-        setHours('')
-        setNotes('')
+        if (!isEdit) {
+          setHours('')
+          setNotes('')
+        }
         onSuccess()
       }
     } catch (err) {
-      setError('An error occurred while creating the time entry')
+      setError(isEdit ? 'Could not save your changes' : 'An error occurred while creating the time entry')
     } finally {
       setLoading(false)
     }
@@ -105,13 +132,27 @@ export function TimeEntryForm({
     <Dialog open={true} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Log Time</DialogTitle>
+          <DialogTitle>{isEdit ? 'Edit time entry' : 'Log Time'}</DialogTitle>
           <DialogDescription>
-            Log time for <strong>{task.name}</strong> on{' '}
-            <strong>{project.name}</strong>
+            {isEdit ? 'Update hours and notes for ' : 'Log time for '}
+            <strong>{task.name}</strong>
+            {!isEdit && (
+              <>
+                {' '}
+                on <strong>{project.name}</strong>
+              </>
+            )}
+            {isEdit && (
+              <>
+                {' '}
+                (<strong>{project.name}</strong>)
+              </>
+            )}
             {isLocked && (
               <span className="block mt-2 text-destructive">
-                This project is locked and cannot accept new time entries.
+                {isEdit
+                  ? 'This project is locked — time entries cannot be changed.'
+                  : 'This project is locked and cannot accept new time entries.'}
               </span>
             )}
           </DialogDescription>
@@ -198,7 +239,13 @@ export function TimeEntryForm({
             </Button>
             <Button type="submit" disabled={loading}>
               <Clock className="mr-2 h-4 w-4" />
-              {loading ? 'Logging...' : 'Log Time'}
+              {loading
+                ? isEdit
+                  ? 'Saving...'
+                  : 'Logging...'
+                : isEdit
+                  ? 'Save changes'
+                  : 'Log Time'}
             </Button>
           </div>
         </form>
