@@ -33,6 +33,7 @@ import { AlertTriangle, Trash2, Loader2, Plus, Mail } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
+import { FlexiDesignBoardsForm } from './flexi-design-boards-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
 import { ScorecardSyncForm } from './scorecard-sync-form'
@@ -544,6 +545,19 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <ColumnMappingForm />
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Flexi-Design boards (time tracking)</CardTitle>
+                    <CardDescription>
+                      Register which Monday boards count as Flexi-Design so Time Tracking and reporting split Main vs Flexi
+                      without relying on Monday API board-name detection.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <FlexiDesignBoardsForm />
                   </CardContent>
                 </Card>
 
