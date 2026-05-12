@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
+import { getFlexiDesignBoardIds, getMainTimesheetBoardIds } from '@/lib/monday/board-helpers'
 import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
 import { checkIsAdmin } from '@/app/actions/auth'
 
@@ -21,7 +21,7 @@ function toErrorMessage(error: unknown): string {
 
 /**
  * Get all active projects with their tasks
- * @param boardType - 'main' for main projects, 'flexi-design' for Flexi-Design projects, or 'all' for both
+ * @param boardType - 'main' = boards with column mappings that qualify as Main (not Flexi/leads/archives); 'flexi-design' = Flexi boards; 'all' = every active project
  */
 export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 'all' = 'main') {
   const supabase = await createClient()
@@ -82,9 +82,9 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
 
     // Filter by board type if needed
     if (boardType !== 'all') {
-      const flexiDesignBoardIds = await getFlexiDesignBoardIds()
-      
       if (boardType === 'flexi-design') {
+        const flexiDesignBoardIds = await getFlexiDesignBoardIds()
+
         // Only show active Flexi-Design boards (exclude completed board)
         const completedBoardResult = await getFlexiDesignCompletedBoard()
         const completedBoardId = completedBoardResult.success && completedBoardResult.board 
@@ -103,47 +103,48 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
           return { success: true, projects: [] }
         }
       } else {
-        // Only show main projects (exclude Flexi-Design)
-        if (flexiDesignBoardIds.size > 0) {
-          const flexiIds = Array.from(flexiDesignBoardIds)
-          // Filter out Flexi-Design boards
-          // Since Supabase doesn't have a direct "not in" operator, we'll filter client-side
-          // or use a different approach - get all and filter
-          const { data: allProjects } = await supabase
-            .from('monday_projects')
-            .select('*')
-            .eq('status', 'active')
-            .order('name', { ascending: true })
-          
-          const filteredProjects = allProjects?.filter(p => !flexiIds.includes(p.monday_board_id)) || []
-          // Continue with filtered projects
-          const projectIds = filteredProjects.map((p) => p.id)
-          
-          if (projectIds.length === 0) {
-            return { success: true, projects: [] }
-          }
+        // Main timesheet: only boards that have column mappings and qualify as "Main" in Settings
+        // (not Flexi, not completed archives, not Flexi completed, not leads).
+        const mainBoardIds = await getMainTimesheetBoardIds()
 
-          const { data: tasks, error: tasksError } = await supabase
-            .from('monday_tasks')
-            .select('*')
-            .in('project_id', projectIds)
-            .eq('is_subtask', true)
-            .order('created_at', { ascending: true })
-
-          if (tasksError) throw tasksError
-
-          // Get user's favorite tasks
-          const { data: favorites } = await supabase
-            .from('favorite_tasks')
-            .select('task_id')
-            .eq('user_id', user.id)
-
-          const favoriteTaskIds = new Set(favorites?.map((f) => f.task_id) || [])
-
-          const projectsWithTasks = await buildProjectsWithMetrics(filteredProjects, tasks || [], favoriteTaskIds)
-
-          return { success: true, projects: projectsWithTasks }
+        if (mainBoardIds.size === 0) {
+          return { success: true, projects: [] }
         }
+
+        const { data: filteredProjects, error: mainProjectsError } = await supabase
+          .from('monday_projects')
+          .select('*')
+          .eq('status', 'active')
+          .in('monday_board_id', Array.from(mainBoardIds))
+          .order('name', { ascending: true })
+
+        if (mainProjectsError) throw mainProjectsError
+
+        const projectIds = (filteredProjects ?? []).map((p) => p.id)
+
+        if (projectIds.length === 0) {
+          return { success: true, projects: [] }
+        }
+
+        const { data: tasks, error: tasksError } = await supabase
+          .from('monday_tasks')
+          .select('*')
+          .in('project_id', projectIds)
+          .eq('is_subtask', true)
+          .order('created_at', { ascending: true })
+
+        if (tasksError) throw tasksError
+
+        const { data: favorites } = await supabase
+          .from('favorite_tasks')
+          .select('task_id')
+          .eq('user_id', user.id)
+
+        const favoriteTaskIds = new Set(favorites?.map((f) => f.task_id) || [])
+
+        const projectsWithTasks = await buildProjectsWithMetrics(filteredProjects ?? [], tasks || [], favoriteTaskIds)
+
+        return { success: true, projects: projectsWithTasks }
       }
     }
 

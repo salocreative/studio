@@ -154,8 +154,8 @@ export function FlexiDesignBoardsForm() {
           active Flexi picker when configured under column mappings.
         </p>
         <p className="mt-2">
-          When at least one board is configured here, Studio uses this list instead of detecting Flexi boards via Monday API
-          names.
+          Board IDs here are merged with the legacy Monday check (board names containing &quot;flexi&quot;) so Flexi
+          projects stay out of the Main timesheet even if one source is incomplete.
         </p>
       </div>
 
@@ -233,8 +233,9 @@ export function FlexiDesignBoardsForm() {
 
       {configuredBoards.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          Until you add boards here, Flexi board detection falls back to the legacy Monday API method (board names containing
-          &quot;flexi&quot;) when <code className="rounded bg-muted px-1">MONDAY_API_TOKEN</code> is set.
+          With no rows here, Flexi boards are detected only via the legacy Monday API method (names containing
+          &quot;flexi&quot;) when <code className="rounded bg-muted px-1">MONDAY_API_TOKEN</code> is set. Add boards above to
+          pin the list in Supabase as well.
         </p>
       )}
     </div>

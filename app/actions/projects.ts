@@ -1,8 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
-import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
+import { getMainTimesheetBoardIds } from '@/lib/monday/board-helpers'
 
 interface ProjectWithTimeTracking {
   id: string
@@ -33,46 +32,22 @@ export async function getProjectsWithTimeTracking() {
   }
 
   try {
-    // Get Flexi-Design board IDs to exclude from Projects page
-    const flexiDesignBoardIds = await getFlexiDesignBoardIds()
-    
-    // Also get Flexi-Design completed board ID to exclude completed Flexi-Design projects
-    let flexiDesignCompletedBoardId: string | null = null
-    const completedBoardResult = await getFlexiDesignCompletedBoard()
-    if (completedBoardResult.success && completedBoardResult.board) {
-      flexiDesignCompletedBoardId = completedBoardResult.board.monday_board_id
+    const mainBoardIds = await getMainTimesheetBoardIds()
+
+    if (mainBoardIds.size === 0) {
+      return { success: true, projects: [] }
     }
-    
-    // Build query - exclude Flexi-Design boards (active and completed)
-    let projectsQuery = supabase
+
+    const { data: allProjects, error: projectsError } = await supabase
       .from('monday_projects')
       .select('*')
       .in('status', ['active', 'locked'])
+      .in('monday_board_id', Array.from(mainBoardIds))
       .order('name', { ascending: true })
-    
-    // Exclude Flexi-Design boards (both active and completed) from Projects page
-    // Since Supabase doesn't have direct "not in" syntax, filter client-side
-    let projects: any[] = []
-    const boardIdsToExclude = new Set(Array.from(flexiDesignBoardIds))
-    if (flexiDesignCompletedBoardId) {
-      boardIdsToExclude.add(flexiDesignCompletedBoardId)
-    }
-    
-    if (boardIdsToExclude.size > 0) {
-      const { data: allProjects, error: projectsError } = await supabase
-        .from('monday_projects')
-        .select('*')
-        .in('status', ['active', 'locked'])
-        .order('name', { ascending: true })
-      
-      if (projectsError) throw projectsError
-      
-      projects = (allProjects || []).filter(p => !boardIdsToExclude.has(p.monday_board_id))
-    } else {
-      const { data: allProjects, error: projectsError } = await projectsQuery
-      if (projectsError) throw projectsError
-      projects = allProjects || []
-    }
+
+    if (projectsError) throw projectsError
+
+    const projects = allProjects || []
 
     if (!projects || projects.length === 0) {
       return { success: true, projects: [] }

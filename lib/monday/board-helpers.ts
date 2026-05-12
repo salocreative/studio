@@ -33,7 +33,7 @@ async function loadFlexiDesignBoardIdsFromDb(): Promise<FlexiBoardDbResult> {
 
 /**
  * Legacy: infer Flexi boards by fetching Monday board names (contains "flexi").
- * Used when `flexi_design_boards` is empty or unavailable.
+ * Merged with `flexi_design_boards` for Main vs Flexi filtering.
  */
 async function loadFlexiDesignBoardIdsLegacy(): Promise<Set<string>> {
   const supabase = await createClient()
@@ -100,17 +100,83 @@ async function loadFlexiDesignBoardIdsLegacy(): Promise<Set<string>> {
 /**
  * Monday board IDs classified as Flexi-Design for Main vs Flexi filtering.
  *
- * Prefers rows in `flexi_design_boards`. If that table has no rows (or is missing),
- * falls back to Monday API name matching against boards referenced in column mappings.
+ * Returns the **union** of:
+ * - All `monday_board_id` values from `flexi_design_boards` (when the table exists and the query succeeds)
+ * - Legacy detection: boards referenced in `monday_column_mappings` whose Monday name contains "flexi"
+ *
+ * Merging avoids Flexi projects leaking into the Main timesheet when the DB list is partial, and keeps
+ * behavior stable when the table is empty (legacy-only) or Monday token is unavailable (DB-only).
  */
 export async function getFlexiDesignBoardIds(): Promise<Set<string>> {
   const fromDb = await loadFlexiDesignBoardIdsFromDb()
+  const legacy = await loadFlexiDesignBoardIdsLegacy()
 
-  if (fromDb.ok && fromDb.ids.length > 0) {
-    return new Set(fromDb.ids)
+  const merged = new Set<string>()
+  if (fromDb.ok) {
+    for (const id of fromDb.ids) {
+      merged.add(id)
+    }
+  }
+  for (const id of legacy) {
+    merged.add(id)
   }
 
-  return loadFlexiDesignBoardIdsLegacy()
+  return merged
+}
+
+/**
+ * Monday board IDs used for the Main projects surface (timesheet, projects list):
+ * boards that have column mappings, excluding Flexi boards, completed archives, Flexi completed, and leads.
+ * Aligns with Settings → Column Mappings classification for Main vs other board types.
+ */
+export async function getMainTimesheetBoardIds(): Promise<Set<string>> {
+  const supabase = await createClient()
+
+  const { data: mappings, error: mapErr } = await supabase
+    .from('monday_column_mappings')
+    .select('board_id')
+    .not('board_id', 'is', null)
+
+  if (mapErr) {
+    console.error('getMainTimesheetBoardIds mappings:', mapErr)
+    return new Set()
+  }
+
+  const mappedBoardIds = Array.from(
+    new Set((mappings ?? []).map((m: { board_id: string | null }) => m.board_id).filter(Boolean))
+  ) as string[]
+
+  if (mappedBoardIds.length === 0) {
+    return new Set()
+  }
+
+  const flexiIds = await getFlexiDesignBoardIds()
+
+  const { data: completedBoards } = await supabase.from('monday_completed_boards').select('monday_board_id')
+  const completedIds = new Set(
+    (completedBoards ?? []).map((b: { monday_board_id: string }) => b.monday_board_id)
+  )
+
+  const { data: leadsRow } = await supabase.from('monday_leads_board').select('monday_board_id').maybeSingle()
+  const leadsId = leadsRow?.monday_board_id ?? null
+
+  const { getFlexiDesignCompletedBoard } = await import('@/app/actions/flexi-design-completed-board')
+  const flexiCompletedResult = await getFlexiDesignCompletedBoard()
+  const flexiCompletedId =
+    flexiCompletedResult.success && flexiCompletedResult.board?.monday_board_id
+      ? flexiCompletedResult.board.monday_board_id
+      : null
+
+  const main = new Set<string>()
+  for (const bid of mappedBoardIds) {
+    if (flexiIds.has(bid)) continue
+    if (completedIds.has(bid)) continue
+    if (leadsId && bid === leadsId) continue
+    if (flexiCompletedId && bid === flexiCompletedId) continue
+    main.add(bid)
+  }
+
+  return main
 }
 
 /**
