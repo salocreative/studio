@@ -52,6 +52,7 @@ export function RetainersForm() {
   const [monthlyHours, setMonthlyHours] = useState<string>('')
   const [rolloverHours, setRolloverHours] = useState<string>('')
   const [startDate, setStartDate] = useState<string>('')
+  const [endDate, setEndDate] = useState<string>('')
   const [agreedDaysPerWeek, setAgreedDaysPerWeek] = useState<string>('')
   const [agreedDaysPerMonth, setAgreedDaysPerMonth] = useState<string>('')
   const [hoursPerDay, setHoursPerDay] = useState<string>('')
@@ -148,6 +149,7 @@ export function RetainersForm() {
     setMonthlyHours(client.monthly_hours?.toString() || '')
     setRolloverHours(client.rollover_hours?.toString() || '')
     setStartDate(client.start_date || '')
+    setEndDate(client.end_date || '')
     setAgreedDaysPerWeek(client.agreed_days_per_week?.toString() || '')
     setAgreedDaysPerMonth(client.agreed_days_per_month?.toString() || '')
     setHoursPerDay(client.hours_per_day?.toString() || '6')
@@ -158,6 +160,7 @@ export function RetainersForm() {
     setMonthlyHours('')
     setRolloverHours('')
     setStartDate('')
+    setEndDate('')
     setAgreedDaysPerWeek('')
     setAgreedDaysPerMonth('')
     setHoursPerDay('')
@@ -165,6 +168,11 @@ export function RetainersForm() {
 
   async function handleUpdate() {
     if (!editingClient) return
+
+    if (startDate && endDate && endDate < startDate) {
+      toast.error('Finish date must be on or after the start date')
+      return
+    }
 
     setUpdating(true)
     try {
@@ -175,7 +183,8 @@ export function RetainersForm() {
         startDate || null,
         agreedDaysPerWeek ? parseFloat(agreedDaysPerWeek) : null,
         agreedDaysPerMonth ? parseFloat(agreedDaysPerMonth) : null,
-        hoursPerDay ? parseFloat(hoursPerDay) : null
+        hoursPerDay ? parseFloat(hoursPerDay) : null,
+        endDate || null
       )
       if (result.error) {
         toast.error('Error updating retainer', { description: result.error })
@@ -305,7 +314,7 @@ export function RetainersForm() {
           <DialogHeader>
             <DialogTitle>Edit Retainer Settings</DialogTitle>
             <DialogDescription>
-              Configure monthly hours, overflow hours, and start date for {editingClient?.client_name}
+              Configure monthly hours, overflow hours, start and finish dates for {editingClient?.client_name}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -349,6 +358,21 @@ export function RetainersForm() {
               />
               <p className="text-xs text-muted-foreground">
                 Retainer start date. Project data before this date will be excluded.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="end-date">Finish Date (Optional)</Label>
+              <Input
+                id="end-date"
+                type="date"
+                value={endDate}
+                min={startDate || undefined}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Retainer finish date. After this date the retainer is considered ended:
+                time entries past this date are excluded, the final month is prorated by
+                the working days up to this date, and subsequent months show zero capacity.
               </p>
             </div>
             <div className="space-y-2">

@@ -18,7 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Loader2, Calendar, Clock } from 'lucide-react'
-import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay } from 'date-fns'
+import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, isAfter, isBefore } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { getRetainerClientByToken } from '@/app/actions/retainers'
 import { getRetainerDataPublic } from '@/app/actions/retainers-public'
@@ -38,6 +38,8 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
   const [agreedDaysPerWeek, setAgreedDaysPerWeek] = useState<number | null>(null)
   const [agreedDaysPerMonth, setAgreedDaysPerMonth] = useState<number | null>(null)
   const [hoursPerDay, setHoursPerDay] = useState<number | null>(null)
+  const [startDate, setStartDate] = useState<string | null>(null)
+  const [endDate, setEndDate] = useState<string | null>(null)
   const [remainingProjectHours, setRemainingProjectHours] = useState<number>(0)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showDateDialog, setShowDateDialog] = useState(false)
@@ -70,6 +72,8 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
       setAgreedDaysPerWeek(shareResult.client.agreed_days_per_week || null)
       setAgreedDaysPerMonth(shareResult.client.agreed_days_per_month || null)
       setHoursPerDay(shareResult.client.hours_per_day || null)
+      setStartDate(shareResult.client.start_date || null)
+      setEndDate(shareResult.client.end_date || null)
 
       // Then load the retainer data using public version
       const dataResult = await getRetainerDataPublic(shareResult.client.client_name)
@@ -114,6 +118,60 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
   function formatDays(days: number): string {
     if (days === 0) return '0.0'
     return days.toFixed(1)
+  }
+
+  // Count working days (Mon-Fri) within an inclusive date range
+  function countWorkingDays(start: Date, end: Date): number {
+    if (end < start) return 0
+    let count = 0
+    const current = new Date(start)
+    current.setHours(0, 0, 0, 0)
+    const last = new Date(end)
+    last.setHours(0, 0, 0, 0)
+    while (current <= last) {
+      const dow = current.getDay()
+      if (dow !== 0 && dow !== 6) count += 1
+      current.setDate(current.getDate() + 1)
+    }
+    return count
+  }
+
+  // Effective monthly allocation in hours for a given month, prorated by start/end dates
+  function getMonthAllocatedHours(monthKey: string): number | null {
+    if (monthlyHours == null) return null
+
+    const monthStart = startOfMonth(parseISO(`${monthKey}-01`))
+    const monthEnd = endOfMonth(monthStart)
+    const retainerStart = startDate ? parseISO(startDate) : null
+    const retainerEnd = endDate ? parseISO(endDate) : null
+
+    if (retainerStart && isBefore(monthEnd, retainerStart)) return 0
+    if (retainerEnd && isAfter(monthStart, retainerEnd)) return 0
+
+    const activeStart = retainerStart && isAfter(retainerStart, monthStart) ? retainerStart : monthStart
+    const activeEnd = retainerEnd && isBefore(retainerEnd, monthEnd) ? retainerEnd : monthEnd
+
+    const totalWorkingDays = countWorkingDays(monthStart, monthEnd)
+    const activeWorkingDays = countWorkingDays(activeStart, activeEnd)
+
+    if (totalWorkingDays === 0) return monthlyHours
+    if (activeWorkingDays >= totalWorkingDays) return monthlyHours
+
+    return monthlyHours * (activeWorkingDays / totalWorkingDays)
+  }
+
+  function getMonthAllocatedDays(monthKey: string): number | null {
+    const hours = getMonthAllocatedHours(monthKey)
+    return hours == null ? null : hoursToDays(hours)
+  }
+
+  function isRetainerEnded(): boolean {
+    if (!endDate) return false
+    const end = parseISO(endDate)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    end.setHours(0, 0, 0, 0)
+    return end < today
   }
 
   function getMonthTotalDays(monthData: MonthlyProjectData): number {
@@ -390,6 +448,18 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
           <h1 className="text-3xl font-bold">{clientName || 'Retainer Report'}</h1>
           <p className="text-muted-foreground mt-1">
             Monthly project breakdown and time tracking
+            {endDate && (
+              <span className="ml-2">
+                •{' '}
+                {isRetainerEnded() ? (
+                  <span className="text-orange-600 dark:text-orange-400 font-medium">
+                    Retainer ended {formatDate(endDate)}
+                  </span>
+                ) : (
+                  <span>Finishes {formatDate(endDate)}</span>
+                )}
+              </span>
+            )}
           </p>
         </div>
       </div>
@@ -447,19 +517,31 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                       const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
                       const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
                       const currentMonthDays = currentMonthData ? getMonthTotalDays(currentMonthData) : 0
-                      const availableDays = monthlyHours ? hoursToDays(monthlyHours) : 0
-                      const currentMonthCapacity = availableDays > 0 ? availableDays - currentMonthDays : null
-                      
+                      const allocatedThisMonthDays = getMonthAllocatedDays(currentMonthKey)
+                      const availableDays = allocatedThisMonthDays ?? 0
+                      const currentMonthCapacity = allocatedThisMonthDays !== null ? allocatedThisMonthDays - currentMonthDays : null
+                      const fullMonthlyDays = monthlyHours ? hoursToDays(monthlyHours) : null
+                      const isProrated = allocatedThisMonthDays !== null && fullMonthlyDays !== null && allocatedThisMonthDays < fullMonthlyDays
+                      const ended = isRetainerEnded()
+
                       return (
                         <div className="space-y-2">
                           <div className="text-sm font-medium text-muted-foreground">
                             Current Month Capacity Remaining
                           </div>
                           <div className="text-2xl font-bold">
-                            {currentMonthCapacity !== null ? `${formatDays(currentMonthCapacity)}d` : 'N/A'}
+                            {ended
+                              ? 'Ended'
+                              : currentMonthCapacity !== null
+                                ? `${formatDays(currentMonthCapacity)}d`
+                                : 'N/A'}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {availableDays > 0 ? `${formatDays(availableDays)}d allocated, ${formatDays(currentMonthDays)}d used` : 'No monthly hours set'}
+                            {ended
+                              ? `Retainer finished ${endDate ? formatDate(endDate) : ''}`
+                              : availableDays > 0
+                                ? `${formatDays(availableDays)}d allocated${isProrated ? ' (prorated)' : ''}, ${formatDays(currentMonthDays)}d used`
+                                : 'No monthly hours set'}
                           </div>
                         </div>
                       )
@@ -492,14 +574,18 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                       const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
                       const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
                       const currentMonthDays = currentMonthData ? getMonthTotalDays(currentMonthData) : 0
-                      const availableDays = monthlyHours ? hoursToDays(monthlyHours) : 0
-                      const currentMonthCapacity = availableDays > 0 ? availableDays - currentMonthDays : null
+                      const allocatedThisMonthDays = getMonthAllocatedDays(currentMonthKey)
+                      const currentMonthCapacity = allocatedThisMonthDays !== null ? allocatedThisMonthDays - currentMonthDays : null
                       const remainingProjectDays = hoursToDays(remainingProjectHours)
-                      
+                      const ended = isRetainerEnded()
+
                       let likelihoodText = 'N/A'
                       let likelihoodColor = 'text-muted-foreground'
-                      
-                      if (currentMonthCapacity !== null && currentMonthCapacity > 0) {
+
+                      if (ended) {
+                        likelihoodText = 'Ended'
+                        likelihoodColor = 'text-muted-foreground'
+                      } else if (currentMonthCapacity !== null && currentMonthCapacity > 0) {
                         if (remainingProjectDays >= currentMonthCapacity) {
                           likelihoodText = 'Very Likely'
                           likelihoodColor = 'text-green-600'
@@ -538,9 +624,12 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                 const monthTotalDays = getMonthTotalDays(monthData)
                 const monthTotalRollover = getMonthTotalRolloverDays(monthData)
                 const monthLabel = formatMonth(monthData.month)
-                
-                // Calculate progress for this month (convert monthly_hours to days)
-                const availableDays = monthlyHours ? hoursToDays(monthlyHours) : 0
+
+                // Calculate progress for this month using the prorated allocation
+                const allocatedForMonth = getMonthAllocatedDays(monthData.month)
+                const availableDays = allocatedForMonth ?? 0
+                const fullMonthlyDays = monthlyHours ? hoursToDays(monthlyHours) : null
+                const isProrated = allocatedForMonth !== null && fullMonthlyDays !== null && allocatedForMonth < fullMonthlyDays
                 const progressPercentage = availableDays > 0 
                   ? Math.min((monthTotalDays / availableDays) * 100, 100)
                   : 0
@@ -556,7 +645,7 @@ export default function RetainerShareClient({ shareToken }: RetainerShareClientP
                               <CardTitle className="text-lg">{monthLabel}</CardTitle>
                               <CardDescription className="mt-0">
                                 {monthData.projects.length} project{monthData.projects.length !== 1 ? 's' : ''} • {formatDays(monthTotalDays)} days
-                                {availableDays > 0 && ` of ${formatDays(availableDays)}`}
+                                {availableDays > 0 && ` of ${formatDays(availableDays)}${isProrated ? ' (prorated)' : ''}`}
                                 {monthTotalRollover > 0 && (
                                   <span className="text-orange-600 dark:text-orange-400 ml-1">
                                     • {formatDays(monthTotalRollover)}d overflow

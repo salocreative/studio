@@ -11,6 +11,7 @@ export interface RetainerClient {
   monthly_hours: number | null
   rollover_hours: number | null
   start_date: string | null
+  end_date: string | null
   agreed_days_per_week: number | null
   agreed_days_per_month: number | null
   hours_per_day: number | null
@@ -140,7 +141,8 @@ export async function updateRetainerClient(
   startDate: string | null,
   agreedDaysPerWeek: number | null,
   agreedDaysPerMonth: number | null,
-  hoursPerDay: number | null
+  hoursPerDay: number | null,
+  endDate: string | null
 ) {
   const supabase = await createClient()
 
@@ -167,6 +169,7 @@ export async function updateRetainerClient(
         monthly_hours: monthlyHours,
         rollover_hours: rolloverHours,
         start_date: startDate,
+        end_date: endDate,
         agreed_days_per_week: agreedDaysPerWeek,
         agreed_days_per_month: agreedDaysPerMonth,
         hours_per_day: hoursPerDay,
@@ -269,12 +272,13 @@ export async function getRetainerData(clientName: string, startDate?: string, en
     // Get retainer client info to check start_date and get monthly_hours
     const { data: retainerClient } = await supabase
       .from('retainer_clients')
-      .select('start_date, monthly_hours, rollover_hours, agreed_days_per_week, agreed_days_per_month, hours_per_day')
+      .select('start_date, end_date, monthly_hours, rollover_hours, agreed_days_per_week, agreed_days_per_month, hours_per_day')
       .eq('client_name', clientName)
       .single()
 
     // Use retainer start_date if provided, otherwise use the startDate parameter
     const effectiveStartDate = retainerClient?.start_date || startDate
+    const effectiveEndDate = retainerClient?.end_date || null
 
     // Get all projects for this client
     let projectsQuery = supabase
@@ -320,6 +324,10 @@ export async function getRetainerData(clientName: string, startDate?: string, en
     if (effectiveStartDate) {
       timeEntriesQuery = timeEntriesQuery.gte('date', effectiveStartDate)
     }
+    // Filter time entries by retainer end_date if provided
+    if (effectiveEndDate) {
+      timeEntriesQuery = timeEntriesQuery.lte('date', effectiveEndDate)
+    }
 
     const { data: timeEntries, error: timeEntriesError } = await timeEntriesQuery
       .order('date', { ascending: true })
@@ -356,13 +364,19 @@ export async function getRetainerData(clientName: string, startDate?: string, en
         // Add months from timeline if available, but only if timeline is on/after start_date
         if (task.timeline_start) {
           const timelineStart = new Date(task.timeline_start)
-          const timelineEnd = task.timeline_end ? new Date(task.timeline_end) : new Date()
-          
+          const rawTimelineEnd = task.timeline_end ? new Date(task.timeline_end) : new Date()
+          // Cap the timeline end at the retainer's end_date if set
+          const timelineEnd = effectiveEndDate
+            ? new Date(Math.min(rawTimelineEnd.getTime(), new Date(effectiveEndDate).getTime()))
+            : rawTimelineEnd
+
           // Only include timeline months if timeline starts on/after the retainer start_date
-          if (!effectiveStartDate || timelineStart >= new Date(effectiveStartDate)) {
+          // and on/before the retainer end_date
+          const startsBeforeEnd = !effectiveEndDate || timelineStart <= new Date(effectiveEndDate)
+          if ((!effectiveStartDate || timelineStart >= new Date(effectiveStartDate)) && startsBeforeEnd) {
             const startDate = effectiveStartDate ? new Date(Math.max(timelineStart.getTime(), new Date(effectiveStartDate).getTime())) : timelineStart
             const current = new Date(startDate)
-            
+
             while (current <= timelineEnd) {
               const monthKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`
               months.add(monthKey)
@@ -501,6 +515,8 @@ export async function getRetainerData(clientName: string, startDate?: string, en
       agreed_days_per_week: retainerClient?.agreed_days_per_week || null,
       agreed_days_per_month: retainerClient?.agreed_days_per_month || null,
       hours_per_day: retainerClient?.hours_per_day || null,
+      start_date: retainerClient?.start_date || null,
+      end_date: retainerClient?.end_date || null,
       remaining_project_hours: remainingProjectHours,
     }
   } catch (error) {

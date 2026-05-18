@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2, ArrowLeft, Calendar, Clock, Link as LinkIcon, Copy, Check, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay } from 'date-fns'
+import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, isAfter, isBefore } from 'date-fns'
 import { cn } from '@/lib/utils'
 import {
   getRetainerData,
@@ -49,6 +49,8 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
   const [agreedDaysPerWeek, setAgreedDaysPerWeek] = useState<number | null>(null)
   const [agreedDaysPerMonth, setAgreedDaysPerMonth] = useState<number | null>(null)
   const [hoursPerDay, setHoursPerDay] = useState<number | null>(null)
+  const [startDate, setStartDate] = useState<string | null>(null)
+  const [endDate, setEndDate] = useState<string | null>(null)
   const [remainingProjectHours, setRemainingProjectHours] = useState<number>(0)
   const [shareLinks, setShareLinks] = useState<RetainerShareLink[]>([])
   const [showShareDialog, setShowShareDialog] = useState(false)
@@ -75,6 +77,8 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
         setAgreedDaysPerWeek(result.agreed_days_per_week ?? null)
         setAgreedDaysPerMonth(result.agreed_days_per_month ?? null)
         setHoursPerDay(result.hours_per_day ?? null)
+        setStartDate(result.start_date ?? null)
+        setEndDate(result.end_date ?? null)
         setRemainingProjectHours(result.remaining_project_hours ?? 0)
       }
     } catch (error) {
@@ -173,6 +177,60 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
     } catch {
       return dateString
     }
+  }
+
+  // Count working days (Mon-Fri) within an inclusive date range
+  function countWorkingDays(start: Date, end: Date): number {
+    if (end < start) return 0
+    let count = 0
+    const current = new Date(start)
+    current.setHours(0, 0, 0, 0)
+    const last = new Date(end)
+    last.setHours(0, 0, 0, 0)
+    while (current <= last) {
+      const dow = current.getDay()
+      if (dow !== 0 && dow !== 6) count += 1
+      current.setDate(current.getDate() + 1)
+    }
+    return count
+  }
+
+  // Compute the effective monthly allocation for a given month, prorated by the
+  // retainer's start_date and end_date when they fall inside the month.
+  // Returns null if monthly_hours isn't configured.
+  function getMonthAllocatedHours(monthKey: string): number | null {
+    if (monthlyHours == null) return null
+
+    const monthStart = startOfMonth(parseISO(`${monthKey}-01`))
+    const monthEnd = endOfMonth(monthStart)
+    const retainerStart = startDate ? parseISO(startDate) : null
+    const retainerEnd = endDate ? parseISO(endDate) : null
+
+    // Entire month is before the retainer started, or after it ended
+    if (retainerStart && isBefore(monthEnd, retainerStart)) return 0
+    if (retainerEnd && isAfter(monthStart, retainerEnd)) return 0
+
+    // Determine the active range within this month
+    const activeStart = retainerStart && isAfter(retainerStart, monthStart) ? retainerStart : monthStart
+    const activeEnd = retainerEnd && isBefore(retainerEnd, monthEnd) ? retainerEnd : monthEnd
+
+    const totalWorkingDays = countWorkingDays(monthStart, monthEnd)
+    const activeWorkingDays = countWorkingDays(activeStart, activeEnd)
+
+    if (totalWorkingDays === 0) return monthlyHours
+    if (activeWorkingDays >= totalWorkingDays) return monthlyHours
+
+    return monthlyHours * (activeWorkingDays / totalWorkingDays)
+  }
+
+  // True if the retainer's end date is in the past (relative to today)
+  function isRetainerEnded(): boolean {
+    if (!endDate) return false
+    const end = parseISO(endDate)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    end.setHours(0, 0, 0, 0)
+    return end < today
   }
 
   function getMonthTotalHours(monthData: MonthlyProjectData): number {
@@ -456,6 +514,18 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
               <h1 className="text-2xl font-semibold">{clientName}</h1>
               <p className="text-sm text-muted-foreground">
                 Monthly project breakdown and time tracking
+                {endDate && (
+                  <span className="ml-2">
+                    •{' '}
+                    {isRetainerEnded() ? (
+                      <span className="text-orange-600 dark:text-orange-400 font-medium">
+                        Retainer ended {formatDate(endDate)}
+                      </span>
+                    ) : (
+                      <span>Finishes {formatDate(endDate)}</span>
+                    )}
+                  </span>
+                )}
               </p>
             </div>
             <Button
@@ -515,18 +585,28 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                       const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
                       const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
                       const currentMonthHours = currentMonthData ? getMonthTotalHours(currentMonthData) : 0
-                      const currentMonthCapacity = monthlyHours ? monthlyHours - currentMonthHours : null
-                      
+                      const allocatedThisMonth = getMonthAllocatedHours(currentMonthKey)
+                      const currentMonthCapacity = allocatedThisMonth !== null ? allocatedThisMonth - currentMonthHours : null
+                      const ended = isRetainerEnded()
+
                       return (
                         <div className="space-y-2">
                           <div className="text-sm font-medium text-muted-foreground">
                             Current Month Capacity Remaining
                           </div>
                           <div className="text-2xl font-bold">
-                            {currentMonthCapacity !== null ? `${currentMonthCapacity.toFixed(1)}h` : 'N/A'}
+                            {ended
+                              ? 'Ended'
+                              : currentMonthCapacity !== null
+                                ? `${currentMonthCapacity.toFixed(1)}h`
+                                : 'N/A'}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {monthlyHours ? `${monthlyHours.toFixed(1)}h allocated, ${currentMonthHours.toFixed(1)}h used` : 'No monthly hours set'}
+                            {ended
+                              ? `Retainer finished ${endDate ? formatDate(endDate) : ''}`
+                              : allocatedThisMonth !== null
+                                ? `${allocatedThisMonth.toFixed(1)}h allocated${monthlyHours && allocatedThisMonth < monthlyHours ? ' (prorated)' : ''}, ${currentMonthHours.toFixed(1)}h used`
+                                : 'No monthly hours set'}
                           </div>
                         </div>
                       )
@@ -559,12 +639,17 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                       const currentMonthKey = format(startOfMonth(new Date()), 'yyyy-MM')
                       const currentMonthData = monthlyData.find(m => m.month === currentMonthKey)
                       const currentMonthHours = currentMonthData ? getMonthTotalHours(currentMonthData) : 0
-                      const currentMonthCapacity = monthlyHours ? monthlyHours - currentMonthHours : null
-                      
+                      const allocatedThisMonth = getMonthAllocatedHours(currentMonthKey)
+                      const currentMonthCapacity = allocatedThisMonth !== null ? allocatedThisMonth - currentMonthHours : null
+                      const ended = isRetainerEnded()
+
                       let likelihoodText = 'N/A'
                       let likelihoodColor = 'text-muted-foreground'
-                      
-                      if (currentMonthCapacity !== null && currentMonthCapacity > 0) {
+
+                      if (ended) {
+                        likelihoodText = 'Ended'
+                        likelihoodColor = 'text-muted-foreground'
+                      } else if (currentMonthCapacity !== null && currentMonthCapacity > 0) {
                         if (remainingProjectHours >= currentMonthCapacity) {
                           likelihoodText = 'Very Likely'
                           likelihoodColor = 'text-green-600'
@@ -579,7 +664,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                           likelihoodColor = 'text-orange-600'
                         }
                       }
-                      
+
                       return (
                         <div className="space-y-2">
                           <div className="text-sm font-medium text-muted-foreground">
@@ -603,9 +688,11 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                 const monthTotalHours = getMonthTotalHours(monthData)
                 const monthTotalRollover = getMonthTotalRolloverHours(monthData)
                 const monthLabel = formatMonth(monthData.month)
-                
-                // Calculate progress for this month
-                const availableHours = monthlyHours || 0
+
+                // Calculate progress for this month using the prorated allocation
+                const allocatedForMonth = getMonthAllocatedHours(monthData.month)
+                const availableHours = allocatedForMonth ?? 0
+                const isProrated = allocatedForMonth !== null && monthlyHours !== null && allocatedForMonth < monthlyHours
                 const progressPercentage = availableHours > 0 
                   ? Math.min((monthTotalHours / availableHours) * 100, 100)
                   : 0
@@ -621,7 +708,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                               <CardTitle className="text-lg">{monthLabel}</CardTitle>
                               <CardDescription className="mt-0">
                                 {monthData.projects.length} project{monthData.projects.length !== 1 ? 's' : ''} • {monthTotalHours.toFixed(1)} hours
-                                {availableHours > 0 && ` of ${availableHours}h`}
+                                {availableHours > 0 && ` of ${availableHours.toFixed(1)}h${isProrated ? ' (prorated)' : ''}`}
                                 {monthTotalRollover > 0 && (
                                   <span className="text-orange-600 dark:text-orange-400 ml-1">
                                     • {monthTotalRollover.toFixed(1)}h overflow
@@ -634,7 +721,7 @@ export default function RetainerDetailClient({ clientName }: RetainerDetailClien
                             {availableHours > 0 && (
                               <div className="flex flex-col items-end gap-1 min-w-[120px]">
                                 <div className="text-sm font-medium">
-                                  {monthTotalHours.toFixed(1)}h / {availableHours}h
+                                  {monthTotalHours.toFixed(1)}h / {availableHours.toFixed(1)}h
                                 </div>
                                 <Progress value={progressPercentage} className="w-full h-2" />
                               </div>
