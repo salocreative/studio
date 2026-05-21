@@ -36,12 +36,12 @@ import { ColumnMappingForm } from './column-mapping-form'
 import { FlexiDesignBoardsForm } from './flexi-design-boards-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
-import { ScorecardSyncForm } from './scorecard-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
 import { QuoteValueDebugger } from './quote-value-debugger'
 import { LeadsStatusConfigForm } from './leads-status-config-form'
 import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
 import { RetainersForm } from './retainers-form'
+import { ThankYouClientsForm } from './thank-you-clients-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
 import { toast } from 'sonner'
@@ -230,10 +230,11 @@ export default function SettingsPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl">
           <Tabs defaultValue="team" className="w-full">
-            <TabsList className="grid w-full max-w-md grid-cols-3">
+            <TabsList className="grid w-full max-w-2xl grid-cols-4">
               <TabsTrigger value="team">Team</TabsTrigger>
               <TabsTrigger value="data-sync">Data Sync</TabsTrigger>
               <TabsTrigger value="integrations">Integrations</TabsTrigger>
+              <TabsTrigger value="thank-you-pages">Thank You Pages</TabsTrigger>
             </TabsList>
 
             {/* Team Tab */}
@@ -523,8 +524,6 @@ export default function SettingsPage() {
                     </div>
                   </CardContent>
                 </Card>
-
-                <ScorecardSyncForm />
               </div>
 
               <div className="space-y-4">
@@ -694,6 +693,11 @@ export default function SettingsPage() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            {/* Thank You Pages Tab */}
+            <TabsContent value="thank-you-pages" className="mt-6 space-y-6">
+              <ThankYouClientsForm />
             </TabsContent>
           </Tabs>
         </div>

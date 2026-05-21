@@ -50,7 +50,6 @@ npm run dev
 │   │   ├── time-tracking/    # Time tracking page
 │   │   ├── projects/         # Projects page
 │   │   ├── forecast/         # Forecast (placeholder)
-│   │   ├── scorecard/        # Scorecard (placeholder)
 │   │   ├── customers/        # Customers (placeholder)
 │   │   └── settings/         # Settings page
 │   ├── layout.tsx            # Root layout
@@ -84,8 +83,8 @@ The integration syncs:
 
 ## Role-Based Access
 
-- **Admin**: Full access to all features including Settings, Scorecard, and Customers
-- **Designer**: Access to Time Tracking, Projects, and Forecast (no Scorecard or Customers)
+- **Admin**: Full access to all features including Settings and Customers
+- **Designer**: Access to Time Tracking, Projects, and Forecast (no Customers)
 - **Employee**: Access to Time Tracking, Projects, and Forecast
 
 ## Database Schema
@@ -103,5 +102,5 @@ Key tables:
 1. Implement Monday.com API sync logic
 2. Complete Time Tracking UI (project selection, favorites, search)
 3. Add authentication/login flow
-4. Build out Forecast, Scorecard, and Customers sections
+4. Build out Forecast and Customers sections
 5. Add project locking logic when projects move between boards

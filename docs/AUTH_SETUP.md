@@ -95,8 +95,8 @@ Once logged in as admin:
 
 ## Role-Based Access
 
-- **Admin**: Full access including Settings, Scorecard, Customers, User Management
-- **Designer**: Time Tracking, Projects, Forecast (no Scorecard/Customers)
+- **Admin**: Full access including Settings, Customers, User Management
+- **Designer**: Time Tracking, Projects, Forecast (no Customers)
 - **Employee**: Time Tracking, Projects, Forecast
 
 ## Troubleshooting

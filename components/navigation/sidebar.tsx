@@ -6,7 +6,6 @@ import {
   Clock, 
   FolderKanban, 
   Calendar, 
-  Trophy, 
   Users,
   Settings,
   LogOut,
@@ -72,12 +71,6 @@ export const navigation: NavItem[] = [
     title: 'Leads',
     href: '/leads',
     icon: Target,
-    roles: ['admin'], // Admin only
-  },
-  {
-    title: 'Scorecard',
-    href: '/scorecard',
-    icon: Trophy,
     roles: ['admin'], // Admin only
   },
   {
