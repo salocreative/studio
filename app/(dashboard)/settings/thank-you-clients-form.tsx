@@ -30,7 +30,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
-import { Plus, Trash2, Loader2, Edit2, ChevronUp, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, Loader2, Edit2, ChevronUp, ChevronDown, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getThankYouClients,
@@ -41,6 +41,12 @@ import {
   type ThankYouClient,
   type ThankYouClientInput,
 } from '@/app/actions/thank-you-clients'
+
+const THANK_YOU_BASE_URL = 'https://thankyou.salo.uk/thank-you'
+
+function getThankYouPageUrl(slug: string) {
+  return `${THANK_YOU_BASE_URL}/${slug}`
+}
 
 function personalMessageToParagraphs(value: ThankYouClient['personal_message']): string[] {
   if (Array.isArray(value)) return value.length > 0 ? value : ['']
@@ -294,6 +300,17 @@ export function ThankYouClientsForm() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() =>
+                            window.open(getThankYouPageUrl(client.slug), '_blank', 'noopener,noreferrer')
+                          }
+                          className="h-8 w-8"
+                          title="View thank-you page"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
