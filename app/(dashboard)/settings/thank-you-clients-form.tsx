@@ -55,7 +55,9 @@ function emptyFormState(): ThankYouClientInput {
     recipient_names: '',
     project_description: '',
     personal_message: [''],
+    team_video_presenters: null,
     team_video_url: null,
+    team_video_placeholder_text: null,
     show_upsell: true,
     referral_action_description: null,
     upsell_heading: null,
@@ -72,7 +74,9 @@ function clientToFormState(client: ThankYouClient): ThankYouClientInput {
     recipient_names: client.recipient_names,
     project_description: client.project_description,
     personal_message: personalMessageToParagraphs(client.personal_message),
+    team_video_presenters: client.team_video_presenters,
     team_video_url: client.team_video_url,
+    team_video_placeholder_text: client.team_video_placeholder_text,
     show_upsell: client.show_upsell,
     referral_action_description: client.referral_action_description,
     upsell_heading: client.upsell_heading,
@@ -431,18 +435,54 @@ export function ThankYouClientsForm() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="ty-video">Team video (Vimeo ID)</Label>
-              <Input
-                id="ty-video"
-                value={form.team_video_url ?? ''}
-                onChange={(e) => updateField('team_video_url', e.target.value || null)}
-                placeholder="123456789"
-              />
-              <p className="text-xs text-muted-foreground">
-                Enter the Vimeo video ID only (not the full URL). Leave blank to show the team video
-                placeholder until a recording is ready.
-              </p>
+            <div className="space-y-4 rounded-lg border p-4">
+              <div>
+                <Label className="text-base">Team video</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Set presenter names to show the team video section. Add a Vimeo ID when the
+                  recording is ready, or leave it blank to show a placeholder.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ty-presenters">Presenter names</Label>
+                <Input
+                  id="ty-presenters"
+                  value={form.team_video_presenters ?? ''}
+                  onChange={(e) => updateField('team_video_presenters', e.target.value || null)}
+                  placeholder="Carl & Toby"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave blank to hide the team video section entirely.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ty-video">Vimeo video ID</Label>
+                <Input
+                  id="ty-video"
+                  value={form.team_video_url ?? ''}
+                  onChange={(e) => updateField('team_video_url', e.target.value || null)}
+                  placeholder="123456789"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Vimeo ID only, not the full URL. When blank but presenters are set, the page shows
+                  a placeholder until the video is ready.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ty-video-placeholder">Placeholder text</Label>
+                <Input
+                  id="ty-video-placeholder"
+                  value={form.team_video_placeholder_text ?? ''}
+                  onChange={(e) =>
+                    updateField('team_video_placeholder_text', e.target.value || null)
+                  }
+                  placeholder="Message coming shortly"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Subtext shown under presenter names while the video is not ready. Defaults to
+                  &quot;Message coming shortly&quot; on the site if left blank.
+                </p>
+              </div>
             </div>
 
             <div className="flex items-center justify-between rounded-lg border p-3">

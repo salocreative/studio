@@ -9,7 +9,9 @@ export interface ThankYouClient {
   recipient_names: string
   project_description: string
   personal_message: string | string[]
+  team_video_presenters: string | null
   team_video_url: string | null
+  team_video_placeholder_text: string | null
   show_upsell: boolean
   referral_action_description: string | null
   upsell_heading: string | null
@@ -26,7 +28,9 @@ export type ThankYouClientInput = {
   recipient_names: string
   project_description: string
   personal_message: string[]
+  team_video_presenters: string | null
   team_video_url: string | null
+  team_video_placeholder_text: string | null
   show_upsell: boolean
   referral_action_description: string | null
   upsell_heading: string | null
@@ -86,7 +90,9 @@ function toDbRow(input: ThankYouClientInput) {
     recipient_names: input.recipient_names.trim(),
     project_description: input.project_description.trim(),
     personal_message: paragraphs,
+    team_video_presenters: input.team_video_presenters?.trim() || null,
     team_video_url: input.team_video_url?.trim() || null,
+    team_video_placeholder_text: input.team_video_placeholder_text?.trim() || null,
     show_upsell: input.show_upsell,
     referral_action_description: input.referral_action_description?.trim() || null,
     upsell_heading: input.upsell_heading?.trim() || null,
