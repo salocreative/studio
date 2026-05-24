@@ -42,7 +42,7 @@ import {
   type ThankYouClientInput,
 } from '@/app/actions/thank-you-clients'
 
-const THANK_YOU_BASE_URL = 'https://thankyou.salo.uk/thank-you'
+const THANK_YOU_BASE_URL = 'https://thankyou.salo.uk'
 
 function getThankYouPageUrl(slug: string) {
   return `${THANK_YOU_BASE_URL}/${slug}`
