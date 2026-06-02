@@ -5,6 +5,13 @@
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  extractLikelihoodFromMondayData,
+  extractLikelihoodFromRaw,
+  extractMondayStatusFromMondayData,
+  extractMondayStatusFromRaw,
+} from '@/lib/monday/column-extract'
+import { findMappingColumnId } from '@/lib/monday/mapping-resolver'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
@@ -47,6 +54,8 @@ export interface MondayProject {
   status?: string
   quoted_hours?: number
   quote_value?: number
+  monday_status?: string
+  likelihood?: number
   column_values?: Record<string, any>
   board_name?: string
 }
@@ -407,6 +416,8 @@ export async function getMondayProjects(
     // Get date column IDs for this board
     const dueDateColumnId = getColumnId(board.id, 'due_date', board.name)
     const completedDateColumnId = getColumnId(board.id, 'completed_date', board.name)
+    const statusColumnId = getColumnId(board.id, 'status', board.name)
+    const likelihoodColumnId = getColumnId(board.id, 'likelihood', board.name)
 
     for (const item of board.items_page.items || []) {
       // Find client name from column values using the mapped column
@@ -524,6 +535,9 @@ export async function getMondayProjects(
         }
       }
 
+      const monday_status = extractMondayStatusFromRaw(item.column_values, statusColumnId) ?? undefined
+      const likelihood = extractLikelihoodFromRaw(item.column_values, likelihoodColumnId) ?? undefined
+
       // Convert column_values to a more usable format
       const column_values: Record<string, any> = {}
       item.column_values?.forEach((cv) => {
@@ -551,6 +565,8 @@ export async function getMondayProjects(
         completed_date,
         due_date,
         quote_value,
+        monday_status,
+        likelihood,
         board_name: board.name,
         column_values,
       })
@@ -573,6 +589,8 @@ export async function getMondayProjects(
     const quoteValueColumnId = getColumnId(board.id, 'quote_value', board.name, isCompletedBoard)
     const dueDateColumnId = getColumnId(board.id, 'due_date', board.name)
     const completedDateColumnId = getColumnId(board.id, 'completed_date', board.name)
+    const statusColumnId = getColumnId(board.id, 'status', board.name)
+    const likelihoodColumnId = getColumnId(board.id, 'likelihood', board.name)
     for (const item of page.items) {
       const extractDateFromColumn = (columnId: string | undefined): string | undefined => {
         if (!columnId || !item.column_values) return undefined
@@ -627,6 +645,8 @@ export async function getMondayProjects(
           } else if (col.text) quote_value = parseFloat(col.text.replace(/[£,$,\s]/g, ''))
         }
       }
+      const monday_status = extractMondayStatusFromRaw(item.column_values, statusColumnId) ?? undefined
+      const likelihood = extractLikelihoodFromRaw(item.column_values, likelihoodColumnId) ?? undefined
       const column_values: Record<string, any> = {}
       item.column_values?.forEach((cv) => {
         column_values[cv.id] = { text: cv.text, value: cv.value ? JSON.parse(cv.value) : null, type: cv.type }
@@ -648,6 +668,8 @@ export async function getMondayProjects(
         completed_date,
         due_date,
         quote_value,
+        monday_status,
+        likelihood,
         board_name: board.name,
         column_values,
       })
@@ -696,6 +718,8 @@ export async function getMondayProjects(
         const quoteValueColumnId = getColumnId(boardId, 'quote_value', boardName, isCompletedBoard)
         const dueDateColumnId = getColumnId(boardId, 'due_date', boardName)
         const completedDateColumnId = getColumnId(boardId, 'completed_date', boardName)
+        const statusColumnId = getColumnId(boardId, 'status', boardName)
+        const likelihoodColumnId = getColumnId(boardId, 'likelihood', boardName)
         const extractDateFromColumn = (columnId: string | undefined): string | undefined => {
           if (!columnId || !item.column_values) return undefined
           const dateColumn = item.column_values.find((cv) => cv.id === columnId)
@@ -751,6 +775,8 @@ export async function getMondayProjects(
             }
           }
         }
+        const monday_status = extractMondayStatusFromRaw(item.column_values, statusColumnId) ?? undefined
+        const likelihood = extractLikelihoodFromRaw(item.column_values, likelihoodColumnId) ?? undefined
         const column_values: Record<string, any> = {}
         item.column_values?.forEach((cv) => {
           column_values[cv.id] = { text: cv.text, value: cv.value ? JSON.parse(cv.value) : null, type: cv.type }
@@ -771,6 +797,8 @@ export async function getMondayProjects(
           completed_date,
           due_date,
           quote_value,
+          monday_status,
+          likelihood,
           board_name: boardName || undefined,
           column_values,
         })
@@ -1136,6 +1164,11 @@ export async function syncMondayData(
 
     const totalProjects = mondayProjects.length
 
+    const { data: forecastMappings } = await supabase
+      .from('monday_column_mappings')
+      .select('monday_column_id, board_id, column_type')
+      .in('column_type', ['status', 'likelihood'])
+
     // 3. Sync projects to Supabase
     for (let i = 0; i < mondayProjects.length; i++) {
       const project = mondayProjects[i]
@@ -1171,7 +1204,7 @@ export async function syncMondayData(
       // Check if project exists - get full record to preserve quoted_hours and quote_value for locked projects
       const { data: existing } = await supabase
         .from('monday_projects')
-        .select('id, status, quoted_hours, quote_value, monday_data')
+        .select('id, status, quoted_hours, quote_value, monday_status, likelihood, monday_data')
         .eq('monday_item_id', project.id)
         .single()
 
@@ -1247,6 +1280,45 @@ export async function syncMondayData(
         }
       }
 
+      const statusColumnId = findMappingColumnId(
+        forecastMappings,
+        'status',
+        project.board_id
+      )
+      const likelihoodColumnId = findMappingColumnId(
+        forecastMappings,
+        'likelihood',
+        project.board_id
+      )
+
+      let finalMondayStatus = project.monday_status || null
+      if (!finalMondayStatus && project.column_values && statusColumnId) {
+        finalMondayStatus = extractMondayStatusFromMondayData(
+          project.column_values,
+          statusColumnId
+        )
+      }
+      if (!finalMondayStatus && existing?.monday_data && statusColumnId) {
+        finalMondayStatus = extractMondayStatusFromMondayData(
+          existing.monday_data as Record<string, { text?: string; value?: unknown }>,
+          statusColumnId
+        )
+      }
+
+      let finalLikelihood = project.likelihood ?? null
+      if (finalLikelihood == null && project.column_values && likelihoodColumnId) {
+        finalLikelihood = extractLikelihoodFromMondayData(
+          project.column_values,
+          likelihoodColumnId
+        )
+      }
+      if (finalLikelihood == null && existing?.monday_data && likelihoodColumnId) {
+        finalLikelihood = extractLikelihoodFromMondayData(
+          existing.monday_data as Record<string, { text?: string; value?: unknown }>,
+          likelihoodColumnId
+        )
+      }
+
       // Handle status transitions
       // - Leads can move to active, but once active/completed they shouldn't go back to lead
       // - Locked projects stay locked (preserve time tracking data)
@@ -1279,6 +1351,8 @@ export async function syncMondayData(
         due_date: project.due_date || null,
         quoted_hours: finalQuotedHours,
         quote_value: finalQuoteValue,
+        monday_status: finalMondayStatus,
+        likelihood: finalLikelihood,
         monday_data: project.column_values,
         status: finalStatus,
         updated_at: new Date().toISOString(),

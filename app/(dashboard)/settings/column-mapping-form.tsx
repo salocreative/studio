@@ -350,7 +350,7 @@ export function ColumnMappingForm() {
     setEditingMappings({})
   }
 
-  async function handleSave(columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) {
+  async function handleSave(columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status' | 'likelihood', columnId: string) {
     if (!editingBoardType) return
     
     const config = boardConfigs[editingBoardType]
@@ -426,7 +426,7 @@ export function ColumnMappingForm() {
       type: 'leads',
       title: 'Leads',
       description: 'Board for potential projects and leads',
-      requiredParentColumns: ['client', 'quote_value', 'due_date', 'status'],
+      requiredParentColumns: ['client', 'quote_value', 'due_date', 'status', 'likelihood'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs.leads,
     },
@@ -659,7 +659,7 @@ function BoardMappingEditor({
   parentColumns: Column[]
   subtaskColumns: Column[]
   mappings: Record<string, string>
-  onSave: (columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status', columnId: string) => Promise<void>
+  onSave: (columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status' | 'likelihood', columnId: string) => Promise<void>
   onMappingChange: (mappings: Record<string, string>) => void
   saving: boolean
   requiredParentColumns: string[]
@@ -667,14 +667,14 @@ function BoardMappingEditor({
 }) {
   
   const renderColumnMapping = (
-    columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status',
+    columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status' | 'likelihood',
     label: string,
     description: string,
     columns: Column[],
     filterFn?: (col: Column) => boolean,
     isRequired: boolean = false
   ) => {
-    const isParent = columnType === 'client' || columnType === 'agency' || columnType === 'quote_value' || columnType === 'due_date' || columnType === 'completed_date' || columnType === 'status'
+    const isParent = columnType === 'client' || columnType === 'agency' || columnType === 'quote_value' || columnType === 'due_date' || columnType === 'completed_date' || columnType === 'status' || columnType === 'likelihood'
     const isConfigured = !!mappings[columnType]
     
     return (
@@ -786,9 +786,23 @@ function BoardMappingEditor({
         {requiredParentColumns.includes('status') && renderColumnMapping(
           'status',
           'Status Column',
-          'Select the status column for filtering leads',
+          'Monday workflow status (e.g. Scoping, Needs quoting). Synced for forecast and lead filters.',
           parentColumns,
           (col) => col.type === 'status' || col.type === 'dropdown',
+          true
+        )}
+
+        {requiredParentColumns.includes('likelihood') && renderColumnMapping(
+          'likelihood',
+          'Likelihood Column',
+          'Win probability percentage for leads (0–100)',
+          parentColumns,
+          (col) =>
+            col.type?.toLowerCase().includes('number') ||
+            col.type?.toLowerCase().includes('numeric') ||
+            col.type === 'numeric_rating' ||
+            col.type === 'rating' ||
+            col.title?.toLowerCase().includes('likelihood'),
           true
         )}
 

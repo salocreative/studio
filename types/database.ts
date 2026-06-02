@@ -51,9 +51,11 @@ export interface Database {
           agency: string | null
           completed_date: string | null
           due_date: string | null
-          status: 'active' | 'archived' | 'locked'
+          status: 'active' | 'archived' | 'locked' | 'lead'
           quoted_hours: number | null
           quote_value: number | null
+          monday_status: string | null
+          likelihood: number | null
           monday_data: Json | null
           created_at: string
           updated_at: string
@@ -67,9 +69,11 @@ export interface Database {
           agency?: string | null
           completed_date?: string | null
           due_date?: string | null
-          status?: 'active' | 'archived' | 'locked'
+          status?: 'active' | 'archived' | 'locked' | 'lead'
           quoted_hours?: number | null
           quote_value?: number | null
+          monday_status?: string | null
+          likelihood?: number | null
           monday_data?: Json | null
           created_at?: string
           updated_at?: string
@@ -83,9 +87,11 @@ export interface Database {
           agency?: string | null
           completed_date?: string | null
           due_date?: string | null
-          status?: 'active' | 'archived' | 'locked'
+          status?: 'active' | 'archived' | 'locked' | 'lead'
           quoted_hours?: number | null
           quote_value?: number | null
+          monday_status?: string | null
+          likelihood?: number | null
           monday_data?: Json | null
           created_at?: string
           updated_at?: string
@@ -197,7 +203,7 @@ export interface Database {
         Row: {
           id: string
           monday_column_id: string
-          column_type: 'client' | 'agency' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
+          column_type: 'client' | 'agency' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status' | 'likelihood'
           board_id: string | null
           workspace_id: string | null
           created_at: string
@@ -206,7 +212,7 @@ export interface Database {
         Insert: {
           id?: string
           monday_column_id: string
-          column_type: 'client' | 'agency' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status'
+          column_type: 'client' | 'agency' | 'time' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status' | 'likelihood'
           board_id?: string | null
           workspace_id?: string | null
           created_at?: string
