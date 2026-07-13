@@ -43,7 +43,7 @@ import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
 import { RetainersForm } from './retainers-form'
 import { ThankYouClientsForm } from './thank-you-clients-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
-import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion } from '@/app/actions/users'
+import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion, updateUserExpectedUtilization, getFormerUsers } from '@/app/actions/users'
 import { toast } from 'sonner'
 
 interface User {
@@ -52,6 +52,16 @@ interface User {
   full_name: string | null
   role: 'admin' | 'designer' | 'manager'
   exclude_from_utilization?: boolean
+  expected_utilization_percentage?: number
+  created_at: string
+}
+
+interface FormerUser {
+  id: string
+  email: string
+  full_name: string | null
+  role: 'admin' | 'designer' | 'manager'
+  deleted_at: string
   created_at: string
 }
 
@@ -62,6 +72,7 @@ export default function SettingsPage() {
   
   // Team management state
   const [users, setUsers] = useState<User[]>([])
+  const [formerUsers, setFormerUsers] = useState<FormerUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
   const [showExistingForm, setShowExistingForm] = useState(false)
@@ -81,11 +92,16 @@ export default function SettingsPage() {
   async function loadUsers() {
     setLoadingUsers(true)
     try {
-      const result = await getUsers()
-      if (result.error) {
-        toast.error(result.error)
-      } else if (result.users) {
-        setUsers(result.users)
+      const [activeResult, formerResult] = await Promise.all([getUsers(), getFormerUsers()])
+      if (activeResult.error) {
+        toast.error(activeResult.error)
+      } else if (activeResult.users) {
+        setUsers(activeResult.users)
+      }
+      if (formerResult.error) {
+        console.error('Error loading former users:', formerResult.error)
+      } else if (formerResult.users) {
+        setFormerUsers(formerResult.users)
       }
     } catch (error) {
       console.error('Error loading users:', error)
@@ -156,8 +172,12 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleDeleteUser(userId: string) {
-    if (!confirm('Are you sure you want to remove this user? This action cannot be undone.')) {
+  async function handleDeactivateUser(userId: string, userName: string) {
+    if (
+      !confirm(
+        `Deactivate ${userName}? They will lose access to Studio and be removed from utilisation and performance metrics. Their historical time entries and project data will be kept.`
+      )
+    ) {
       return
     }
 
@@ -167,11 +187,36 @@ export default function SettingsPage() {
         toast.error(result.error)
       } else {
         await loadUsers()
-        toast.success('User removed')
+        toast.success('Team member deactivated. Historical data has been retained.')
       }
     } catch (error) {
-      console.error('Error deleting user:', error)
-      toast.error('Failed to remove user')
+      console.error('Error deactivating user:', error)
+      toast.error('Failed to deactivate team member')
+    }
+  }
+
+  async function handleUpdateExpectedUtilization(userId: string, value: string) {
+    const pct = parseFloat(value)
+    if (isNaN(pct) || pct < 0 || pct > 100) {
+      toast.error('Expected utilization must be between 0 and 100')
+      return
+    }
+
+    try {
+      const result = await updateUserExpectedUtilization(userId, pct)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        setUsers((prev) =>
+          prev.map((u) =>
+            u.id === userId ? { ...u, expected_utilization_percentage: pct } : u
+          )
+        )
+        toast.success('Expected utilization updated')
+      }
+    } catch (error) {
+      console.error('Error updating expected utilization:', error)
+      toast.error('Failed to update expected utilization')
     }
   }
 
@@ -387,7 +432,7 @@ export default function SettingsPage() {
                     <div>
                       <CardTitle>All Team Members</CardTitle>
                       <CardDescription>
-                        Manage roles, exclude from utilization calculations, and remove team members from the platform
+                        Set expected capacity, manage roles, and deactivate team members who have left (historical data is kept)
                       </CardDescription>
                     </div>
                     <div className="flex gap-2">
@@ -415,7 +460,8 @@ export default function SettingsPage() {
                             <TableHead>Name</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Role</TableHead>
-                            <TableHead>Exclude from Utilization</TableHead>
+                            <TableHead>Expected capacity</TableHead>
+                            <TableHead>Exclude from utilisation</TableHead>
                             <TableHead>Joined</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
@@ -423,7 +469,7 @@ export default function SettingsPage() {
                         <TableBody>
                           {users.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={6} className="text-center text-muted-foreground">
+                              <TableCell colSpan={7} className="text-center text-muted-foreground">
                                 No users found
                               </TableCell>
                             </TableRow>
@@ -457,6 +503,29 @@ export default function SettingsPage() {
                                   </Select>
                                 </TableCell>
                                 <TableCell>
+                                  <div className="flex items-center gap-1">
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      step={5}
+                                      className="w-20 h-8"
+                                      defaultValue={user.expected_utilization_percentage ?? 100}
+                                      onBlur={(e) => {
+                                        const next = e.target.value
+                                        const current = String(user.expected_utilization_percentage ?? 100)
+                                        if (next !== current) {
+                                          handleUpdateExpectedUtilization(user.id, next)
+                                        }
+                                      }}
+                                    />
+                                    <span className="text-sm text-muted-foreground">%</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    of 5 days × 6h
+                                  </p>
+                                </TableCell>
+                                <TableCell>
                                   <div className="flex items-center space-x-2">
                                     <Switch
                                       checked={user.exclude_from_utilization || false}
@@ -476,7 +545,13 @@ export default function SettingsPage() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    onClick={() => handleDeleteUser(user.id)}
+                                    title="Deactivate team member"
+                                    onClick={() =>
+                                      handleDeactivateUser(
+                                        user.id,
+                                        user.full_name || user.email
+                                      )
+                                    }
                                   >
                                     <Trash2 className="h-4 w-4 text-destructive" />
                                   </Button>
@@ -489,6 +564,43 @@ export default function SettingsPage() {
                     )}
                   </CardContent>
                 </Card>
+
+                {formerUsers.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Former team members</CardTitle>
+                      <CardDescription>
+                        Deactivated accounts. Time entries and project history are retained for reporting.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Role</TableHead>
+                            <TableHead>Deactivated</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {formerUsers.map((user) => (
+                            <TableRow key={user.id} className="opacity-70">
+                              <TableCell className="font-medium">
+                                {user.full_name || '—'}
+                              </TableCell>
+                              <TableCell>{user.email}</TableCell>
+                              <TableCell>{user.role}</TableCell>
+                              <TableCell>
+                                {new Date(user.deleted_at).toLocaleDateString()}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </TabsContent>
 

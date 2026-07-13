@@ -424,7 +424,100 @@ export async function updateUserUtilizationExclusion(
 }
 
 /**
- * Delete user
+ * Update a user's expected utilization percentage (capacity for performance metrics)
+ */
+export async function updateUserExpectedUtilization(
+  userId: string,
+  expectedUtilizationPercentage: number
+) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const pct = Number(expectedUtilizationPercentage)
+  if (isNaN(pct) || pct < 0 || pct > 100) {
+    return { error: 'Expected utilization must be between 0 and 100' }
+  }
+
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
+  try {
+    const { error } = await adminClient
+      .from('users')
+      .update({ expected_utilization_percentage: pct })
+      .eq('id', userId)
+      .is('deleted_at', null)
+
+    if (error) throw error
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating expected utilization:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to update expected utilization' }
+  }
+}
+
+/**
+ * Former team members (soft-deleted). Historical time data is retained.
+ */
+export async function getFormerUsers() {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
+  try {
+    const { data, error } = await adminClient
+      .from('users')
+      .select('id, email, full_name, role, deleted_at, created_at')
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false })
+
+    if (error) throw error
+
+    return { success: true, users: data || [] }
+  } catch (error) {
+    console.error('Error fetching former users:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to fetch former team members' }
+  }
+}
+
+/**
+ * Deactivate user (soft delete — preserves time entries and historical data)
  */
 export async function deleteUser(userId: string) {
   const supabase = await createClient()
@@ -471,7 +564,10 @@ export async function deleteUser(userId: string) {
     // This preserves all time entries and historical data
     const { error } = await adminClient
       .from('users')
-      .update({ deleted_at: new Date().toISOString() })
+      .update({
+        deleted_at: new Date().toISOString(),
+        exclude_from_utilization: true,
+      })
       .eq('id', userId)
 
     if (error) throw error

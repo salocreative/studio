@@ -38,6 +38,7 @@ interface TeamMemberUtilization {
   available_hours: number
   utilization_percentage: number
   days_worked: number
+  expected_utilization_percentage: number
 }
 
 interface Period {
@@ -553,7 +554,7 @@ export default function PerformancePage() {
           <CardHeader>
             <CardTitle>Team Utilisation</CardTitle>
             <CardDescription>
-              Utilisation is calculated as hours logged divided by available hours (6 hours per working day)
+              Utilisation is hours logged divided by each person&apos;s expected capacity (their % of 6 hours per working day)
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -572,6 +573,7 @@ export default function PerformancePage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Role</TableHead>
+                      <TableHead className="text-right">Expected</TableHead>
                       <TableHead className="text-right">Hours Logged</TableHead>
                       <TableHead className="text-right">Available Hours</TableHead>
                       <TableHead className="text-right">Days Worked</TableHead>
@@ -587,6 +589,9 @@ export default function PerformancePage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{member.role}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {member.expected_utilization_percentage}%
                         </TableCell>
                         <TableCell className="text-right">
                           {member.hours_logged.toFixed(1)}h

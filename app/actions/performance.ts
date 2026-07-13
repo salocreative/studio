@@ -3,6 +3,14 @@
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { startOfMonth, endOfMonth, eachDayOfInterval, getDay, format, startOfWeek } from 'date-fns'
 
+const BASE_HOURS_PER_DAY = 6
+
+function capacityMultiplier(expectedUtilizationPercentage: number | null | undefined): number {
+  const pct = expectedUtilizationPercentage ?? 100
+  const clamped = Math.min(100, Math.max(0, Number(pct)))
+  return clamped / 100
+}
+
 interface TeamMemberUtilization {
   id: string
   email: string
@@ -12,6 +20,7 @@ interface TeamMemberUtilization {
   available_hours: number
   utilization_percentage: number
   days_worked: number
+  expected_utilization_percentage: number
 }
 
 interface DayBreakdown {
@@ -98,9 +107,8 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       return dayOfWeek !== 0 && dayOfWeek !== 6 // Exclude Sunday (0) and Saturday (6)
     })
 
-    // Standard expected hours per day
-    const expectedHoursPerDay = 6
-    const totalAvailableHours = workingDays.length * expectedHoursPerDay
+    // Standard expected hours per day at 100% capacity
+    const workingDayCount = workingDays.length
 
     // Get all time entries for the period
     const startDateStr = format(periodStart, 'yyyy-MM-dd')
@@ -147,11 +155,15 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
 
     // Build utilization data for each user
     const members: TeamMemberUtilization[] = users.map((user: any) => {
+      const userCapacity = capacityMultiplier(user.expected_utilization_percentage)
+      const expectedHoursPerDay = BASE_HOURS_PER_DAY * userCapacity
+      const totalAvailableHours = workingDayCount * expectedHoursPerDay
       const userHours = hoursByUser[user.id]?.hours || 0
       const daysWorked = hoursByUser[user.id]?.days.size || 0
       const utilization = totalAvailableHours > 0
         ? (userHours / totalAvailableHours) * 100
         : 0
+      const expectedPct = Number(user.expected_utilization_percentage ?? 100)
 
       return {
         id: user.id,
@@ -162,8 +174,11 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
         available_hours: totalAvailableHours,
         utilization_percentage: utilization,
         days_worked: daysWorked,
+        expected_utilization_percentage: expectedPct,
       }
     })
+
+    const totalTeamAvailableHours = members.reduce((sum, m) => sum + m.available_hours, 0)
 
     // Sort by utilization percentage (descending)
     members.sort((a, b) => b.utilization_percentage - a.utilization_percentage)
@@ -225,6 +240,7 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       // Get hours logged for each user on this day
       users.forEach((user: any) => {
         const hoursLogged = dayEntries[user.id] || 0
+        const expectedHoursPerDay = BASE_HOURS_PER_DAY * capacityMultiplier(user.expected_utilization_percentage)
         const percentage = expectedHoursPerDay > 0 ? (hoursLogged / expectedHoursPerDay) * 100 : 0
         totalHoursForDay += hoursLogged
         
@@ -236,8 +252,9 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
         })
       })
       
-      // Calculate total percentage based on number of users and expected hours
-      const totalExpectedHours = users.length * expectedHoursPerDay
+      const totalExpectedHours = users.reduce((sum, user: any) => {
+        return sum + BASE_HOURS_PER_DAY * capacityMultiplier(user.expected_utilization_percentage)
+      }, 0)
       const totalPercentage = totalExpectedHours > 0 
         ? (totalHoursForDay / totalExpectedHours) * 100 
         : 0
@@ -259,8 +276,8 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       period: {
         start: startDateStr,
         end: endDateStr,
-        working_days: workingDays.length,
-        total_available_hours: totalAvailableHours,
+        working_days: workingDayCount,
+        total_available_hours: totalTeamAvailableHours,
       },
       futureCapacity: {
         totalLeadsHours,
