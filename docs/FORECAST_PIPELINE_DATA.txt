@@ -1,0 +1,349 @@
+SALO STUDIO — FORECAST PIPELINE DATA REFERENCE
+================================================
+
+Purpose
+-------
+This document describes where forecast-related project data lives in the Salo Studio
+Supabase database, how Monday.com values are mapped into typed columns, and how to
+query that data from another application (e.g. a separate forecast tool).
+
+Scope: main commercial projects only — Flexi-Design work is excluded from forecast
+pipelines. Data is synced from Monday.com on a schedule; values reflect the last
+successful sync unless you read monday_data directly.
+
+
+PRIMARY TABLE: public.monday_projects
+-------------------------------------
+One row per Monday.com parent item (a "project"). This is the main table for forecast.
+
+Include rows where:
+  status IN ('active', 'locked', 'lead')
+
+Exclude rows where monday_board_id is a Flexi-Design board (see "Board exclusions"
+below). Optionally exclude archived rows (status = 'archived') — they are not part
+of the standard forecast dataset.
+
+
+COLUMN REFERENCE (monday_projects)
+----------------------------------
+
+id                  uuid          Studio primary key. Use for joins inside Supabase.
+monday_item_id      text          Monday.com item ID (stable external key).
+monday_board_id     text          Monday board ID — determines project type.
+name                text          Project name from Monday.
+client_name         text          Client name (from mapped Monday "client" column).
+agency              text          Agency name if applicable (mapped "agency" column).
+
+status              project_status enum — LIFECYCLE, not Monday workflow label:
+                      'active'  = live project on a main active board
+                      'locked'  = completed/archived on a completed board
+                      'lead'    = item on the configured leads board
+                      'archived'= removed from Monday but kept in Studio (uncommon)
+
+monday_status       text          Monday WORKFLOW label (materialised on sync):
+                      e.g. "Scoping", "Needs quoting", "Speculative", "Ongoing"
+                      NULL if unmapped or empty on Monday.
+                      Do not confuse with the status column above.
+
+quote_value         numeric(10,2) Project value in GBP (quote subtotal). Primary
+                      field for "how much money". NULL if not set in Monday or not
+                      mapped. For completed boards, mapping must be per-board.
+
+quoted_hours        numeric(10,2) Sum of subtask quoted hours (denormalised from
+                      monday_tasks). Useful for capacity; not used for revenue forecast.
+
+completed_date      date          When the project finished (completed boards).
+                      Mapped from Monday "completed_date" column (fallback: date__1).
+
+due_date            date          Expected finish / due date (active projects and leads).
+                      Mapped from Monday "due_date" column.
+
+likelihood          numeric(5,2)  Lead win probability 0–100. Meaningful for
+                      status = 'lead' only. NULL for active/completed unless present.
+
+monday_data         jsonb         Raw Monday column dump keyed by Monday column ID.
+                      Fallback if typed columns are NULL. See "monday_data shape".
+
+created_at          timestamptz
+updated_at          timestamptz   Last sync touch time (not necessarily forecast date).
+
+
+TWO DIFFERENT "STATUS" CONCEPTS
+-------------------------------
+
+1) monday_projects.status (lifecycle)
+   - Set by Studio based on which Monday board the item is on.
+   - Values: active | locked | lead | archived
+   - Use this to split completed vs in-flight vs pipeline.
+
+2) monday_projects.monday_status (workflow label)
+   - Copied from the Monday status/dropdown column mapped as column_type 'status'.
+   - Examples on leads: "Scoping", "Needs quoting", "Speculative"
+   - Examples on active work: "Ongoing", etc. (depends on your Monday setup)
+   - Used for filtering which leads count toward forecast.
+
+
+SEGMENTS (how Studio groups projects for forecast)
+--------------------------------------------------
+
+Map lifecycle status to a forecast segment:
+
+  status = 'locked'  ->  segment "completed"  (billed / finished work)
+  status = 'active'  ->  segment "active"     (work in progress, future billing)
+  status = 'lead'    ->  segment "lead"       (pipeline, probabilistic)
+
+Ignore status = 'archived' for forecast unless you explicitly want historical orphans.
+
+
+DERIVED FIELDS (compute in your app or SQL)
+-------------------------------------------
+
+forecast_date — single date for timeline / cash positioning:
+
+  IF status = 'locked' THEN completed_date
+  ELSE COALESCE(due_date, completed_date)
+  END
+
+  - Completed work: bucket by completed_date (when revenue was realised).
+  - Active + leads: bucket by due_date (expected billing timing).
+  - Rows with NULL forecast_date should be flagged as incomplete data.
+
+weighted_value — expected revenue for leads (optional):
+
+  IF status = 'lead' AND likelihood IS NOT NULL THEN
+    quote_value * (likelihood / 100.0)
+  ELSE
+    quote_value
+  END
+
+  Active and completed segments use full quote_value (no discount).
+
+
+BOARD EXCLUSIONS (Flexi-Design)
+---------------------------------
+Exclude any project whose monday_board_id appears in:
+
+  1) public.flexi_design_boards
+       Column: monday_board_id (all rows)
+
+  2) public.flexi_design_completed_board
+       Single configured board (monday_board_id), if set
+
+  3) Legacy fallback: boards whose Monday name contains "flexi" (Studio merges this
+     in application code; for SQL-only consumers, rely on tables 1 and 2).
+
+Do not use Flexi-Design projects for main revenue forecast.
+
+
+CONFIGURATION TABLES
+--------------------
+
+public.monday_column_mappings
+  Maps Monday column IDs to semantic types per board (or global when board_id IS NULL).
+
+  Relevant column_type values for forecast:
+    quote_value      -> monday_projects.quote_value
+    due_date         -> monday_projects.due_date
+    completed_date   -> monday_projects.completed_date
+    status           -> monday_projects.monday_status (label text)
+    likelihood       -> monday_projects.likelihood (leads board, 0-100)
+    client, agency   -> client_name, agency
+
+  Resolution order: board-specific mapping first, then global (board_id NULL).
+
+public.monday_leads_board
+  Single row (convention): monday_board_id of the leads pipeline board.
+  Items on this board sync with status = 'lead'.
+
+public.monday_completed_boards
+  Lists completed/archive board IDs. Items sync with status = 'locked'.
+
+public.leads_status_config
+  Single row (convention) with:
+    included_statuses  text[]  — if non-empty, ONLY these monday_status labels count
+    excluded_statuses  text[]  — if non-empty, these labels are omitted from lead forecast
+
+  If both arrays empty, all leads are included.
+  If monday_status IS NULL, lead is typically still included.
+  Apply this filter only to segment = lead when mirroring Studio behaviour.
+
+
+monday_data SHAPE (JSONB fallback)
+----------------------------------
+When quote_value, monday_status, or likelihood is NULL, read monday_data using the
+Monday column ID from monday_column_mappings:
+
+  monday_data -> '<monday_column_id>' -> {
+    "text": "<display string>",
+    "value": <parsed JSON or number>,
+    "type": "<monday column type>"
+  }
+
+  Status labels: prefer "text", or value.label if value is an object.
+  Numbers/currency: parse value or strip £/$ from text.
+  Likelihood: numeric 0-100, may appear as number or "75%" in text.
+
+Project-only convenience keys (ignore for forecast):
+  _group_id, _group_title, __monday_group
+
+
+EXAMPLE SQL: BASE FORECAST DATASET
+----------------------------------
+Adjust board exclusion subquery to match your environment.
+
+SELECT
+  p.id,
+  p.monday_item_id,
+  p.name,
+  p.client_name,
+  p.agency,
+  p.status AS lifecycle_status,
+  CASE p.status
+    WHEN 'locked' THEN 'completed'
+    WHEN 'active' THEN 'active'
+    WHEN 'lead' THEN 'lead'
+  END AS segment,
+  p.monday_status,
+  p.quote_value,
+  p.quoted_hours,
+  p.likelihood,
+  p.completed_date,
+  p.due_date,
+  CASE
+    WHEN p.status = 'locked' THEN p.completed_date
+    ELSE COALESCE(p.due_date, p.completed_date)
+  END AS forecast_date,
+  CASE
+    WHEN p.status = 'lead' AND p.likelihood IS NOT NULL THEN
+      p.quote_value * (p.likelihood / 100.0)
+    ELSE p.quote_value
+  END AS weighted_value,
+  p.monday_board_id,
+  p.updated_at
+FROM public.monday_projects p
+WHERE p.status IN ('active', 'locked', 'lead')
+  AND p.monday_board_id NOT IN (
+    SELECT monday_board_id FROM public.flexi_design_boards
+    UNION
+    SELECT monday_board_id FROM public.flexi_design_completed_board
+    WHERE monday_board_id IS NOT NULL
+  )
+ORDER BY forecast_date DESC NULLS LAST, p.name;
+
+
+EXAMPLE SQL: LEADS WITH STATUS FILTER
+-------------------------------------
+Replace included/excluded arrays from leads_status_config.
+
+-- Example: exclude "Speculative" leads
+SELECT *
+FROM (
+  -- use base query above
+) sub
+WHERE segment <> 'lead'
+   OR monday_status IS NULL
+   OR monday_status NOT IN ('Speculative');  -- excluded_statuses
+
+
+EXAMPLE SQL: MONTHLY REVENUE (COMPLETED ONLY)
+---------------------------------------------
+Historical billed work by completion month:
+
+SELECT
+  date_trunc('month', completed_date)::date AS month,
+  SUM(quote_value) AS total_value,
+  COUNT(*) AS project_count
+FROM public.monday_projects p
+WHERE p.status = 'locked'
+  AND p.completed_date IS NOT NULL
+  AND p.quote_value IS NOT NULL
+  AND p.monday_board_id NOT IN (
+    SELECT monday_board_id FROM public.flexi_design_boards
+    UNION
+    SELECT monday_board_id FROM public.flexi_design_completed_board
+  )
+GROUP BY 1
+ORDER BY 1;
+
+
+EXAMPLE SQL: FUTURE PIPELINE (ACTIVE + LEADS)
+---------------------------------------------
+By expected date (due_date):
+
+SELECT
+  date_trunc('month', due_date)::date AS month,
+  status AS lifecycle_status,
+  SUM(
+    CASE
+      WHEN status = 'lead' AND likelihood IS NOT NULL
+      THEN quote_value * (likelihood / 100.0)
+      ELSE quote_value
+    END
+  ) AS weighted_total,
+  SUM(quote_value) AS gross_total,
+  COUNT(*) AS project_count
+FROM public.monday_projects p
+WHERE p.status IN ('active', 'lead')
+  AND p.due_date IS NOT NULL
+  AND p.monday_board_id NOT IN (
+    SELECT monday_board_id FROM public.flexi_design_boards
+    UNION
+    SELECT monday_board_id FROM public.flexi_design_completed_board
+  )
+GROUP BY 1, 2
+ORDER BY 1, 2;
+
+
+DATA QUALITY CHECKS
+-------------------
+Run periodically; incomplete rows skew forecast.
+
+  -- Missing project value
+  SELECT id, name, status, client_name
+  FROM public.monday_projects
+  WHERE status IN ('active', 'locked', 'lead')
+    AND quote_value IS NULL;
+
+  -- Missing forecast date
+  SELECT id, name, status, completed_date, due_date
+  FROM public.monday_projects
+  WHERE status IN ('active', 'locked', 'lead')
+    AND (
+      (status = 'locked' AND completed_date IS NULL)
+      OR (status IN ('active', 'lead') AND due_date IS NULL)
+    );
+
+  -- Leads missing likelihood
+  SELECT id, name, monday_status, quote_value
+  FROM public.monday_projects
+  WHERE status = 'lead' AND likelihood IS NULL;
+
+
+SYNC & FRESHNESS
+----------------
+- Data is populated by Studio's Monday sync (lib/monday/api.ts, syncMondayData).
+- Typed columns (quote_value, due_date, completed_date, monday_status, likelihood)
+  are written during sync from monday_column_mappings.
+- Completed-board items may only sync if already known in the DB (by monday_item_id);
+  very old completed projects might be missing until backfilled.
+- monday_sync_settings.avoid_deletion defaults true: projects removed from Monday
+  are not auto-deleted from the database.
+- After changing column mappings in Studio Settings, run a Monday sync to backfill.
+
+
+STUDIO REFERENCE IMPLEMENTATION
+-------------------------------
+The canonical read logic in this repo is:
+  app/actions/forecast-pipeline.ts  ->  getForecastPipeline()
+
+It returns { projects[], summary } with normalised fields matching the derived
+field definitions above. External apps can replicate the same SQL or call that
+action if integrated with Studio auth.
+
+Related docs:
+  docs/SUPABASE_SCHEMA.md  — full schema and Monday sync details
+  supabase/migrations/052_add_forecast_project_fields.sql — monday_status, likelihood
+
+Migration required on database: 052_add_forecast_project_fields.sql
+Settings required: map Likelihood column on Leads board; ensure quote_value,
+due_date, completed_date, and status mappings per board type.
