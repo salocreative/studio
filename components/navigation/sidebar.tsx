@@ -24,11 +24,17 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useState, useEffect } from 'react'
 
+export interface NavChildItem {
+  title: string
+  href: string
+}
+
 export interface NavItem {
   title: string
   href: string
   icon: React.ComponentType<{ className?: string }>
   roles: ('admin' | 'designer' | 'manager')[]
+  children?: NavChildItem[]
 }
 
 export const navigation: NavItem[] = [
@@ -43,6 +49,10 @@ export const navigation: NavItem[] = [
     href: '/projects',
     icon: FolderKanban,
     roles: ['admin', 'designer', 'manager'],
+    children: [
+      { title: 'Live', href: '/projects' },
+      { title: 'Completed', href: '/projects/completed' },
+    ],
   },
   {
     title: 'Flexi-Design',
@@ -116,6 +126,74 @@ interface SidebarProps {
   userRole?: 'admin' | 'designer' | 'manager'
 }
 
+function isNavItemActive(pathname: string | null, href: string) {
+  return pathname === href || (href !== '/' && pathname?.startsWith(href + '/'))
+}
+
+function NavLinks({
+  items,
+  pathname,
+  onNavigate,
+}: {
+  items: NavItem[]
+  pathname: string | null
+  onNavigate?: () => void
+}) {
+  return (
+    <>
+      {items.map((item) => {
+        const Icon = item.icon
+        const isActive = isNavItemActive(pathname, item.href)
+        const showChildren = item.children && isActive
+
+        return (
+          <div key={item.href}>
+            <Link
+              href={item.href}
+              onClick={onNavigate}
+              className={cn(
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                isActive
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              )}
+            >
+              <Icon className="h-5 w-5" />
+              {item.title}
+            </Link>
+            {showChildren && (
+              <div className="ml-8 mt-1 space-y-1">
+                {item.children!.map((child) => {
+                  const childActive =
+                    child.href === '/projects'
+                      ? pathname === '/projects'
+                      : pathname === child.href
+
+                  return (
+                    <Link
+                      key={child.href}
+                      href={child.href}
+                      onClick={onNavigate}
+                      className={cn(
+                        'block rounded-lg px-3 py-1.5 text-sm transition-colors',
+                        childActive
+                          ? 'font-medium text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {child.title}
+                    </Link>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 export function Sidebar({ userRole = 'manager' }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
@@ -134,26 +212,7 @@ export function Sidebar({ userRole = 'manager' }: SidebarProps) {
         <h1 className="text-xl font-semibold">Studio</h1>
       </div>
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {filteredNav.map((item) => {
-          const Icon = item.icon
-          const isActive = pathname === item.href || pathname?.startsWith(item.href + '/')
-          
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              )}
-            >
-              <Icon className="h-5 w-5" />
-              {item.title}
-            </Link>
-          )
-        })}
+        <NavLinks items={filteredNav} pathname={pathname} />
       </nav>
       <div className="border-t p-3">
         <Button
@@ -222,27 +281,11 @@ export function MobileNav({ userRole = 'manager' }: MobileNavProps) {
           <SheetTitle className="text-xl font-semibold">Studio</SheetTitle>
         </SheetHeader>
         <nav className="flex-1 space-y-1 px-3 py-4">
-          {filteredNav.map((item) => {
-            const Icon = item.icon
-            const isActive = pathname === item.href || pathname?.startsWith(item.href + '/')
-            
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={handleNavClick}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                )}
-              >
-                <Icon className="h-5 w-5" />
-                {item.title}
-              </Link>
-            )
-          })}
+          <NavLinks
+            items={filteredNav}
+            pathname={pathname}
+            onNavigate={handleNavClick}
+          />
         </nav>
         <div className="border-t p-3">
           <Button

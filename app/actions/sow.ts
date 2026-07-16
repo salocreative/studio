@@ -204,7 +204,6 @@ export async function getSowDocuments() {
     const { data, error } = await auth.supabase
       .from('sow_documents')
       .select('*')
-      .neq('status', 'archived')
       .order('updated_at', { ascending: false })
 
     if (error) throw error
