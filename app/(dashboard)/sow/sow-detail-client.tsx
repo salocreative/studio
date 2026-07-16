@@ -44,6 +44,7 @@ import {
   createSowDocument,
   createSowShareLink,
   deactivateSowShareLink,
+  deleteSowDocument,
   getSowAgencies,
   getSowClients,
   getSowDocument,
@@ -118,6 +119,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [customClient, setCustomClient] = useState('')
   const [customerType, setCustomerType] = useState<'partner' | 'client'>('client')
   const [includeVat, setIncludeVat] = useState(false)
+  const [showQuotedHours, setShowQuotedHours] = useState(true)
   const [notes, setNotes] = useState('')
   const [lineItems, setLineItems] = useState<LineItemForm[]>([])
   const [newItemTitle, setNewItemTitle] = useState('')
@@ -201,6 +203,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         }
 
         setIncludeVat(doc.include_vat)
+        setShowQuotedHours(doc.show_quoted_hours ?? true)
         setNotes(doc.notes || '')
         setLineItems(
           (doc.line_items || []).map((item) => ({
@@ -370,6 +373,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         agency_name: isPartnerWork ? resolvedAgencyName : null,
         customer_type: customerType,
         include_vat: includeVat,
+        show_quoted_hours: showQuotedHours,
         notes: notes.trim() || null,
         monday_project_id: mondayProjectId,
         push_to_monday: isNew && pushToMonday && !mondayProjectId,
@@ -457,6 +461,25 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     }
   }
 
+  async function handleDelete() {
+    if (!sowId) return
+
+    const message =
+      document?.status === 'approved'
+        ? 'Permanently delete this approved statement of work? This cannot be undone.'
+        : 'Permanently delete this statement of work? This cannot be undone.'
+
+    if (!confirm(message)) return
+
+    const result = await deleteSowDocument(sowId)
+    if (result.error) {
+      toast.error('Error deleting', { description: result.error })
+    } else {
+      toast.success('Statement of work deleted')
+      router.push('/sow')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -492,6 +515,15 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           )}
         </div>
         <div className="flex gap-2">
+          {!isNew && (
+            <Button
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={handleDelete}
+            >
+              Delete
+            </Button>
+          )}
           {!isNew && !isReadOnly && (
             <Button variant="outline" onClick={handleArchive}>
               Archive
@@ -660,6 +692,20 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                   rows={3}
                   disabled={isReadOnly}
                   placeholder="Scope assumptions, deliverables summary, etc."
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label htmlFor="sow-show-hours">Show quoted hours on share view</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Clients see time per line item and total hours when enabled
+                  </p>
+                </div>
+                <Switch
+                  id="sow-show-hours"
+                  checked={showQuotedHours}
+                  onCheckedChange={setShowQuotedHours}
+                  disabled={isReadOnly}
                 />
               </div>
               <div className="flex items-center justify-between rounded-lg border p-3">

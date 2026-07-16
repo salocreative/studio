@@ -27,6 +27,13 @@ function isInternalProject(project: { client_name: string | null }) {
   return project.client_name?.toLowerCase() === INTERNAL_CLIENT_NAME.toLowerCase()
 }
 
+interface ProjectDesigner {
+  id: string
+  full_name: string | null
+  email: string | null
+  hours: number
+}
+
 interface Project {
   id: string
   name: string
@@ -37,6 +44,7 @@ interface Project {
   status: 'active' | 'archived' | 'locked'
   quoted_hours: number | null
   total_logged_hours: number
+  designers?: ProjectDesigner[]
   tasks: Array<{
     id: string
     name: string
@@ -53,6 +61,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
+  const [selectedDesigner, setSelectedDesigner] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'clients' | 'internal'>('clients')
   const [activeTab, setActiveTab] = useState<'live' | 'completed'>('live')
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
@@ -108,15 +117,17 @@ export default function ProjectsPage() {
     setProjectDetails(null)
   }
 
-  // Filter projects based on search query (but not client filter yet, for getting available clients)
+  // Filter projects based on search query (but not client/designer filter yet)
   const searchFilteredProjects = useMemo(() => {
     return projects.filter((project) => {
-      const matchesSearch = 
-        !searchQuery ||
-        project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (project.client_name && project.client_name.toLowerCase().includes(searchQuery.toLowerCase()))
-      
-      return matchesSearch
+      if (!searchQuery) return true
+      const q = searchQuery.toLowerCase()
+      const matchesName = project.name.toLowerCase().includes(q)
+      const matchesClient = project.client_name?.toLowerCase().includes(q)
+      const matchesDesigner = (project.designers || []).some((d) =>
+        (d.full_name || d.email || '').toLowerCase().includes(q)
+      )
+      return matchesName || matchesClient || matchesDesigner
     })
   }, [projects, searchQuery])
 
@@ -128,13 +139,16 @@ export default function ProjectsPage() {
     })
   }, [searchFilteredProjects, viewMode])
 
-  // Filter projects based on search query, scope, AND selected client
+  // Filter projects based on search query, scope, client, and designer
   const filteredProjects = useMemo(() => {
     return scopeFilteredProjects.filter((project) => {
       const matchesClient = !selectedClient || project.client_name === selectedClient
-      return matchesClient
+      const matchesDesigner =
+        !selectedDesigner ||
+        (project.designers || []).some((d) => d.id === selectedDesigner)
+      return matchesClient && matchesDesigner
     })
-  }, [scopeFilteredProjects, selectedClient])
+  }, [scopeFilteredProjects, selectedClient, selectedDesigner])
 
   // Get unique clients for the current tab (Clients mode only — Salo Creative is excluded)
   const getUniqueClients = (statusFilter: 'active' | 'locked') => {
@@ -150,10 +164,35 @@ export default function ProjectsPage() {
     return Array.from(clients).sort()
   }
 
+  // Designers who have logged time on projects in the current tab/scope (and client filter)
+  const getUniqueDesigners = (statusFilter: 'active' | 'locked') => {
+    const filtered = scopeFilteredProjects.filter((p) => {
+      const matchesStatus = statusFilter === 'active' ? p.status === 'active' : p.status === 'locked'
+      const matchesClient = !selectedClient || p.client_name === selectedClient
+      return matchesStatus && matchesClient
+    })
+    const byId = new Map<string, ProjectDesigner>()
+    filtered.forEach((project) => {
+      ;(project.designers || []).forEach((designer) => {
+        if (!byId.has(designer.id)) {
+          byId.set(designer.id, designer)
+        }
+      })
+    })
+    return Array.from(byId.values()).sort((a, b) => {
+      const nameA = a.full_name || a.email || ''
+      const nameB = b.full_name || b.email || ''
+      return nameA.localeCompare(nameB)
+    })
+  }
+
   const handleViewModeChange = (mode: 'clients' | 'internal') => {
     setViewMode(mode)
     setSelectedClient(null)
+    setSelectedDesigner(null)
   }
+
+  const hasActiveFilters = Boolean(searchQuery || selectedClient || selectedDesigner)
 
   return (
     <div className="flex flex-col h-full">
@@ -242,9 +281,18 @@ export default function ProjectsPage() {
                 <ClientFilters
                   clients={getUniqueClients(activeTab === 'live' ? 'active' : 'locked')}
                   selectedClient={selectedClient}
-                  onSelectClient={setSelectedClient}
+                  onSelectClient={(client) => {
+                    setSelectedClient(client)
+                    setSelectedDesigner(null)
+                  }}
                 />
               )}
+
+              <DesignerFilters
+                designers={getUniqueDesigners(activeTab === 'live' ? 'active' : 'locked')}
+                selectedDesigner={selectedDesigner}
+                onSelectDesigner={setSelectedDesigner}
+              />
             </div>
 
             <TabsContent value="live" className="mt-0">
@@ -253,14 +301,14 @@ export default function ProjectsPage() {
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-lg font-medium">
-                      {searchQuery || selectedClient
+                      {hasActiveFilters
                         ? 'No matching projects'
                         : viewMode === 'internal'
                           ? 'No live internal projects'
                           : 'No live projects'}
                     </p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      {searchQuery || selectedClient
+                      {hasActiveFilters
                         ? 'Try adjusting your search or filter criteria'
                         : viewMode === 'internal'
                           ? 'Salo Creative projects will appear here once synced from Monday.com'
@@ -308,14 +356,14 @@ export default function ProjectsPage() {
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-lg font-medium">
-                      {searchQuery || selectedClient
+                      {hasActiveFilters
                         ? 'No matching projects'
                         : viewMode === 'internal'
                           ? 'No completed internal projects'
                           : 'No completed projects'}
                     </p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      {searchQuery || selectedClient
+                      {hasActiveFilters
                         ? 'Try adjusting your search or filter criteria'
                         : viewMode === 'internal'
                           ? 'Completed Salo Creative projects will appear here'
@@ -683,6 +731,7 @@ function ProjectListItem({
   const stats = getProjectStats(project)
   const health = showHealth ? getProjectHealth(project) : null
   const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = stats
+  const designers = project.designers || []
 
   return (
     <button
@@ -706,6 +755,21 @@ function ProjectListItem({
           )}
           {showHealth && health && <HealthBadge health={health} />}
         </div>
+
+        {designers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {designers.map((designer) => (
+              <Badge
+                key={designer.id}
+                variant="secondary"
+                className="font-normal text-xs"
+                title={`${designerDisplayName(designer)} · ${designer.hours.toFixed(1)}h`}
+              >
+                {designerShortName(designer)}
+              </Badge>
+            ))}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <div className="flex items-center gap-2">
@@ -826,6 +890,15 @@ function getStatus(percentage: number): 'over' | 'on-track' | 'under' {
   return 'under'
 }
 
+function designerDisplayName(designer: ProjectDesigner) {
+  return designer.full_name || designer.email || 'Unknown'
+}
+
+function designerShortName(designer: ProjectDesigner) {
+  const name = designer.full_name || designer.email || '?'
+  return name.split(/\s+/)[0]
+}
+
 function ClientFilters({
   clients,
   selectedClient,
@@ -858,6 +931,46 @@ function ClientFilters({
           className="h-8"
         >
           {client}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+function DesignerFilters({
+  designers,
+  selectedDesigner,
+  onSelectDesigner,
+}: {
+  designers: ProjectDesigner[]
+  selectedDesigner: string | null
+  onSelectDesigner: (designerId: string | null) => void
+}) {
+  if (designers.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="border-t pt-4 flex flex-wrap gap-2">
+      <Button
+        variant={selectedDesigner === null ? 'default' : 'outline'}
+        size="sm"
+        onClick={() => onSelectDesigner(null)}
+        className="h-8"
+      >
+        All Designers
+      </Button>
+      {designers.map((designer) => (
+        <Button
+          key={designer.id}
+          variant={selectedDesigner === designer.id ? 'default' : 'outline'}
+          size="sm"
+          onClick={() =>
+            onSelectDesigner(selectedDesigner === designer.id ? null : designer.id)
+          }
+          className="h-8"
+        >
+          {designerDisplayName(designer)}
         </Button>
       ))}
     </div>

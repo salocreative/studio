@@ -34,6 +34,7 @@ export interface SowDocument {
   customer_type: 'partner' | 'client'
   status: SowStatus
   include_vat: boolean
+  show_quoted_hours: boolean
   subtotal_gbp: number
   vat_amount_gbp: number
   total_gbp: number
@@ -299,6 +300,7 @@ export type SowDocumentInput = {
   agency_name?: string | null
   customer_type: 'partner' | 'client'
   include_vat: boolean
+  show_quoted_hours?: boolean
   notes?: string | null
   line_items: SowLineItemInput[]
   monday_project_id?: string | null
@@ -352,6 +354,7 @@ export async function createSowDocument(input: SowDocumentInput) {
         agency_name: agencyName,
         customer_type: input.customer_type,
         include_vat: input.include_vat,
+        show_quoted_hours: input.show_quoted_hours ?? true,
         notes: input.notes?.trim() || null,
         status: 'draft',
         created_by: auth.userId,
@@ -417,6 +420,7 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         agency_name: agencyName,
         customer_type: input.customer_type,
         include_vat: input.include_vat,
+        show_quoted_hours: input.show_quoted_hours ?? true,
         notes: input.notes?.trim() || null,
         ...totals,
       })
@@ -451,6 +455,21 @@ export async function archiveSowDocument(id: string) {
   } catch (error) {
     console.error('Error archiving SoW:', error)
     return { error: error instanceof Error ? error.message : 'Failed to archive statement of work' }
+  }
+}
+
+export async function deleteSowDocument(id: string) {
+  const auth = await requireTeamMember()
+  if (auth.error || !auth.supabase) return { error: auth.error ?? 'Not authenticated' }
+
+  try {
+    const { error } = await auth.supabase.from('sow_documents').delete().eq('id', id)
+
+    if (error) throw error
+    return { success: true }
+  } catch (error) {
+    console.error('Error deleting SoW:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to delete statement of work' }
   }
 }
 

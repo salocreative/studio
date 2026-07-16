@@ -1,7 +1,14 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getMainTimesheetBoardIds } from '@/lib/monday/board-helpers'
+
+export interface ProjectDesigner {
+  id: string
+  full_name: string | null
+  email: string | null
+  hours: number
+}
 
 interface ProjectWithTimeTracking {
   id: string
@@ -13,6 +20,7 @@ interface ProjectWithTimeTracking {
   status: 'active' | 'archived' | 'locked'
   quoted_hours: number | null
   total_logged_hours: number
+  designers: ProjectDesigner[]
   tasks: Array<{
     id: string
     name: string
@@ -72,23 +80,80 @@ export async function getProjectsWithTimeTracking() {
     // This is important for completed/locked projects where tasks might no longer exist in Monday
     let timeEntriesByTask: Record<string, number> = {}
     let timeEntriesByProject: Record<string, number> = {}
+    const hoursByProjectUser: Record<string, Record<string, number>> = {}
     
     // First, get time entries by project_id (this ensures we get all entries for completed projects)
     const { data: allTimeEntries, error: timeEntriesError } = await supabase
       .from('time_entries')
-      .select('task_id, project_id, hours')
+      .select('task_id, project_id, hours, user_id')
       .in('project_id', projectIds)
 
     if (timeEntriesError) throw timeEntriesError
 
-    // Aggregate hours by task_id and project_id
+    // Aggregate hours by task_id, project_id, and designer
     if (allTimeEntries) {
       for (const entry of allTimeEntries) {
         // Aggregate by task_id
         timeEntriesByTask[entry.task_id] = (timeEntriesByTask[entry.task_id] || 0) + Number(entry.hours)
         // Also aggregate by project_id as a backup
         timeEntriesByProject[entry.project_id] = (timeEntriesByProject[entry.project_id] || 0) + Number(entry.hours)
+        if (entry.user_id) {
+          if (!hoursByProjectUser[entry.project_id]) {
+            hoursByProjectUser[entry.project_id] = {}
+          }
+          hoursByProjectUser[entry.project_id][entry.user_id] =
+            (hoursByProjectUser[entry.project_id][entry.user_id] || 0) + Number(entry.hours)
+        }
       }
+    }
+
+    const designerIds = [
+      ...new Set(
+        Object.values(hoursByProjectUser).flatMap((byUser) => Object.keys(byUser))
+      ),
+    ]
+
+    const designerMap = new Map<string, { id: string; full_name: string | null; email: string | null }>()
+    if (designerIds.length > 0) {
+      const adminClient = await createAdminClient()
+      if (adminClient) {
+        const { data: users, error: usersError } = await adminClient
+          .from('users')
+          .select('id, full_name, email')
+          .in('id', designerIds)
+          .is('deleted_at', null)
+
+        if (usersError) throw usersError
+
+        for (const u of users || []) {
+          designerMap.set(u.id, {
+            id: u.id,
+            full_name: u.full_name,
+            email: u.email,
+          })
+        }
+      }
+    }
+
+    const getProjectDesigners = (projectId: string): ProjectDesigner[] => {
+      const byUser = hoursByProjectUser[projectId] || {}
+      return Object.entries(byUser)
+        .map(([userId, hours]) => {
+          const user = designerMap.get(userId)
+          if (!user) return null
+          return {
+            id: user.id,
+            full_name: user.full_name,
+            email: user.email,
+            hours,
+          }
+        })
+        .filter((d): d is ProjectDesigner => d !== null)
+        .sort((a, b) => {
+          const nameA = a.full_name || a.email || ''
+          const nameB = b.full_name || b.email || ''
+          return nameA.localeCompare(nameB)
+        })
     }
 
     // Build projects with time tracking data
@@ -142,6 +207,7 @@ export async function getProjectsWithTimeTracking() {
         status: project.status,
         quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
         total_logged_hours: totalLoggedHours,
+        designers: getProjectDesigners(project.id),
         tasks: tasksWithTracking,
       }
     })

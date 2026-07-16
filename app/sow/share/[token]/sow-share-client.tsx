@@ -15,7 +15,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Loader2, ScrollText, CheckCircle2, XCircle } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { SaloLogo } from '@/components/brand/salo-logo'
 import {
   approveSowByToken,
   getSowByToken,
@@ -108,16 +109,16 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
   const isApproved = document.status === 'approved'
   const isRejected = document.status === 'rejected'
   const canRespond = !isApproved && !isRejected
+  const showQuotedHours = document.show_quoted_hours ?? true
 
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">
       <div className="max-w-3xl mx-auto space-y-6">
-        <div className="text-center space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">Salo Creative</p>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center justify-center gap-2">
-            <ScrollText className="h-8 w-8" />
-            Statement of Work
-          </h1>
+        <div className="text-center space-y-4">
+          <div className="flex justify-center">
+            <SaloLogo className="h-8 w-auto" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight">Statement of Work</h1>
           {document.agency_name ? (
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">
@@ -174,7 +175,9 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <CardTitle>{document.title}</CardTitle>
-                <CardDescription>Scope, time, and investment</CardDescription>
+                <CardDescription>
+                  {showQuotedHours ? 'Scope, time, and investment' : 'Scope and investment'}
+                </CardDescription>
               </div>
               <Badge variant="outline">{document.customer_type === 'partner' ? 'Partner rate' : 'Client rate'}</Badge>
             </div>
@@ -190,7 +193,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Deliverable</TableHead>
-                  <TableHead className="text-right">Time</TableHead>
+                  {showQuotedHours && <TableHead className="text-right">Time</TableHead>}
                   <TableHead className="text-right">Cost</TableHead>
                 </TableRow>
               </TableHeader>
@@ -205,11 +208,13 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                         </p>
                       )}
                     </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {item.is_days
-                        ? `${item.quantity} day${Number(item.quantity) !== 1 ? 's' : ''} (${Number(item.hours).toFixed(1)}h)`
-                        : `${Number(item.hours).toFixed(1)}h`}
-                    </TableCell>
+                    {showQuotedHours && (
+                      <TableCell className="text-right text-muted-foreground">
+                        {item.is_days
+                          ? `${item.quantity} day${Number(item.quantity) !== 1 ? 's' : ''} (${Number(item.hours).toFixed(1)}h)`
+                          : `${Number(item.hours).toFixed(1)}h`}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">
                       {formatMoney(Number(item.line_total_gbp))}
                     </TableCell>
@@ -233,10 +238,12 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 <span>Total</span>
                 <span>{formatMoney(Number(document.total_gbp))}</span>
               </div>
-              <div className="flex justify-between text-muted-foreground">
-                <span>Total hours</span>
-                <span>{Number(document.total_hours).toFixed(1)}h</span>
-              </div>
+              {showQuotedHours && (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Total hours</span>
+                  <span>{Number(document.total_hours).toFixed(1)}h</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -289,36 +296,51 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
               )}
 
               <div className="flex flex-col sm:flex-row gap-3">
-                <Button
-                  className={cn('flex-1', 'bg-green-600 hover:bg-green-700')}
-                  onClick={handleApprove}
-                  disabled={submitting || !approverName.trim()}
-                >
-                  {submitting ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
-                  )}
-                  Approve statement of work
-                </Button>
                 {!showRejectForm ? (
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => setShowRejectForm(true)}
-                    disabled={submitting}
-                  >
-                    Decline
-                  </Button>
+                  <>
+                    <Button
+                      className={cn('flex-1', 'bg-green-600 hover:bg-green-700')}
+                      onClick={handleApprove}
+                      disabled={submitting || !approverName.trim()}
+                    >
+                      {submitting ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                      )}
+                      Approve statement of work
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setShowRejectForm(true)}
+                      disabled={submitting}
+                    >
+                      Decline
+                    </Button>
+                  </>
                 ) : (
-                  <Button
-                    variant="destructive"
-                    className="flex-1"
-                    onClick={handleReject}
-                    disabled={submitting || !approverName.trim()}
-                  >
-                    Confirm decline
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => {
+                        setShowRejectForm(false)
+                        setRejectionNotes('')
+                      }}
+                      disabled={submitting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={handleReject}
+                      disabled={submitting || !approverName.trim()}
+                    >
+                      Confirm decline
+                    </Button>
+                  </>
                 )}
               </div>
             </CardContent>

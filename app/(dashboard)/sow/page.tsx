@@ -13,9 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Plus, Loader2, ScrollText, ExternalLink } from 'lucide-react'
+import { Plus, Loader2, ScrollText, ExternalLink, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getSowDocuments, type SowDocument } from '@/app/actions/sow'
+import { deleteSowDocument, getSowDocuments, type SowDocument } from '@/app/actions/sow'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -56,6 +56,23 @@ export default function SowListPage() {
       toast.error('Failed to load statements of work')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleDelete(doc: SowDocument) {
+    const message =
+      doc.status === 'approved'
+        ? `Permanently delete "${doc.title}"? This approved SoW will be removed and cannot be recovered.`
+        : `Permanently delete "${doc.title}"? This cannot be undone.`
+
+    if (!confirm(message)) return
+
+    const result = await deleteSowDocument(doc.id)
+    if (result.error) {
+      toast.error('Error deleting', { description: result.error })
+    } else {
+      toast.success('Statement of work deleted')
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
     }
   }
 
@@ -144,12 +161,23 @@ export default function SowListPage() {
                       {new Date(doc.updated_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" asChild>
-                        <Link href={`/sow/${doc.id}`}>
-                          <ExternalLink className="mr-1 h-4 w-4" />
-                          Open
-                        </Link>
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href={`/sow/${doc.id}`}>
+                            <ExternalLink className="mr-1 h-4 w-4" />
+                            Open
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => handleDelete(doc)}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                   )
