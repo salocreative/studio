@@ -8,6 +8,8 @@ interface ProjectWithTimeTracking {
   name: string
   client_name: string | null
   completed_date: string | null
+  due_date: string | null
+  created_at: string
   status: 'active' | 'archived' | 'locked'
   quoted_hours: number | null
   total_logged_hours: number
@@ -17,6 +19,8 @@ interface ProjectWithTimeTracking {
     quoted_hours: number | null
     logged_hours: number
     time_left: number | null
+    timeline_start: string | null
+    timeline_end: string | null
   }>
 }
 
@@ -102,6 +106,8 @@ export async function getProjectsWithTimeTracking() {
           quoted_hours: quotedHours,
           logged_hours: loggedHours,
           time_left: timeLeft,
+          timeline_start: task.timeline_start || null,
+          timeline_end: task.timeline_end || null,
         }
       })
 
@@ -131,6 +137,8 @@ export async function getProjectsWithTimeTracking() {
         name: project.name,
         client_name: project.client_name,
         completed_date: project.completed_date || null,
+        due_date: project.due_date || null,
+        created_at: project.created_at,
         status: project.status,
         quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
         total_logged_hours: totalLoggedHours,

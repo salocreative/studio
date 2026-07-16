@@ -1,10 +1,9 @@
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { DoughnutChart } from '@/components/ui/doughnut-chart'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -15,16 +14,26 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2, ChevronRight } from 'lucide-react'
+import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2, ChevronRight, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react'
 import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
 import { format, parseISO, compareDesc } from 'date-fns'
+
+const INTERNAL_CLIENT_NAME = 'Salo Creative'
+/** Pace is "on track" when logged hours are within this fraction of quoted hours of the expected amount */
+const PACE_TOLERANCE = 0.1
+
+function isInternalProject(project: { client_name: string | null }) {
+  return project.client_name?.toLowerCase() === INTERNAL_CLIENT_NAME.toLowerCase()
+}
 
 interface Project {
   id: string
   name: string
   client_name: string | null
   completed_date?: string | null
+  due_date?: string | null
+  created_at?: string | null
   status: 'active' | 'archived' | 'locked'
   quoted_hours: number | null
   total_logged_hours: number
@@ -34,6 +43,8 @@ interface Project {
     quoted_hours: number | null
     logged_hours: number
     time_left: number | null
+    timeline_start?: string | null
+    timeline_end?: string | null
   }>
 }
 
@@ -42,6 +53,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'clients' | 'internal'>('clients')
   const [activeTab, setActiveTab] = useState<'live' | 'completed'>('live')
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [projectDetails, setProjectDetails] = useState<any>(null)
@@ -108,26 +120,39 @@ export default function ProjectsPage() {
     })
   }, [projects, searchQuery])
 
-  // Filter projects based on search query AND selected client
-  const filteredProjects = useMemo(() => {
+  // Filter by Clients vs Internal (Salo Creative) scope
+  const scopeFilteredProjects = useMemo(() => {
     return searchFilteredProjects.filter((project) => {
+      const isInternal = isInternalProject(project)
+      return viewMode === 'internal' ? isInternal : !isInternal
+    })
+  }, [searchFilteredProjects, viewMode])
+
+  // Filter projects based on search query, scope, AND selected client
+  const filteredProjects = useMemo(() => {
+    return scopeFilteredProjects.filter((project) => {
       const matchesClient = !selectedClient || project.client_name === selectedClient
       return matchesClient
     })
-  }, [searchFilteredProjects, selectedClient])
+  }, [scopeFilteredProjects, selectedClient])
 
-  // Get unique clients from search-filtered projects (respecting current tab but not client filter)
+  // Get unique clients for the current tab (Clients mode only — Salo Creative is excluded)
   const getUniqueClients = (statusFilter: 'active' | 'locked') => {
-    const filtered = searchFilteredProjects.filter(p => 
+    const filtered = scopeFilteredProjects.filter(p =>
       statusFilter === 'active' ? p.status === 'active' : p.status === 'locked'
     )
     const clients = new Set<string>()
     filtered.forEach(project => {
-      if (project.client_name) {
+      if (project.client_name && !isInternalProject(project)) {
         clients.add(project.client_name)
       }
     })
     return Array.from(clients).sort()
+  }
+
+  const handleViewModeChange = (mode: 'clients' | 'internal') => {
+    setViewMode(mode)
+    setSelectedClient(null)
   }
 
   return (
@@ -150,6 +175,27 @@ export default function ProjectsPage() {
           </div>
         ) : (
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'live' | 'completed')} className="w-full">
+            <div className="mb-6 flex flex-wrap items-center gap-3">
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={viewMode === 'clients' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleViewModeChange('clients')}
+                >
+                  Clients
+                </Button>
+                <Button
+                  type="button"
+                  variant={viewMode === 'internal' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleViewModeChange('internal')}
+                >
+                  Internal
+                </Button>
+              </div>
+            </div>
+
             <TabsList className="mb-6">
               <TabsTrigger value="live">
                 Live
@@ -191,12 +237,14 @@ export default function ProjectsPage() {
                 )}
               </div>
               
-              {/* Client Quick Filters - Show clients from current tab's filtered results */}
-              <ClientFilters
-                clients={getUniqueClients(activeTab === 'live' ? 'active' : 'locked')}
-                selectedClient={selectedClient}
-                onSelectClient={setSelectedClient}
-              />
+              {/* Client Quick Filters — Clients mode only */}
+              {viewMode === 'clients' && (
+                <ClientFilters
+                  clients={getUniqueClients(activeTab === 'live' ? 'active' : 'locked')}
+                  selectedClient={selectedClient}
+                  onSelectClient={setSelectedClient}
+                />
+              )}
             </div>
 
             <TabsContent value="live" className="mt-0">
@@ -205,27 +253,52 @@ export default function ProjectsPage() {
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-lg font-medium">
-                      {searchQuery || selectedClient ? 'No matching projects' : 'No live projects'}
+                      {searchQuery || selectedClient
+                        ? 'No matching projects'
+                        : viewMode === 'internal'
+                          ? 'No live internal projects'
+                          : 'No live projects'}
                     </p>
                     <p className="text-sm text-muted-foreground mt-2">
                       {searchQuery || selectedClient
                         ? 'Try adjusting your search or filter criteria'
-                        : 'Active projects will appear here once synced from Monday.com'}
+                        : viewMode === 'internal'
+                          ? 'Salo Creative projects will appear here once synced from Monday.com'
+                          : 'Active projects will appear here once synced from Monday.com'}
                     </p>
                   </CardContent>
                 </Card>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {filteredProjects
-                    .filter(p => p.status === 'active')
-                    .map((project) => (
-                      <ProjectCard 
-                        key={project.id} 
-                        project={project}
-                        onClick={() => handleProjectClick(project.id)}
-                      />
-                    ))}
-                </div>
+                <Card>
+                  <CardContent className="p-0">
+                    <div className="divide-y">
+                      {filteredProjects
+                        .filter(p => p.status === 'active')
+                        .sort((a, b) => {
+                          const healthA = getProjectHealth(a)
+                          const healthB = getProjectHealth(b)
+                          const severity = (h: ReturnType<typeof getProjectHealth>) => {
+                            if (h.pace === 'over-budget') return 0
+                            if (h.pace === 'ahead') return 1
+                            if (h.pace === 'behind') return 2
+                            if (h.pace === 'on-pace') return 3
+                            return 4
+                          }
+                          const diff = severity(healthA) - severity(healthB)
+                          if (diff !== 0) return diff
+                          return a.name.localeCompare(b.name)
+                        })
+                        .map((project) => (
+                          <ProjectListItem
+                            key={project.id}
+                            project={project}
+                            onClick={() => handleProjectClick(project.id)}
+                            showHealth
+                          />
+                        ))}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
             </TabsContent>
 
@@ -235,12 +308,18 @@ export default function ProjectsPage() {
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-lg font-medium">
-                      {searchQuery || selectedClient ? 'No matching projects' : 'No completed projects'}
+                      {searchQuery || selectedClient
+                        ? 'No matching projects'
+                        : viewMode === 'internal'
+                          ? 'No completed internal projects'
+                          : 'No completed projects'}
                     </p>
                     <p className="text-sm text-muted-foreground mt-2">
                       {searchQuery || selectedClient
                         ? 'Try adjusting your search or filter criteria'
-                        : 'Completed projects (from completed boards) will appear here'}
+                        : viewMode === 'internal'
+                          ? 'Completed Salo Creative projects will appear here'
+                          : 'Completed projects (from completed boards) will appear here'}
                     </p>
                   </CardContent>
                 </Card>
@@ -515,240 +594,229 @@ function getProjectStats(project: Project) {
   }
 }
 
-function ProjectCard({ 
-  project, 
-  onClick 
-}: { 
-  project: Project
-  onClick: () => void
-}) {
-  const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = getProjectStats(project)
-  
-  // Data for doughnut chart
-  // If over budget, show: quoted hours (gray), over-budget hours (red)
-  // If under budget, show: logged hours (purple), remaining hours (gray)
-  // Special case: if no quoted hours but we have logged hours, show all as over budget
-  const chartData = isOverBudget
-    ? totalQuotedHours === 0 && totalLoggedHours > 0
-      ? [
-          // No quoted hours - show all logged hours as over budget
-          {
-            name: 'Over Budget',
-            value: totalLoggedHours,
-            color: '#EF4444', // red-500
-          },
-        ]
-      : [
-          {
-            name: 'Quoted Hours',
-            value: totalQuotedHours,
-            color: '#E5E7EB',
-          },
-          {
-            name: 'Over Budget',
-            value: totalLoggedHours - totalQuotedHours,
-            color: '#EF4444', // red-500
-          },
-        ]
-    : [
-        {
-          name: 'Time Spent',
-          value: totalLoggedHours,
-          color: '#6405FF',
-        },
-        {
-          name: 'Time Remaining',
-          value: Math.max(0, totalQuotedHours - totalLoggedHours),
-          color: '#E5E7EB',
-        },
-      ]
-  
-  // For chart percentage display: show logged/quoted percentage
-  // If no quoted hours but we have logged hours, show 100%+ (over budget)
-  const chartPercentage = totalQuotedHours > 0 
-    ? (totalLoggedHours / totalQuotedHours) * 100 
-    : (totalLoggedHours > 0 ? 150 : 0) // Show as over budget if we have hours but no quoted hours
+type ProjectPace = 'on-pace' | 'ahead' | 'behind' | 'over-budget' | 'no-timeline'
 
-  const isLocked = project.status === 'locked'
+function getProjectHealth(project: Project) {
+  const { totalQuotedHours, totalLoggedHours, percentage, isOverBudget } = getProjectStats(project)
 
-  return (
-    <Card 
-      className={cn(
-        isLocked && "opacity-90 border-muted",
-        "cursor-pointer hover:shadow-md transition-shadow"
-      )}
-      onClick={onClick}
-    >
-      <CardHeader>
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <CardTitle className="text-lg">{project.name}</CardTitle>
-            {project.client_name && (
-              <CardDescription className="mt-1">
-                {project.client_name}
-              </CardDescription>
-            )}
-          </div>
-          {project.status === 'locked' && (
-            <Badge variant="outline" className="bg-muted">
-              Completed
-            </Badge>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {/* Doughnut Chart */}
-          <div className="flex items-center justify-center py-0">
-            <div className="relative">
-              <DoughnutChart 
-                data={chartData} 
-                showPercentage={false}
-              />
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div 
-                  className={cn(
-                    "text-2xl font-bold",
-                    isOverBudget && "text-destructive"
-                  )}
-                >
-                  {chartPercentage.toFixed(0)}%
-                </div>
-              </div>
-            </div>
-          </div>
+  const startTimes = project.tasks
+    .map((t) => t.timeline_start)
+    .filter((d): d is string => Boolean(d))
+    .map((d) => new Date(d).getTime())
+  const endTimes = project.tasks
+    .map((t) => t.timeline_end)
+    .filter((d): d is string => Boolean(d))
+    .map((d) => new Date(d).getTime())
 
-          {/* Summary */}
-          <div>
-            <div className="flex items-center justify-between text-sm mb-2">
-              <span className="text-muted-foreground">Time Tracked</span>
-              <div className="flex items-center gap-2">
-                <span className="font-medium">
-                  {totalLoggedHours.toFixed(1)}h / {totalQuotedHours.toFixed(1)}h
-                </span>
-                <span className={cn(
-                  "font-semibold",
-                  percentage > 100 ? "text-destructive" : "text-muted-foreground"
-                )}>
-                  {percentage.toFixed(0)}%
-                </span>
-              </div>
-            </div>
-            <Progress value={Math.min(100, percentage)} className="h-2" />
-          </div>
+  const startMs = startTimes.length > 0
+    ? Math.min(...startTimes)
+    : project.created_at
+      ? new Date(project.created_at).getTime()
+      : null
 
-          {/* Status */}
-          <div className="flex items-center gap-2">
-            {status === 'over' && (
-              <>
-                <AlertCircle className="h-4 w-4 text-destructive" />
-                <span className="text-sm text-destructive">Over budget</span>
-              </>
-            )}
-            {status === 'on-track' && (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span className="text-sm text-green-600">On track</span>
-              </>
-            )}
-            {status === 'under' && (
-              <>
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Under budget</span>
-              </>
-            )}
-          </div>
+  let endMs = endTimes.length > 0
+    ? Math.max(...endTimes)
+    : project.due_date
+      ? new Date(project.due_date).getTime()
+      : null
 
-          {/* Tasks Count */}
-          {project.tasks.length > 0 && (
-            <div className="border-t pt-4">
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{project.tasks.length} Task{project.tasks.length !== 1 ? 's' : ''}</span>
-                <span className="text-xs">Click to view details</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
+  if (project.status === 'locked' && project.completed_date) {
+    endMs = new Date(project.completed_date).getTime()
+  }
+
+  if (startMs === null || endMs === null || endMs <= startMs || totalQuotedHours <= 0) {
+    return {
+      pace: (isOverBudget ? 'over-budget' : 'no-timeline') as ProjectPace,
+      timelineProgress: null as number | null,
+      expectedHours: null as number | null,
+      varianceHours: null as number | null,
+      totalQuotedHours,
+      totalLoggedHours,
+      percentage,
+      isOverBudget,
+    }
+  }
+
+  const referenceMs = project.status === 'locked' && project.completed_date
+    ? new Date(project.completed_date).getTime()
+    : Date.now()
+
+  const totalDuration = endMs - startMs
+  const elapsed = Math.min(Math.max(referenceMs - startMs, 0), totalDuration)
+  const timelineProgress = elapsed / totalDuration
+  const expectedHours = totalQuotedHours * timelineProgress
+  const varianceHours = totalLoggedHours - expectedHours
+  const varianceRatio = varianceHours / totalQuotedHours
+
+  let pace: ProjectPace
+  if (isOverBudget) {
+    pace = 'over-budget'
+  } else if (Math.abs(varianceRatio) <= PACE_TOLERANCE) {
+    pace = 'on-pace'
+  } else if (varianceHours > 0) {
+    pace = 'ahead'
+  } else {
+    pace = 'behind'
+  }
+
+  return {
+    pace,
+    timelineProgress,
+    expectedHours,
+    varianceHours,
+    totalQuotedHours,
+    totalLoggedHours,
+    percentage,
+    isOverBudget,
+  }
 }
 
 function ProjectListItem({
   project,
   onClick,
+  showHealth = false,
 }: {
   project: Project
   onClick: () => void
+  showHealth?: boolean
 }) {
-  const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = getProjectStats(project)
+  const stats = getProjectStats(project)
+  const health = showHealth ? getProjectHealth(project) : null
+  const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = stats
 
   return (
     <button
       onClick={onClick}
-      className="w-full px-6 py-4 flex items-center justify-between hover:bg-accent transition-colors text-left"
+      className="w-full px-6 py-4 flex items-center justify-between gap-4 hover:bg-accent transition-colors text-left"
     >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-3 mb-1">
-          <div>
-            <div className="font-medium text-base">{project.name}</div>
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-medium text-base truncate">{project.name}</div>
             {project.client_name && (
-              <div className="text-sm text-muted-foreground mt-0.5">
+              <div className="text-sm text-muted-foreground mt-0.5 truncate">
                 {project.client_name}
               </div>
             )}
           </div>
           {project.status === 'locked' && (
-            <Badge variant="outline" className="bg-muted text-xs">
+            <Badge variant="outline" className="bg-muted text-xs shrink-0">
               Completed
             </Badge>
           )}
+          {showHealth && health && <HealthBadge health={health} />}
         </div>
-        <div className="flex items-center gap-4 text-sm">
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Time:</span>
             <span className="font-medium">
               {totalLoggedHours.toFixed(1)}h / {totalQuotedHours.toFixed(1)}h
             </span>
+            <span className={cn(
+              "font-semibold",
+              percentage > 100 ? "text-destructive" : "text-muted-foreground"
+            )}>
+              {Number.isFinite(percentage) ? `${percentage.toFixed(0)}%` : '—'}
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Tasks:</span>
-            <span>{project.tasks.length}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {status === 'over' && (
-              <>
-                <AlertCircle className="h-4 w-4 text-destructive" />
-                <span className={cn(
-                  "text-sm font-semibold",
-                  isOverBudget && "text-destructive"
-                )}>
-                  {percentage.toFixed(0)}%
-                </span>
-                <span className="text-sm text-destructive">Over budget</span>
-              </>
-            )}
-            {status === 'on-track' && (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span className="text-sm font-semibold">{percentage.toFixed(0)}%</span>
-                <span className="text-sm text-green-600">On track</span>
-              </>
-            )}
-            {status === 'under' && (
-              <>
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-semibold">{percentage.toFixed(0)}%</span>
-                <span className="text-sm text-muted-foreground">Under budget</span>
-              </>
-            )}
-          </div>
+          {showHealth && health?.timelineProgress !== null && health.expectedHours !== null && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <span>
+                Timeline {(health.timelineProgress * 100).toFixed(0)}%
+              </span>
+              <span>·</span>
+              <span>Expected {health.expectedHours.toFixed(1)}h</span>
+              {health.varianceHours !== null && Math.abs(health.varianceHours) >= 0.05 && (
+                <>
+                  <span>·</span>
+                  <span className={cn(
+                    health.pace === 'ahead' || health.pace === 'over-budget'
+                      ? 'text-destructive'
+                      : health.pace === 'behind'
+                        ? 'text-amber-600'
+                        : undefined
+                  )}>
+                    {health.varianceHours > 0 ? '+' : ''}
+                    {health.varianceHours.toFixed(1)}h vs pace
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+          {!showHealth && (
+            <div className="flex items-center gap-1.5">
+              {status === 'over' && (
+                <>
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                  <span className="text-sm text-destructive">Over budget</span>
+                </>
+              )}
+              {status === 'on-track' && (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  <span className="text-sm text-green-600">On track</span>
+                </>
+              )}
+              {status === 'under' && (
+                <>
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Under budget</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
+
+        <Progress
+          value={Math.min(100, Number.isFinite(percentage) ? percentage : 0)}
+          className={cn(
+            "h-1.5 max-w-md",
+            (isOverBudget || percentage > 100) && "bg-destructive/20 [&>[data-slot=progress-indicator]]:bg-destructive"
+          )}
+        />
       </div>
-      <div className="ml-4">
-        <ChevronRight className="h-5 w-5 text-muted-foreground" />
-      </div>
+      <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
     </button>
+  )
+}
+
+function HealthBadge({ health }: { health: ReturnType<typeof getProjectHealth> }) {
+  const config = {
+    'over-budget': {
+      label: 'Over budget',
+      className: 'border-destructive/30 bg-destructive/10 text-destructive',
+      icon: AlertCircle,
+    },
+    ahead: {
+      label: 'Ahead of pace',
+      className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+      icon: TrendingUp,
+    },
+    behind: {
+      label: 'Behind pace',
+      className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+      icon: TrendingDown,
+    },
+    'on-pace': {
+      label: 'On pace',
+      className: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+      icon: CheckCircle2,
+    },
+    'no-timeline': {
+      label: 'No timeline',
+      className: 'border-muted-foreground/20 bg-muted text-muted-foreground',
+      icon: AlertTriangle,
+    },
+  }[health.pace]
+
+  const Icon = config.icon
+
+  return (
+    <Badge variant="outline" className={cn('shrink-0 gap-1 font-medium', config.className)}>
+      <Icon className="h-3.5 w-3.5" />
+      {config.label}
+    </Badge>
   )
 }
 
