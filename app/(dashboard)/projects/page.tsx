@@ -466,6 +466,19 @@ export default function ProjectsPage() {
               </div>
             ) : projectDetails ? (
               <div className="space-y-4">
+                {(() => {
+                  const totalQuotedFromTasks = projectDetails.tasksBreakdown.reduce(
+                    (sum: number, task: { quotedHours: number | null }) =>
+                      sum + (task.quotedHours || 0),
+                    0
+                  )
+                  const projectQuotedHours =
+                    totalQuotedFromTasks > 0
+                      ? totalQuotedFromTasks
+                      : projectDetails.project.quoted_hours
+
+                  return (
+                    <>
                 {/* Tasks Breakdown */}
                 <Card>
                   <CardHeader className="pb-3">
@@ -497,17 +510,15 @@ export default function ProjectsPage() {
                                 {task.percentage !== null && (
                                   <span className={cn(
                                     "text-xs font-semibold whitespace-nowrap",
-                                    task.percentage >= 100 ? "text-destructive" :
-                                    task.percentage >= 80 ? "text-green-600" :
-                                    "text-muted-foreground"
+                                    budgetPercentageTextClass(task.percentage)
                                   )}>
-                                    {task.percentage.toFixed(0)}%
+                                    {formatBudgetPercentage(task.percentage)}
                                   </span>
                                 )}
-                                {task.quotedHours !== null && (
+                                {task.quotedHours !== null && task.percentage !== null && (
                                   <Progress 
-                                    value={Math.min(100, task.percentage || 0)} 
-                                    className="h-1.5 w-16"
+                                    value={budgetProgressValue(task.percentage)} 
+                                    className={cn('h-1.5 w-16', budgetProgressBarClass(task.percentage))}
                                   />
                                 )}
                               </div>
@@ -531,7 +542,12 @@ export default function ProjectsPage() {
                       <p className="text-xs text-muted-foreground">No time entries yet</p>
                     ) : (
                       <div className="divide-y">
-                        {projectDetails.userTotals.map((user: any) => (
+                        {projectDetails.userTotals.map((user: any) => {
+                          const userPercentage = projectQuotedHours
+                            ? (user.totalHours / projectQuotedHours) * 100
+                            : null
+
+                          return (
                           <div key={user.userId} className="py-2.5 first:pt-0 last:pb-0">
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex-1 min-w-0">
@@ -543,22 +559,26 @@ export default function ProjectsPage() {
                               <div className="flex items-center gap-2">
                                 <div className="text-right">
                                   <div className="text-sm font-semibold">{user.totalHours.toFixed(1)}h</div>
-                                  {projectDetails.project.quoted_hours && (
-                                    <div className="text-xs text-muted-foreground">
-                                      {((user.totalHours / projectDetails.project.quoted_hours) * 100).toFixed(0)}%
+                                  {userPercentage !== null && (
+                                    <div className={cn(
+                                      'text-xs font-semibold',
+                                      budgetPercentageTextClass(userPercentage)
+                                    )}>
+                                      {formatBudgetPercentage(userPercentage)}
                                     </div>
                                   )}
                                 </div>
-                                {projectDetails.project.quoted_hours && (
+                                {userPercentage !== null && (
                                   <Progress 
-                                    value={Math.min(100, (user.totalHours / projectDetails.project.quoted_hours) * 100)} 
-                                    className="h-1.5 w-16"
+                                    value={budgetProgressValue(userPercentage)} 
+                                    className={cn('h-1.5 w-16', budgetProgressBarClass(userPercentage))}
                                   />
                                 )}
                               </div>
                             </div>
                           </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </CardContent>
@@ -602,6 +622,9 @@ export default function ProjectsPage() {
                     )}
                   </CardContent>
                 </Card>
+                    </>
+                  )
+                })()}
                 </div>
             ) : null}
             </div>
@@ -888,6 +911,29 @@ function getStatus(percentage: number): 'over' | 'on-track' | 'under' {
   if (percentage >= 100) return 'over'
   if (percentage >= 80) return 'on-track'
   return 'under'
+}
+
+function formatBudgetPercentage(percentage: number) {
+  if (!Number.isFinite(percentage)) return '—'
+  return `${percentage.toFixed(0)}%`
+}
+
+function budgetPercentageTextClass(percentage: number) {
+  if (!Number.isFinite(percentage) || percentage >= 100) return 'text-destructive'
+  if (percentage >= 80) return 'text-green-600'
+  return 'text-muted-foreground'
+}
+
+function budgetProgressValue(percentage: number) {
+  if (!Number.isFinite(percentage)) return 100
+  return Math.min(100, percentage)
+}
+
+function budgetProgressBarClass(percentage: number) {
+  if (!Number.isFinite(percentage) || percentage >= 100) {
+    return 'bg-destructive/20 [&>[data-slot=progress-indicator]]:bg-destructive'
+  }
+  return undefined
 }
 
 function designerDisplayName(designer: ProjectDesigner) {

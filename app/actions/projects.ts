@@ -324,9 +324,11 @@ export async function getProjectDetails(projectId: string) {
     const tasksBreakdown = (tasks || []).map((task: any) => {
       const loggedHours = hoursByTask[task.id] || 0
       const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : null
-      const percentage = quotedHours && quotedHours > 0 
-        ? Math.min(100, (loggedHours / quotedHours) * 100)
-        : (loggedHours > 0 ? null : 0)
+      const percentage = quotedHours && quotedHours > 0
+        ? (loggedHours / quotedHours) * 100
+        : loggedHours > 0
+          ? null
+          : 0
 
       return {
         id: task.id,
