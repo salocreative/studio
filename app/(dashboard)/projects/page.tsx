@@ -784,7 +784,7 @@ function ProjectListItem({
               {Number.isFinite(percentage) ? `${percentage.toFixed(0)}%` : '—'}
             </span>
           </div>
-          {showHealth && health?.timelineProgress !== null && health.expectedHours !== null && (
+          {showHealth && health && health.timelineProgress !== null && health.expectedHours !== null && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <span>
                 Timeline {(health.timelineProgress * 100).toFixed(0)}%
