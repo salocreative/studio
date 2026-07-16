@@ -72,8 +72,10 @@ export async function proxy(request: NextRequest) {
           request.nextUrl.pathname.startsWith('/forecast') ||
           request.nextUrl.pathname.startsWith('/customers') ||
           request.nextUrl.pathname.startsWith('/settings') ||
-          request.nextUrl.pathname.startsWith('/retainers')) &&
-          !request.nextUrl.pathname.startsWith('/retainers/share')) {
+          request.nextUrl.pathname.startsWith('/retainers') ||
+          request.nextUrl.pathname.startsWith('/sow')) &&
+          !request.nextUrl.pathname.startsWith('/retainers/share') &&
+          !request.nextUrl.pathname.startsWith('/sow/share')) {
         if (!user) {
           const url = request.nextUrl.clone()
           url.pathname = '/auth/login'

@@ -15,7 +15,8 @@ import {
   Menu,
   Calculator,
   Target,
-  FileText
+  FileText,
+  ScrollText
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -54,6 +55,12 @@ export const navigation: NavItem[] = [
     href: '/quote',
     icon: Calculator,
     roles: ['admin', 'designer', 'manager'], // All authenticated users can create quotes
+  },
+  {
+    title: 'Statements of Work',
+    href: '/sow',
+    icon: ScrollText,
+    roles: ['admin', 'designer', 'manager'],
   },
   {
     title: 'Performance',
