@@ -53,6 +53,8 @@ export interface SowDocument {
   monday_item_id: string | null
   monday_board_id: string | null
   pushed_to_monday_at: string | null
+  /** Latest active public share token, when one exists */
+  active_share_token?: string | null
   line_items?: SowLineItem[]
 }
 
@@ -208,7 +210,37 @@ export async function getSowDocuments() {
 
     if (error) throw error
 
-    return { success: true, documents: (data || []) as SowDocument[] }
+    const documents = (data || []) as SowDocument[]
+    if (documents.length === 0) {
+      return { success: true, documents }
+    }
+
+    const { data: shareLinks, error: linksError } = await auth.supabase
+      .from('sow_share_links')
+      .select('sow_id, share_token, created_at')
+      .in(
+        'sow_id',
+        documents.map((doc) => doc.id)
+      )
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+
+    if (linksError) throw linksError
+
+    const latestTokenBySow = new Map<string, string>()
+    for (const link of shareLinks || []) {
+      if (!latestTokenBySow.has(link.sow_id)) {
+        latestTokenBySow.set(link.sow_id, link.share_token)
+      }
+    }
+
+    return {
+      success: true,
+      documents: documents.map((doc) => ({
+        ...doc,
+        active_share_token: latestTokenBySow.get(doc.id) ?? null,
+      })),
+    }
   } catch (error) {
     console.error('Error fetching SoW documents:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch statements of work' }
@@ -353,7 +385,7 @@ export async function createSowDocument(input: SowDocumentInput) {
         agency_name: agencyName,
         customer_type: input.customer_type,
         include_vat: input.include_vat,
-        show_quoted_hours: input.show_quoted_hours ?? true,
+        show_quoted_hours: input.show_quoted_hours ?? false,
         notes: input.notes?.trim() || null,
         status: 'draft',
         created_by: auth.userId,
@@ -419,7 +451,7 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         agency_name: agencyName,
         customer_type: input.customer_type,
         include_vat: input.include_vat,
-        show_quoted_hours: input.show_quoted_hours ?? true,
+        show_quoted_hours: input.show_quoted_hours ?? false,
         notes: input.notes?.trim() || null,
         ...totals,
       })

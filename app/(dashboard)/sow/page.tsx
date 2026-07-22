@@ -14,9 +14,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Plus, Loader2, ScrollText, ExternalLink, Trash2 } from 'lucide-react'
+import { Plus, Loader2, ScrollText, ExternalLink, Link2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { deleteSowDocument, getSowDocuments, type SowDocument, type SowStatus } from '@/app/actions/sow'
+import { getSowDocuments, type SowDocument, type SowStatus } from '@/app/actions/sow'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -69,20 +69,20 @@ export default function SowListPage() {
     }
   }
 
-  async function handleDelete(doc: SowDocument) {
-    const message =
-      doc.status === 'approved'
-        ? `Permanently delete "${doc.title}"? This approved SoW will be removed and cannot be recovered.`
-        : `Permanently delete "${doc.title}"? This cannot be undone.`
+  async function handleCopyPublicLink(doc: SowDocument) {
+    if (!doc.active_share_token) {
+      toast.error('No public link yet', {
+        description: 'Open the SoW and create a share link first.',
+      })
+      return
+    }
 
-    if (!confirm(message)) return
-
-    const result = await deleteSowDocument(doc.id)
-    if (result.error) {
-      toast.error('Error deleting', { description: result.error })
-    } else {
-      toast.success('Statement of work deleted')
-      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
+    const url = `${window.location.origin}/sow/share/${doc.active_share_token}`
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success('Public link copied')
+    } catch {
+      toast.error('Could not copy link')
     }
   }
 
@@ -168,7 +168,7 @@ export default function SowListPage() {
                       )}
                     </div>
                   ) : (
-                    <SowTable documents={tabDocuments} onDelete={handleDelete} />
+                    <SowTable documents={tabDocuments} onCopyPublicLink={handleCopyPublicLink} />
                   )}
                 </CardContent>
               </Card>
@@ -182,10 +182,10 @@ export default function SowListPage() {
 
 function SowTable({
   documents,
-  onDelete,
+  onCopyPublicLink,
 }: {
   documents: SowDocument[]
-  onDelete: (doc: SowDocument) => void
+  onCopyPublicLink: (doc: SowDocument) => void
 }) {
   return (
     <Table>
@@ -248,12 +248,17 @@ function SowTable({
                   </Button>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => onDelete(doc)}
-                    title="Delete"
+                    size="sm"
+                    onClick={() => onCopyPublicLink(doc)}
+                    disabled={!doc.active_share_token}
+                    title={
+                      doc.active_share_token
+                        ? 'Copy public link'
+                        : 'No share link yet — open the SoW to create one'
+                    }
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Link2 className="mr-1 h-4 w-4" />
+                    Copy link
                   </Button>
                 </div>
               </TableCell>

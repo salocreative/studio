@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
 import {
   Table,
   TableBody,
@@ -172,15 +171,10 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
 
         <Card>
           <CardHeader>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <CardTitle>{document.title}</CardTitle>
-                <CardDescription>
-                  {showQuotedHours ? 'Scope, time, and investment' : 'Scope and investment'}
-                </CardDescription>
-              </div>
-              <Badge variant="outline">{document.customer_type === 'partner' ? 'Partner rate' : 'Client rate'}</Badge>
-            </div>
+            <CardTitle>{document.title}</CardTitle>
+            <CardDescription>
+              {showQuotedHours ? 'Scope, time, and investment' : 'Scope and investment'}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {document.notes && (
