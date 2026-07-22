@@ -455,6 +455,9 @@ export async function updateSowOnMonday(sowId: string) {
       }
       boardId = leadsBoardResult.board.monday_board_id
     }
+    if (!boardId) {
+      return { error: 'Could not resolve Monday board for this SoW' }
+    }
 
     const quotedHoursColumnId = await getLeadsColumnMapping(supabase, 'quoted_hours', boardId)
     if (!quotedHoursColumnId) {

@@ -84,7 +84,7 @@ export async function getSowLeadImportData(projectId: string) {
 
     const { data: tasks, error: tasksError } = await auth.supabase
       .from('monday_tasks')
-      .select('name, quoted_hours')
+      .select('name, quoted_hours, timeline_start, timeline_end')
       .eq('project_id', projectId)
       .order('name', { ascending: true })
 
