@@ -115,7 +115,10 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
     Number(document.base_day_rate_gbp) || 0,
     document.day_rate_override_gbp != null ? Number(document.day_rate_override_gbp) : null
   )
-  const displayTotalHours = scaleForQuote(Number(document.total_hours), rateMultiplier)
+  const displayTotalHours = document.line_items.reduce(
+    (sum, item) => sum + scaleForQuote(Number(item.hours), rateMultiplier),
+    0
+  )
 
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">

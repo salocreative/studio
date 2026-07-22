@@ -314,10 +314,14 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     () => getRateMultiplier(baseDayRate, dayRateOverride),
     [baseDayRate, dayRateOverride]
   )
-  const quotedHours = useMemo(
-    () => scaleForQuote(preview.hours, rateMultiplier),
-    [preview.hours, rateMultiplier]
-  )
+  const quotedHours = useMemo(() => {
+    if (!currentRate) return 0
+    const hpd = Number(currentRate.hours_per_day)
+    return lineItems.reduce((sum, item) => {
+      const itemHours = item.is_days ? item.quantity * hpd : item.quantity
+      return sum + scaleForQuote(itemHours, rateMultiplier)
+    }, 0)
+  }, [lineItems, currentRate, rateMultiplier])
 
   function handleCustomerTypeChange(value: 'partner' | 'client') {
     setCustomerType(value)

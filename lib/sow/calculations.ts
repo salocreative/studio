@@ -80,8 +80,13 @@ export function getRateMultiplier(
   return baseDayRate / quotedDayRate
 }
 
+/** Round to the nearest whole or half hour/day (e.g. 17.28 → 17.5, 2.88 → 3). */
+export function roundToHalf(value: number): number {
+  return Math.round(value * 2) / 2
+}
+
 export function scaleForQuote(value: number, multiplier: number): number {
-  return Math.round(value * multiplier * 100) / 100
+  return roundToHalf(value * multiplier)
 }
 
 export function validatePaymentSchedule(
