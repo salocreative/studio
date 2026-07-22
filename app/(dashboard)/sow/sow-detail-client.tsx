@@ -59,6 +59,7 @@ import {
   type SowLeadOption,
 } from '@/app/actions/sow-leads'
 import { getQuoteRates, type QuoteRate } from '@/app/actions/quote-rates'
+import { pushSowToMonday } from '@/app/actions/sow-to-monday'
 import { VAT_RATE } from '@/lib/sow/calculations'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
@@ -131,6 +132,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const isPartnerWork = customerType === 'partner'
   const resolvedAgencyName = agencyName === '__custom__' ? customAgency.trim() : agencyName
   const resolvedClientName = clientName === '__custom__' ? customClient.trim() : clientName
+  const hasMondayLink = Boolean(
+    mondayProjectId || document?.monday_project_id || document?.monday_item_id
+  )
 
   useEffect(() => {
     loadSupportingData()
@@ -217,9 +221,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       }
       if (result.shareLinks) setShareLinks(result.shareLinks)
       if (result.linkedLead) setLinkedLead(result.linkedLead)
-      if (result.document?.monday_project_id) {
-        setMondayProjectId(result.document.monday_project_id)
-      }
+      setMondayProjectId(result.document?.monday_project_id ?? null)
     } finally {
       setLoading(false)
     }
@@ -376,7 +378,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         show_quoted_hours: showQuotedHours,
         notes: notes.trim() || null,
         monday_project_id: mondayProjectId,
-        push_to_monday: isNew && pushToMonday && !mondayProjectId,
+        push_to_monday: isNew && pushToMonday && !hasMondayLink,
         line_items: lineItems.map((item) => ({
           title: item.title,
           description: item.description.trim() || null,
@@ -394,7 +396,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
             toast.warning('SoW created but could not push to Monday', {
               description: result.pushWarning,
             })
-          } else if (pushToMonday && !mondayProjectId) {
+          } else if (pushToMonday && !hasMondayLink) {
             toast.success('Statement of work created and pushed to Leads board')
           } else {
             toast.success('Statement of work created')
@@ -406,7 +408,18 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         if (result.error) {
           toast.error('Error saving SoW', { description: result.error })
         } else {
-          toast.success('Statement of work saved')
+          if (pushToMonday && !hasMondayLink) {
+            const pushResult = await pushSowToMonday(sowId)
+            if (pushResult.error) {
+              toast.warning('SoW saved but could not push to Monday', {
+                description: pushResult.error,
+              })
+            } else {
+              toast.success('Statement of work saved and pushed to Leads board')
+            }
+          } else {
+            toast.success('Statement of work saved')
+          }
           await loadDocument(sowId)
         }
       }
@@ -720,12 +733,14 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                   disabled={isReadOnly}
                 />
               </div>
-              {isNew && !mondayProjectId && (
+              {!hasMondayLink && !isReadOnly && (
                 <div className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <Label htmlFor="sow-push-monday">Push to Leads board</Label>
                     <p className="text-xs text-muted-foreground">
-                      Create a new item on the Leads board when this SoW is saved
+                      {isNew
+                        ? 'Create a new item on the Leads board when this SoW is saved'
+                        : 'Create a new item on the Leads board when you save changes'}
                     </p>
                   </div>
                   <Switch
@@ -735,10 +750,10 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                   />
                 </div>
               )}
-              {isNew && mondayProjectId && (
+              {hasMondayLink && (
                 <p className="text-sm text-muted-foreground flex items-center gap-2">
                   <Link2 className="h-4 w-4" />
-                  Linked to an existing Leads board item — push is not needed
+                  Linked to a Leads board item — push is not needed
                 </p>
               )}
             </CardContent>

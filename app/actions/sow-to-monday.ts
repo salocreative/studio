@@ -85,6 +85,69 @@ async function loadSowForMonday(sowId: string) {
   }
 }
 
+function formatDropdownLabelError(error: unknown, fieldLabel: string): Error {
+  const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
+
+  if (
+    lower.includes('permission') ||
+    lower.includes('not allowed') ||
+    lower.includes('unauthorized') ||
+    lower.includes('forbidden') ||
+    lower.includes('board structure') ||
+    lower.includes('insufficient')
+  ) {
+    return new Error(
+      `Could not add ${fieldLabel} to Monday: the API token needs permission to change board structure (add dropdown labels) on the Leads board.`
+    )
+  }
+
+  if (lower.includes('does not exist') && lower.includes('label')) {
+    return new Error(
+      `Could not set ${fieldLabel} on Monday (${message}). Ensure the Monday API token can create dropdown labels on the Leads board.`
+    )
+  }
+
+  return error instanceof Error ? error : new Error(message)
+}
+
+/**
+ * Set a dropdown column value, creating the label in Monday if it doesn't exist yet.
+ */
+async function setDropdownLabelWithAutoCreate(params: {
+  itemId: string
+  boardId: string
+  columnId: string
+  label: string
+  fieldLabel: string
+}) {
+  try {
+    await mondayRequest(
+      `
+        mutation($itemId: ID!, $boardId: ID!, $columnId: String!, $value: String!) {
+          change_simple_column_value(
+            item_id: $itemId
+            board_id: $boardId
+            column_id: $columnId
+            value: $value
+            create_labels_if_missing: true
+          ) {
+            id
+          }
+        }
+      `,
+      {
+        itemId: params.itemId,
+        boardId: params.boardId,
+        columnId: params.columnId,
+        value: params.label,
+      }
+    )
+  } catch (error) {
+    throw formatDropdownLabelError(error, params.fieldLabel)
+  }
+}
+
 export async function pushSowToMonday(sowId: string) {
   const supabase = await createClient()
   const {
@@ -137,16 +200,12 @@ export async function pushSowToMonday(sowId: string) {
     const clientColumnId = await getLeadsColumnMapping(supabase, 'client', leadsBoardId)
     const agencyColumnId = await getLeadsColumnMapping(supabase, 'agency', leadsBoardId)
 
+    // Create item without client/agency dropdowns — those require create_labels_if_missing
+    // which is only supported on change_* mutations, not create_item.
     const mainItemColumnValues: Record<string, string> = {}
 
     if (quoteValueColumnId) {
       mainItemColumnValues[quoteValueColumnId] = Number(document.subtotal_gbp).toFixed(2)
-    }
-    if (clientColumnId && document.client_name) {
-      mainItemColumnValues[clientColumnId] = document.client_name
-    }
-    if (agencyColumnId && document.agency_name) {
-      mainItemColumnValues[agencyColumnId] = document.agency_name
     }
 
     const createItemData = await mondayRequest<{
@@ -173,6 +232,26 @@ export async function pushSowToMonday(sowId: string) {
 
     const itemId = createItemData.create_item?.id
     if (!itemId) throw new Error('Monday.com did not return an item ID')
+
+    if (clientColumnId && document.client_name) {
+      await setDropdownLabelWithAutoCreate({
+        itemId,
+        boardId: leadsBoardId,
+        columnId: clientColumnId,
+        label: document.client_name,
+        fieldLabel: `client "${document.client_name}"`,
+      })
+    }
+
+    if (agencyColumnId && document.agency_name) {
+      await setDropdownLabelWithAutoCreate({
+        itemId,
+        boardId: leadsBoardId,
+        columnId: agencyColumnId,
+        label: document.agency_name,
+        fieldLabel: `agency "${document.agency_name}"`,
+      })
+    }
 
     for (const item of lineItems) {
       const columnValuesObj: Record<string, string> = {
