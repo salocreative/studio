@@ -5,7 +5,20 @@ export interface SowLineItemInput {
   description?: string | null
   quantity: number
   is_days: boolean
+  timeline_start?: string | null
+  timeline_end?: string | null
 }
+
+export interface SowPaymentMilestoneInput {
+  label: string
+  percentage: number
+  due_date?: string | null
+}
+
+export const DEFAULT_PAYMENT_SCHEDULE: SowPaymentMilestoneInput[] = [
+  { label: 'Up front', percentage: 50, due_date: null },
+  { label: 'On completion', percentage: 50, due_date: null },
+]
 
 export interface ComputedLineItem extends SowLineItemInput {
   hours: number
@@ -55,4 +68,29 @@ export function computeSowTotals(
 export function hourlyRateFromQuoteRate(dayRateGbp: number, hoursPerDay: number): number {
   if (!hoursPerDay) return 0
   return dayRateGbp / hoursPerDay
+}
+
+export function validatePaymentSchedule(
+  milestones: SowPaymentMilestoneInput[]
+): string | null {
+  if (!milestones.length) return 'Add at least one payment milestone'
+  for (const m of milestones) {
+    if (!m.label.trim()) return 'Each payment milestone needs a label'
+    if (!(m.percentage > 0)) return 'Each payment percentage must be greater than 0'
+  }
+  const sum = milestones.reduce((acc, m) => acc + Number(m.percentage), 0)
+  if (Math.abs(sum - 100) > 0.05) {
+    return `Payment percentages must total 100% (currently ${sum.toFixed(1)}%)`
+  }
+  return null
+}
+
+export function validateLineItemTimeline(
+  start?: string | null,
+  end?: string | null
+): string | null {
+  if (start && end && start > end) {
+    return 'Line item end date must be on or after its start date'
+  }
+  return null
 }

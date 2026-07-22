@@ -109,6 +109,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
   const isRejected = document.status === 'rejected'
   const canRespond = !isApproved && !isRejected
   const showQuotedHours = document.show_quoted_hours ?? true
+  const showPaymentSchedule = document.show_payment_schedule ?? true
 
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">
@@ -183,39 +184,73 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
               </div>
             )}
 
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Deliverable</TableHead>
-                  {showQuotedHours && <TableHead className="text-right">Time</TableHead>}
-                  <TableHead className="text-right">Cost</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {document.line_items.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>
-                      <p className="font-medium">{item.title}</p>
-                      {item.description && (
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap mt-1">
-                          {item.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    {showQuotedHours && (
-                      <TableCell className="text-right text-muted-foreground">
-                        {item.is_days
-                          ? `${item.quantity} day${Number(item.quantity) !== 1 ? 's' : ''} (${Number(item.hours).toFixed(1)}h)`
-                          : `${Number(item.hours).toFixed(1)}h`}
-                      </TableCell>
-                    )}
-                    <TableCell className="text-right">
-                      {formatMoney(Number(item.line_total_gbp))}
-                    </TableCell>
+            {(document.start_date || document.end_date) && (
+              <div className="grid gap-3 sm:grid-cols-2 text-sm">
+                {document.start_date && (
+                  <div className="rounded-lg border p-3">
+                    <p className="text-muted-foreground">Project start</p>
+                    <p className="font-medium mt-1">
+                      {new Date(document.start_date).toLocaleDateString()}
+                    </p>
+                  </div>
+                )}
+                {document.end_date && (
+                  <div className="rounded-lg border p-3">
+                    <p className="text-muted-foreground">Project end</p>
+                    <p className="font-medium mt-1">
+                      {new Date(document.end_date).toLocaleDateString()}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="rounded-lg border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Deliverable</TableHead>
+                    {showQuotedHours && <TableHead className="text-right">Time</TableHead>}
+                    <TableHead className="text-right">Cost</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {document.line_items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <p className="font-medium">{item.title}</p>
+                        {item.description && (
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap mt-1">
+                            {item.description}
+                          </p>
+                        )}
+                        {(item.timeline_start || item.timeline_end) && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {item.timeline_start
+                              ? new Date(item.timeline_start).toLocaleDateString()
+                              : '—'}
+                            {' → '}
+                            {item.timeline_end
+                              ? new Date(item.timeline_end).toLocaleDateString()
+                              : '—'}
+                          </p>
+                        )}
+                      </TableCell>
+                      {showQuotedHours && (
+                        <TableCell className="text-right text-muted-foreground">
+                          {item.is_days
+                            ? `${item.quantity} day${Number(item.quantity) !== 1 ? 's' : ''} (${Number(item.hours).toFixed(1)}h)`
+                            : `${Number(item.hours).toFixed(1)}h`}
+                        </TableCell>
+                      )}
+                      <TableCell className="text-right">
+                        {formatMoney(Number(item.line_total_gbp))}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
 
             <div className="space-y-1 text-sm border-t pt-4">
               <div className="flex justify-between">
@@ -239,6 +274,36 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 </div>
               )}
             </div>
+
+            {(showPaymentSchedule && (document.payment_milestones?.length ?? 0) > 0) && (
+              <div className="border-t pt-4 space-y-2">
+                <h3 className="font-medium text-sm">Payment schedule</h3>
+                <div className="space-y-1.5 text-sm">
+                  {document.payment_milestones!.map((milestone) => {
+                    const amount =
+                      (Number(document.total_gbp) * Number(milestone.percentage)) / 100
+                    return (
+                      <div
+                        key={milestone.id}
+                        className="flex items-baseline justify-between gap-4"
+                      >
+                        <span>
+                          <span className="font-medium">{milestone.label}</span>
+                          <span className="text-muted-foreground">
+                            {' '}
+                            · {Number(milestone.percentage).toFixed(0)}%
+                            {milestone.due_date
+                              ? ` · due ${new Date(milestone.due_date).toLocaleDateString()}`
+                              : ''}
+                          </span>
+                        </span>
+                        <span className="font-medium whitespace-nowrap">{formatMoney(amount)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -289,11 +354,19 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col-reverse sm:flex-row gap-3">
                 {!showRejectForm ? (
                   <>
                     <Button
-                      className={cn('flex-1', 'bg-green-600 hover:bg-green-700')}
+                      variant="outline"
+                      className="w-auto self-start sm:self-auto"
+                      onClick={() => setShowRejectForm(true)}
+                      disabled={submitting}
+                    >
+                      Decline
+                    </Button>
+                    <Button
+                      className={cn('w-full flex-1', 'bg-green-600 hover:bg-green-700')}
                       onClick={handleApprove}
                       disabled={submitting || !approverName.trim()}
                     >
@@ -303,14 +376,6 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                         <CheckCircle2 className="mr-2 h-4 w-4" />
                       )}
                       Approve statement of work
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => setShowRejectForm(true)}
-                      disabled={submitting}
-                    >
-                      Decline
                     </Button>
                   </>
                 ) : (

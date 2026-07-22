@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -32,11 +32,12 @@ import {
   Check,
   Loader2,
   Plus,
+  Pencil,
   Trash2,
   Share2,
   ScrollText,
   Download,
-  Link2,
+  RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -50,7 +51,6 @@ import {
   getSowDocument,
   updateSowDocument,
   type SowDocument,
-  type SowLinkedLead,
   type SowShareLink,
 } from '@/app/actions/sow'
 import {
@@ -59,8 +59,8 @@ import {
   type SowLeadOption,
 } from '@/app/actions/sow-leads'
 import { getQuoteRates, type QuoteRate } from '@/app/actions/quote-rates'
-import { pushSowToMonday } from '@/app/actions/sow-to-monday'
-import { VAT_RATE } from '@/lib/sow/calculations'
+import { pushSowToMonday, updateSowOnMonday } from '@/app/actions/sow-to-monday'
+import { VAT_RATE, DEFAULT_PAYMENT_SCHEDULE } from '@/lib/sow/calculations'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -70,6 +70,15 @@ interface LineItemForm {
   description: string
   quantity: number
   is_days: boolean
+  timeline_start: string
+  timeline_end: string
+}
+
+interface PaymentMilestoneForm {
+  id: string
+  label: string
+  percentage: number
+  due_date: string
 }
 
 interface SowDetailClientProps {
@@ -111,7 +120,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [importingLead, setImportingLead] = useState(false)
   const [mondayProjectId, setMondayProjectId] = useState<string | null>(null)
   const [pushToMonday, setPushToMonday] = useState(false)
-  const [linkedLead, setLinkedLead] = useState<SowLinkedLead | null>(null)
+  const [updatingMonday, setUpdatingMonday] = useState(false)
+  const [editorTab, setEditorTab] = useState<'details' | 'deliverables' | 'payment'>('details')
 
   const [title, setTitle] = useState('')
   const [agencyName, setAgencyName] = useState('')
@@ -121,12 +131,26 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [customerType, setCustomerType] = useState<'partner' | 'client'>('client')
   const [includeVat, setIncludeVat] = useState(true)
   const [showQuotedHours, setShowQuotedHours] = useState(false)
+  const [showPaymentSchedule, setShowPaymentSchedule] = useState(true)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [notes, setNotes] = useState('')
   const [lineItems, setLineItems] = useState<LineItemForm[]>([])
+  const [paymentMilestones, setPaymentMilestones] = useState<PaymentMilestoneForm[]>(() =>
+    DEFAULT_PAYMENT_SCHEDULE.map((m) => ({
+      id: crypto.randomUUID(),
+      label: m.label,
+      percentage: m.percentage,
+      due_date: '',
+    }))
+  )
   const [newItemTitle, setNewItemTitle] = useState('')
   const [newItemDescription, setNewItemDescription] = useState('')
   const [newItemQuantity, setNewItemQuantity] = useState(0)
   const [newItemIsDays, setNewItemIsDays] = useState(false)
+  const [newItemStart, setNewItemStart] = useState('')
+  const [newItemEnd, setNewItemEnd] = useState('')
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
 
   const isReadOnly = document?.status === 'approved'
   const isPartnerWork = customerType === 'partner'
@@ -208,6 +232,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
 
         setIncludeVat(doc.include_vat)
         setShowQuotedHours(doc.show_quoted_hours ?? true)
+        setShowPaymentSchedule(doc.show_payment_schedule ?? true)
+        setStartDate(doc.start_date || '')
+        setEndDate(doc.end_date || '')
         setNotes(doc.notes || '')
         setLineItems(
           (doc.line_items || []).map((item) => ({
@@ -216,11 +243,28 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
             description: item.description || '',
             quantity: Number(item.quantity),
             is_days: item.is_days,
+            timeline_start: item.timeline_start || '',
+            timeline_end: item.timeline_end || '',
           }))
+        )
+        const milestones = doc.payment_milestones || []
+        setPaymentMilestones(
+          milestones.length > 0
+            ? milestones.map((m) => ({
+                id: m.id,
+                label: m.label,
+                percentage: Number(m.percentage),
+                due_date: m.due_date || '',
+              }))
+            : DEFAULT_PAYMENT_SCHEDULE.map((m) => ({
+                id: crypto.randomUUID(),
+                label: m.label,
+                percentage: m.percentage,
+                due_date: '',
+              }))
         )
       }
       if (result.shareLinks) setShareLinks(result.shareLinks)
-      if (result.linkedLead) setLinkedLead(result.linkedLead)
       setMondayProjectId(result.document?.monday_project_id ?? null)
     } finally {
       setLoading(false)
@@ -311,6 +355,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           description: item.description || '',
           quantity: item.quantity,
           is_days: item.is_days,
+          timeline_start: item.timeline_start || '',
+          timeline_end: item.timeline_end || '',
         }))
       )
 
@@ -318,6 +364,16 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     } finally {
       setImportingLead(false)
     }
+  }
+
+  function clearLineItemForm() {
+    setNewItemTitle('')
+    setNewItemDescription('')
+    setNewItemQuantity(0)
+    setNewItemIsDays(false)
+    setNewItemStart('')
+    setNewItemEnd('')
+    setEditingItemId(null)
   }
 
   function handleAddItem() {
@@ -329,25 +385,81 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       toast.error(newItemIsDays ? 'Days must be greater than 0' : 'Hours must be greater than 0')
       return
     }
-    setLineItems((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        title: newItemTitle.trim(),
-        description: newItemDescription.trim(),
-        quantity: newItemQuantity,
-        is_days: newItemIsDays,
-      },
-    ])
-    setNewItemTitle('')
-    setNewItemDescription('')
-    setNewItemQuantity(0)
-    setNewItemIsDays(false)
+
+    const nextItem: LineItemForm = {
+      id: editingItemId || crypto.randomUUID(),
+      title: newItemTitle.trim(),
+      description: newItemDescription.trim(),
+      quantity: newItemQuantity,
+      is_days: newItemIsDays,
+      timeline_start: newItemStart,
+      timeline_end: newItemEnd,
+    }
+
+    if (editingItemId) {
+      setLineItems((prev) => prev.map((item) => (item.id === editingItemId ? nextItem : item)))
+      toast.success('Line item updated')
+    } else {
+      setLineItems((prev) => [...prev, nextItem])
+    }
+    clearLineItemForm()
+  }
+
+  function handleEditItem(item: LineItemForm) {
+    setEditingItemId(item.id)
+    setNewItemTitle(item.title)
+    setNewItemDescription(item.description)
+    setNewItemQuantity(item.quantity)
+    setNewItemIsDays(item.is_days)
+    setNewItemStart(item.timeline_start)
+    setNewItemEnd(item.timeline_end)
   }
 
   function handleRemoveItem(id: string) {
     setLineItems((prev) => prev.filter((item) => item.id !== id))
+    if (editingItemId === id) clearLineItemForm()
   }
+
+  function handleResetPaymentSchedule() {
+    setPaymentMilestones(
+      DEFAULT_PAYMENT_SCHEDULE.map((m) => ({
+        id: crypto.randomUUID(),
+        label: m.label,
+        percentage: m.percentage,
+        due_date: m.label === 'On completion' && endDate ? endDate : '',
+      }))
+    )
+  }
+
+  function handleAddPaymentMilestone() {
+    setPaymentMilestones((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        label: '',
+        percentage: 0,
+        due_date: '',
+      },
+    ])
+  }
+
+  function handleUpdatePaymentMilestone(
+    id: string,
+    patch: Partial<Omit<PaymentMilestoneForm, 'id'>>
+  ) {
+    setPaymentMilestones((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
+    )
+  }
+
+  function handleRemovePaymentMilestone(id: string) {
+    setPaymentMilestones((prev) => prev.filter((m) => m.id !== id))
+  }
+
+  const paymentPercentageTotal = useMemo(
+    () => paymentMilestones.reduce((sum, m) => sum + (Number(m.percentage) || 0), 0),
+    [paymentMilestones]
+  )
 
   async function handleSave() {
     if (!title.trim()) {
@@ -376,14 +488,24 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         customer_type: customerType,
         include_vat: includeVat,
         show_quoted_hours: showQuotedHours,
+        show_payment_schedule: showPaymentSchedule,
+        start_date: startDate || null,
+        end_date: endDate || null,
         notes: notes.trim() || null,
         monday_project_id: mondayProjectId,
         push_to_monday: isNew && pushToMonday && !hasMondayLink,
+        payment_milestones: paymentMilestones.map((m) => ({
+          label: m.label,
+          percentage: Number(m.percentage),
+          due_date: m.due_date || null,
+        })),
         line_items: lineItems.map((item) => ({
           title: item.title,
           description: item.description.trim() || null,
           quantity: item.quantity,
           is_days: item.is_days,
+          timeline_start: item.timeline_start || null,
+          timeline_end: item.timeline_end || null,
         })),
       }
 
@@ -425,6 +547,58 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       }
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleUpdateMonday() {
+    if (!sowId || !hasMondayLink) return
+    setUpdatingMonday(true)
+    try {
+      // Persist latest edits first so Monday gets current values
+      if (!isReadOnly) {
+        const payload = {
+          title: title.trim(),
+          client_name: resolvedClientName,
+          agency_name: isPartnerWork ? resolvedAgencyName : null,
+          customer_type: customerType,
+          include_vat: includeVat,
+          show_quoted_hours: showQuotedHours,
+          show_payment_schedule: showPaymentSchedule,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          notes: notes.trim() || null,
+          monday_project_id: mondayProjectId,
+          push_to_monday: false,
+          payment_milestones: paymentMilestones.map((m) => ({
+            label: m.label,
+            percentage: Number(m.percentage),
+            due_date: m.due_date || null,
+          })),
+          line_items: lineItems.map((item) => ({
+            title: item.title,
+            description: item.description.trim() || null,
+            quantity: item.quantity,
+            is_days: item.is_days,
+            timeline_start: item.timeline_start || null,
+            timeline_end: item.timeline_end || null,
+          })),
+        }
+        const saveResult = await updateSowDocument(sowId, payload)
+        if (saveResult.error) {
+          toast.error('Save SoW before updating Monday', { description: saveResult.error })
+          return
+        }
+      }
+
+      const result = await updateSowOnMonday(sowId)
+      if (result.error) {
+        toast.error('Could not update Monday', { description: result.error })
+      } else {
+        toast.success(result.message || 'Monday item updated')
+        await loadDocument(sowId)
+      }
+    } finally {
+      setUpdatingMonday(false)
     }
   }
 
@@ -516,18 +690,25 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
             {isNew ? 'New statement of work' : title || 'Statement of work'}
           </h1>
           {document && clientApproval && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge
-                variant={clientApproval.tone === 'destructive' ? 'destructive' : 'secondary'}
-                className={cn(approvalBadgeClass(clientApproval.tone))}
-              >
-                {clientApproval.label}
-              </Badge>
-              <span className="text-sm text-muted-foreground">{clientApproval.description}</span>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge
+                  variant={clientApproval.tone === 'destructive' ? 'destructive' : 'secondary'}
+                  className={cn(approvalBadgeClass(clientApproval.tone))}
+                >
+                  {clientApproval.label}
+                </Badge>
+                <span className="text-sm text-muted-foreground">{clientApproval.description}</span>
+              </div>
+              {document.rejection_notes && (
+                <p className="text-sm text-muted-foreground border rounded-md p-2 bg-muted/50 max-w-xl">
+                  {document.rejection_notes}
+                </p>
+              )}
             </div>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 justify-end">
           {!isNew && (
             <Button
               variant="outline"
@@ -542,8 +723,22 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
               Archive
             </Button>
           )}
+          {hasMondayLink && !isReadOnly && (
+            <Button
+              variant="outline"
+              onClick={handleUpdateMonday}
+              disabled={updatingMonday || saving}
+            >
+              {updatingMonday ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Update Monday
+            </Button>
+          )}
           {!isReadOnly && (
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={handleSave} disabled={saving || updatingMonday}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isNew ? 'Create SoW' : 'Save changes'}
             </Button>
@@ -553,368 +748,536 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
-          {isNew && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Download className="h-4 w-4" />
-                  Import from Leads board
-                </CardTitle>
-                <CardDescription>
-                  Pull an existing lead into this SoW — title, client, and line items from Monday
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col sm:flex-row gap-3">
-                <Select value={selectedLeadId} onValueChange={setSelectedLeadId}>
-                  <SelectTrigger className="sm:flex-1">
-                    <SelectValue placeholder="Select a lead" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {leads.map((lead) => (
-                      <SelectItem key={lead.id} value={lead.id}>
-                        {lead.name}
-                        {lead.client_name ? ` — ${lead.client_name}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  onClick={handleImportLead}
-                  disabled={importingLead || !selectedLeadId}
-                >
-                  {importingLead ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="mr-2 h-4 w-4" />
-                  )}
-                  Import lead
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+          <Tabs
+            value={editorTab}
+            onValueChange={(v) => setEditorTab(v as 'details' | 'deliverables' | 'payment')}
+          >
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="details">Project</TabsTrigger>
+              <TabsTrigger value="deliverables">Deliverables</TabsTrigger>
+              <TabsTrigger value="payment">Payment</TabsTrigger>
+            </TabsList>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Document details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="sow-title">Title</Label>
-                <Input
-                  id="sow-title"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Website redesign — Phase 1"
-                  disabled={isReadOnly}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Rate type</Label>
-                <Tabs value={customerType} onValueChange={(v) => handleCustomerTypeChange(v as 'partner' | 'client')}>
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="client" disabled={isReadOnly}>
-                      Direct client
-                    </TabsTrigger>
-                    <TabsTrigger value="partner" disabled={isReadOnly}>
-                      Via agency
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-                <p className="text-xs text-muted-foreground">
-                  {isPartnerWork
-                    ? 'Partner rates apply when billing an agency for work on an end client.'
-                    : 'Client rates apply for direct client relationships.'}
-                </p>
-              </div>
-
-              {isPartnerWork && (
-                <div className="space-y-2">
-                  <Label>Agency partner</Label>
-                  <Select value={agencyName} onValueChange={handleAgencyChange} disabled={isReadOnly}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agency" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agencies.map((agency) => (
-                        <SelectItem key={agency} value={agency}>
-                          {agency}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="__custom__">Other (type below)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {agencyName === '__custom__' && (
-                    <Input
-                      value={customAgency}
-                      onChange={(e) => setCustomAgency(e.target.value)}
-                      placeholder="Agency name"
-                      disabled={isReadOnly}
-                      className="mt-2"
-                    />
-                  )}
-                </div>
+            <TabsContent value="details" className="space-y-6 mt-6">
+              {isNew && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Download className="h-4 w-4" />
+                      Import from Leads board
+                    </CardTitle>
+                    <CardDescription>
+                      Pull an existing lead into this SoW — title, client, and line items from Monday
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col sm:flex-row gap-3">
+                    <Select value={selectedLeadId} onValueChange={setSelectedLeadId}>
+                      <SelectTrigger className="sm:flex-1">
+                        <SelectValue placeholder="Select a lead" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {leads.map((lead) => (
+                          <SelectItem key={lead.id} value={lead.id}>
+                            {lead.name}
+                            {lead.client_name ? ` — ${lead.client_name}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      onClick={handleImportLead}
+                      disabled={importingLead || !selectedLeadId}
+                    >
+                      {importingLead ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      Import lead
+                    </Button>
+                  </CardContent>
+                </Card>
               )}
 
-              <div className="space-y-2">
-                <Label>End client</Label>
-                <Select
-                  value={clientName}
-                  onValueChange={setClientName}
-                  disabled={isReadOnly || (isPartnerWork && !resolvedAgencyName)}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        isPartnerWork && !resolvedAgencyName
-                          ? 'Select agency first'
-                          : 'Select end client'
-                      }
+              <Card>
+                <CardHeader>
+                  <CardTitle>Document details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sow-title">Title</Label>
+                    <Input
+                      id="sow-title"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Website redesign — Phase 1"
+                      disabled={isReadOnly}
                     />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((client) => (
-                      <SelectItem key={client} value={client}>
-                        {client}
-                      </SelectItem>
-                    ))}
-                    <SelectItem value="__custom__">Other (type below)</SelectItem>
-                  </SelectContent>
-                </Select>
-                {clientName === '__custom__' && (
-                  <Input
-                    value={customClient}
-                    onChange={(e) => setCustomClient(e.target.value)}
-                    placeholder="End client name"
-                    disabled={isReadOnly}
-                    className="mt-2"
-                  />
-                )}
-                {isPartnerWork && resolvedAgencyName && clients.length === 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    No Monday projects found for this agency — use Other to enter the end client.
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="sow-notes">Notes (optional)</Label>
-                <Textarea
-                  id="sow-notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                  disabled={isReadOnly}
-                  placeholder="Scope assumptions, deliverables summary, etc."
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <Label htmlFor="sow-show-hours">Show quoted hours on share view</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Clients see time per line item and total hours when enabled
-                  </p>
-                </div>
-                <Switch
-                  id="sow-show-hours"
-                  checked={showQuotedHours}
-                  onCheckedChange={setShowQuotedHours}
-                  disabled={isReadOnly}
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <Label htmlFor="sow-vat">Include VAT (20%)</Label>
-                  <p className="text-xs text-muted-foreground">Shown on totals and client share view</p>
-                </div>
-                <Switch
-                  id="sow-vat"
-                  checked={includeVat}
-                  onCheckedChange={setIncludeVat}
-                  disabled={isReadOnly}
-                />
-              </div>
-              {!hasMondayLink && !isReadOnly && (
-                <div className="flex items-center justify-between rounded-lg border p-3">
-                  <div>
-                    <Label htmlFor="sow-push-monday">Push to Leads board</Label>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Rate type</Label>
+                    <Tabs
+                      value={customerType}
+                      onValueChange={(v) => handleCustomerTypeChange(v as 'partner' | 'client')}
+                    >
+                      <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="client" disabled={isReadOnly}>
+                          Direct client
+                        </TabsTrigger>
+                        <TabsTrigger value="partner" disabled={isReadOnly}>
+                          Via agency
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
                     <p className="text-xs text-muted-foreground">
-                      {isNew
-                        ? 'Create a new item on the Leads board when this SoW is saved'
-                        : 'Create a new item on the Leads board when you save changes'}
+                      {isPartnerWork
+                        ? 'Partner rates apply when billing an agency for work on an end client.'
+                        : 'Client rates apply for direct client relationships.'}
                     </p>
                   </div>
-                  <Switch
-                    id="sow-push-monday"
-                    checked={pushToMonday}
-                    onCheckedChange={setPushToMonday}
-                  />
-                </div>
-              )}
-              {hasMondayLink && (
-                <p className="text-sm text-muted-foreground flex items-center gap-2">
-                  <Link2 className="h-4 w-4" />
-                  Linked to a Leads board item — push is not needed
-                </p>
-              )}
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Line items</CardTitle>
-              <CardDescription>Tasks with time and cost</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {lineItems.length > 0 && (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Task</TableHead>
-                      <TableHead className="text-right">Time</TableHead>
-                      <TableHead className="text-right">Cost</TableHead>
-                      {!isReadOnly && <TableHead className="w-12" />}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lineItems.map((item) => {
-                      const hours = item.is_days
-                        ? item.quantity * (currentRate?.hours_per_day || 6)
-                        : item.quantity
-                      const cost = hours * hourlyRate
+                  {isPartnerWork && (
+                    <div className="space-y-2">
+                      <Label>Agency partner</Label>
+                      <Select
+                        value={agencyName}
+                        onValueChange={handleAgencyChange}
+                        disabled={isReadOnly}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select agency" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {agencies.map((agency) => (
+                            <SelectItem key={agency} value={agency}>
+                              {agency}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="__custom__">Other (type below)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {agencyName === '__custom__' && (
+                        <Input
+                          value={customAgency}
+                          onChange={(e) => setCustomAgency(e.target.value)}
+                          placeholder="Agency name"
+                          disabled={isReadOnly}
+                          className="mt-2"
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label>End client</Label>
+                    <Select
+                      value={clientName}
+                      onValueChange={setClientName}
+                      disabled={isReadOnly || (isPartnerWork && !resolvedAgencyName)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            isPartnerWork && !resolvedAgencyName
+                              ? 'Select agency first'
+                              : 'Select end client'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.map((client) => (
+                          <SelectItem key={client} value={client}>
+                            {client}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__custom__">Other (type below)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {clientName === '__custom__' && (
+                      <Input
+                        value={customClient}
+                        onChange={(e) => setCustomClient(e.target.value)}
+                        placeholder="End client name"
+                        disabled={isReadOnly}
+                        className="mt-2"
+                      />
+                    )}
+                    {isPartnerWork && resolvedAgencyName && clients.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No Monday projects found for this agency — use Other to enter the end client.
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sow-notes">Notes (optional)</Label>
+                    <Textarea
+                      id="sow-notes"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      rows={3}
+                      disabled={isReadOnly}
+                      placeholder="Scope assumptions, deliverables summary, etc."
+                    />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="sow-start">Project start</Label>
+                      <Input
+                        id="sow-start"
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        disabled={isReadOnly}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="sow-end">Project end</Label>
+                      <Input
+                        id="sow-end"
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        disabled={isReadOnly}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Pushed to Monday as the lead due date when present
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div>
+                      <Label htmlFor="sow-show-hours">Show quoted hours on share view</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Clients see time per line item and total hours when enabled
+                      </p>
+                    </div>
+                    <Switch
+                      id="sow-show-hours"
+                      checked={showQuotedHours}
+                      onCheckedChange={setShowQuotedHours}
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div>
+                      <Label htmlFor="sow-vat">Include VAT (20%)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Shown on totals and client share view
+                      </p>
+                    </div>
+                    <Switch
+                      id="sow-vat"
+                      checked={includeVat}
+                      onCheckedChange={setIncludeVat}
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  {!hasMondayLink && !isReadOnly && (
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <Label htmlFor="sow-push-monday">Push to Leads board</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {isNew
+                            ? 'Create a new item on the Leads board when this SoW is saved'
+                            : 'Create a new item on the Leads board when you save changes'}
+                        </p>
+                      </div>
+                      <Switch
+                        id="sow-push-monday"
+                        checked={pushToMonday}
+                        onCheckedChange={setPushToMonday}
+                      />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="deliverables" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Line items</CardTitle>
+                  <CardDescription>Tasks with time, cost, and optional Monday timelines</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {lineItems.length > 0 && (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Task</TableHead>
+                          <TableHead className="text-right">Time</TableHead>
+                          <TableHead>Timeline</TableHead>
+                          <TableHead className="text-right">Cost</TableHead>
+                          {!isReadOnly && <TableHead className="w-20" />}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {lineItems.map((item) => {
+                          const hours = item.is_days
+                            ? item.quantity * (currentRate?.hours_per_day || 6)
+                            : item.quantity
+                          const cost = hours * hourlyRate
+                          return (
+                            <TableRow
+                              key={item.id}
+                              className={cn(editingItemId === item.id && 'bg-muted/40')}
+                            >
+                              <TableCell>
+                                <p className="font-medium">{item.title}</p>
+                                {item.description && (
+                                  <p className="text-sm text-muted-foreground whitespace-pre-wrap mt-1">
+                                    {item.description}
+                                  </p>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground">
+                                {item.is_days
+                                  ? `${item.quantity} day${item.quantity !== 1 ? 's' : ''} (${hours.toFixed(1)}h)`
+                                  : `${item.quantity}h`}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                {item.timeline_start || item.timeline_end
+                                  ? `${item.timeline_start || '—'} → ${item.timeline_end || '—'}`
+                                  : '—'}
+                              </TableCell>
+                              <TableCell className="text-right">{formatMoney(cost)}</TableCell>
+                              {!isReadOnly && (
+                                <TableCell>
+                                  <div className="flex items-center justify-end gap-0.5">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleEditItem(item)}
+                                      title="Edit"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleRemoveItem(item.id)}
+                                      title="Remove"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  )}
+
+                  {!isReadOnly && (
+                    <div className="rounded-lg border p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>{editingItemId ? 'Edit line item' : 'Add line item'}</Label>
+                        {editingItemId && (
+                          <Button type="button" variant="ghost" size="sm" onClick={clearLineItemForm}>
+                            Cancel edit
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-4">
+                        <Input
+                          className="sm:col-span-2"
+                          placeholder="Task title"
+                          value={newItemTitle}
+                          onChange={(e) => setNewItemTitle(e.target.value)}
+                        />
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          placeholder={newItemIsDays ? 'Days' : 'Hours'}
+                          value={newItemQuantity || ''}
+                          onChange={(e) => setNewItemQuantity(parseFloat(e.target.value) || 0)}
+                        />
+                        <Button onClick={handleAddItem}>
+                          {editingItemId ? (
+                            <>
+                              <Check className="mr-1 h-4 w-4" />
+                              Update
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="mr-1 h-4 w-4" />
+                              Add
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                      <Textarea
+                        placeholder="Description (optional)"
+                        value={newItemDescription}
+                        onChange={(e) => setNewItemDescription(e.target.value)}
+                        rows={2}
+                      />
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Timeline start</Label>
+                          <Input
+                            type="date"
+                            value={newItemStart}
+                            onChange={(e) => setNewItemStart(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Timeline end</Label>
+                          <Input
+                            type="date"
+                            value={newItemEnd}
+                            onChange={(e) => setNewItemEnd(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="new-item-days"
+                          checked={newItemIsDays}
+                          onCheckedChange={setNewItemIsDays}
+                        />
+                        <Label htmlFor="new-item-days">Enter as days</Label>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="payment" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Payment schedule</CardTitle>
+                  <CardDescription>
+                    Default is 50% up front and 50% on completion — adjust splits and dates as needed
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div>
+                      <Label htmlFor="sow-show-payment">Show payment schedule on share view</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Clients see payment milestones and amounts when enabled
+                      </p>
+                    </div>
+                    <Switch
+                      id="sow-show-payment"
+                      checked={showPaymentSchedule}
+                      onCheckedChange={setShowPaymentSchedule}
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    {paymentMilestones.map((milestone) => {
+                      const amount = (preview.total * (Number(milestone.percentage) || 0)) / 100
                       return (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            <p className="font-medium">{item.title}</p>
-                            {item.description && (
-                              <p className="text-sm text-muted-foreground whitespace-pre-wrap mt-1">
-                                {item.description}
-                              </p>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {item.is_days
-                              ? `${item.quantity} day${item.quantity !== 1 ? 's' : ''} (${hours.toFixed(1)}h)`
-                              : `${item.quantity}h`}
-                          </TableCell>
-                          <TableCell className="text-right">{formatMoney(cost)}</TableCell>
-                          {!isReadOnly && (
-                            <TableCell>
+                        <div
+                          key={milestone.id}
+                          className="grid gap-3 rounded-lg border p-3 sm:grid-cols-12 sm:items-end"
+                        >
+                          <div className="space-y-2 sm:col-span-4">
+                            <Label>Label</Label>
+                            <Input
+                              value={milestone.label}
+                              onChange={(e) =>
+                                handleUpdatePaymentMilestone(milestone.id, { label: e.target.value })
+                              }
+                              disabled={isReadOnly}
+                              placeholder="e.g. Up front"
+                            />
+                          </div>
+                          <div className="space-y-2 sm:col-span-2">
+                            <Label>%</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={0.5}
+                              value={milestone.percentage || ''}
+                              onChange={(e) =>
+                                handleUpdatePaymentMilestone(milestone.id, {
+                                  percentage: parseFloat(e.target.value) || 0,
+                                })
+                              }
+                              disabled={isReadOnly}
+                            />
+                          </div>
+                          <div className="space-y-2 sm:col-span-3">
+                            <Label>Due date</Label>
+                            <Input
+                              type="date"
+                              value={milestone.due_date}
+                              onChange={(e) =>
+                                handleUpdatePaymentMilestone(milestone.id, {
+                                  due_date: e.target.value,
+                                })
+                              }
+                              disabled={isReadOnly}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 sm:col-span-3">
+                            <span className="text-sm text-muted-foreground">
+                              {formatMoney(amount)}
+                            </span>
+                            {!isReadOnly && paymentMilestones.length > 1 && (
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => handleRemoveItem(item.id)}
+                                onClick={() => handleRemovePaymentMilestone(milestone.id)}
                               >
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>
-                            </TableCell>
-                          )}
-                        </TableRow>
+                            )}
+                          </div>
+                        </div>
                       )
                     })}
-                  </TableBody>
-                </Table>
-              )}
-
-              {!isReadOnly && (
-                <div className="rounded-lg border p-4 space-y-3">
-                  <Label>Add line item</Label>
-                  <div className="grid gap-3 sm:grid-cols-4">
-                    <Input
-                      className="sm:col-span-2"
-                      placeholder="Task title"
-                      value={newItemTitle}
-                      onChange={(e) => setNewItemTitle(e.target.value)}
-                    />
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      placeholder={newItemIsDays ? 'Days' : 'Hours'}
-                      value={newItemQuantity || ''}
-                      onChange={(e) => setNewItemQuantity(parseFloat(e.target.value) || 0)}
-                    />
-                    <Button onClick={handleAddItem}>
-                      <Plus className="mr-1 h-4 w-4" />
-                      Add
-                    </Button>
                   </div>
-                  <Textarea
-                    placeholder="Description (optional)"
-                    value={newItemDescription}
-                    onChange={(e) => setNewItemDescription(e.target.value)}
-                    rows={2}
-                  />
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="new-item-days"
-                      checked={newItemIsDays}
-                      onCheckedChange={setNewItemIsDays}
-                    />
-                    <Label htmlFor="new-item-days">Enter as days</Label>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p
+                      className={cn(
+                        'text-sm',
+                        Math.abs(paymentPercentageTotal - 100) > 0.05
+                          ? 'text-destructive'
+                          : 'text-muted-foreground'
+                      )}
+                    >
+                      Total {paymentPercentageTotal.toFixed(1)}%
+                      {Math.abs(paymentPercentageTotal - 100) > 0.05 && ' (must equal 100%)'}
+                    </p>
+                    {!isReadOnly && (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleResetPaymentSchedule}
+                        >
+                          Reset to 50/50
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleAddPaymentMilestone}
+                        >
+                          <Plus className="mr-1 h-4 w-4" />
+                          Add milestone
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
 
         <div className="space-y-6">
-          {!isNew && clientApproval && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Client approval</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Badge
-                  variant={clientApproval.tone === 'destructive' ? 'destructive' : 'secondary'}
-                  className={cn(approvalBadgeClass(clientApproval.tone))}
-                >
-                  {clientApproval.label}
-                </Badge>
-                <p className="text-sm text-muted-foreground">{clientApproval.description}</p>
-                {document?.rejection_notes && (
-                  <p className="text-sm border rounded-md p-3 bg-muted/50">
-                    {document.rejection_notes}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {!isNew && linkedLead && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Link2 className="h-4 w-4" />
-                  Leads board
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Lead</span>
-                  <span className="font-medium text-right">{linkedLead.name}</span>
-                </div>
-                {linkedLead.monday_status && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Pipeline status</span>
-                    <span>{linkedLead.monday_status}</span>
-                  </div>
-                )}
-                {linkedLead.likelihood != null && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Likelihood</span>
-                    <span>{linkedLead.likelihood}%</span>
-                  </div>
-                )}
-                {document?.pushed_to_monday_at && (
-                  <p className="text-xs text-muted-foreground pt-1">
-                    Pushed to Monday on {new Date(document.pushed_to_monday_at).toLocaleDateString()}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
           <Card>
             <CardHeader>
               <CardTitle>Summary</CardTitle>

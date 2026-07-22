@@ -1,10 +1,11 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/server'
-import type { SowDocument, SowLineItem, SowStatus } from '@/app/actions/sow'
+import type { SowDocument, SowLineItem, SowPaymentMilestone, SowStatus } from '@/app/actions/sow'
 
 export interface PublicSowDocument extends SowDocument {
   line_items: SowLineItem[]
+  payment_milestones: SowPaymentMilestone[]
 }
 
 async function validateShareToken(shareToken: string) {
@@ -47,11 +48,20 @@ export async function getSowByToken(shareToken: string) {
 
     if (itemsError) throw itemsError
 
+    const { data: paymentMilestones, error: milestonesError } = await validated.adminClient
+      .from('sow_payment_milestones')
+      .select('*')
+      .eq('sow_id', validated.sowId)
+      .order('sort_order', { ascending: true })
+
+    if (milestonesError) throw milestonesError
+
     return {
       success: true,
       document: {
         ...(document as SowDocument),
         line_items: (lineItems || []) as SowLineItem[],
+        payment_milestones: (paymentMilestones || []) as SowPaymentMilestone[],
       } as PublicSowDocument,
     }
   } catch (error) {

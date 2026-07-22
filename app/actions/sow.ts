@@ -6,9 +6,21 @@ import {
   computeLineItem,
   computeSowTotals,
   hourlyRateFromQuoteRate,
+  validateLineItemTimeline,
+  validatePaymentSchedule,
   type SowLineItemInput,
+  type SowPaymentMilestoneInput,
 } from '@/lib/sow/calculations'
 import crypto from 'crypto'
+
+function getActionError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+  return fallback
+}
 
 export type SowStatus = 'draft' | 'sent' | 'approved' | 'rejected' | 'archived'
 
@@ -23,6 +35,18 @@ export interface SowLineItem {
   unit_rate_gbp: number
   line_total_gbp: number
   sort_order: number
+  timeline_start: string | null
+  timeline_end: string | null
+  created_at: string
+}
+
+export interface SowPaymentMilestone {
+  id: string
+  sow_id: string
+  label: string
+  percentage: number
+  due_date: string | null
+  sort_order: number
   created_at: string
 }
 
@@ -35,6 +59,9 @@ export interface SowDocument {
   status: SowStatus
   include_vat: boolean
   show_quoted_hours: boolean
+  show_payment_schedule: boolean
+  start_date: string | null
+  end_date: string | null
   subtotal_gbp: number
   vat_amount_gbp: number
   total_gbp: number
@@ -56,6 +83,7 @@ export interface SowDocument {
   /** Latest active public share token, when one exists */
   active_share_token?: string | null
   line_items?: SowLineItem[]
+  payment_milestones?: SowPaymentMilestone[]
 }
 
 export interface SowLinkedLead {
@@ -125,9 +153,21 @@ function mapLineItems(
       hours: computed.hours,
       unit_rate_gbp: computed.unit_rate_gbp,
       line_total_gbp: computed.line_total_gbp,
+      timeline_start: computed.timeline_start || null,
+      timeline_end: computed.timeline_end || null,
       sort_order: index,
     }
   })
+}
+
+function mapPaymentMilestones(milestones: SowPaymentMilestoneInput[], sowId: string) {
+  return milestones.map((m, index) => ({
+    sow_id: sowId,
+    label: m.label.trim(),
+    percentage: Number(m.percentage),
+    due_date: m.due_date || null,
+    sort_order: index,
+  }))
 }
 
 export async function getSowAgencies() {
@@ -154,7 +194,7 @@ export async function getSowAgencies() {
     return { success: true, agencies }
   } catch (error) {
     console.error('Error fetching SoW agencies:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to fetch agencies' }
+    return { error: getActionError(error, 'Failed to fetch agencies') }
   }
 }
 
@@ -184,7 +224,7 @@ export async function getSowClients(agencyName?: string | null) {
     return { success: true, clients }
   } catch (error) {
     console.error('Error fetching SoW clients:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to fetch clients' }
+    return { error: getActionError(error, 'Failed to fetch clients') }
   }
 }
 
@@ -195,6 +235,15 @@ function validateSowInput(input: SowDocumentInput): string | null {
   if (input.customer_type === 'partner' && !input.agency_name?.trim()) {
     return 'Agency partner is required when using partner rates'
   }
+  if (input.start_date && input.end_date && input.start_date > input.end_date) {
+    return 'Project end date must be on or after the start date'
+  }
+  for (const item of input.line_items) {
+    const timelineError = validateLineItemTimeline(item.timeline_start, item.timeline_end)
+    if (timelineError) return `${item.title || 'Line item'}: ${timelineError}`
+  }
+  const scheduleError = validatePaymentSchedule(input.payment_milestones || [])
+  if (scheduleError) return scheduleError
   return null
 }
 
@@ -243,7 +292,7 @@ export async function getSowDocuments() {
     }
   } catch (error) {
     console.error('Error fetching SoW documents:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to fetch statements of work' }
+    return { error: getActionError(error, 'Failed to fetch statements of work') }
   }
 }
 
@@ -267,6 +316,14 @@ export async function getSowDocument(id: string) {
       .order('sort_order', { ascending: true })
 
     if (itemsError) throw itemsError
+
+    const { data: paymentMilestones, error: milestonesError } = await auth.supabase
+      .from('sow_payment_milestones')
+      .select('*')
+      .eq('sow_id', id)
+      .order('sort_order', { ascending: true })
+
+    if (milestonesError) throw milestonesError
 
     const { data: shareLinks, error: linksError } = await auth.supabase
       .from('sow_share_links')
@@ -315,13 +372,17 @@ export async function getSowDocument(id: string) {
 
     return {
       success: true,
-      document: { ...(document as SowDocument), line_items: (lineItems || []) as SowLineItem[] },
+      document: {
+        ...(document as SowDocument),
+        line_items: (lineItems || []) as SowLineItem[],
+        payment_milestones: (paymentMilestones || []) as SowPaymentMilestone[],
+      },
       shareLinks: (shareLinks || []) as SowShareLink[],
       linkedLead,
     }
   } catch (error) {
     console.error('Error fetching SoW document:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to fetch statement of work' }
+    return { error: getActionError(error, 'Failed to fetch statement of work') }
   }
 }
 
@@ -332,8 +393,12 @@ export type SowDocumentInput = {
   customer_type: 'partner' | 'client'
   include_vat: boolean
   show_quoted_hours?: boolean
+  show_payment_schedule?: boolean
+  start_date?: string | null
+  end_date?: string | null
   notes?: string | null
   line_items: SowLineItemInput[]
+  payment_milestones: SowPaymentMilestoneInput[]
   monday_project_id?: string | null
   push_to_monday?: boolean
 }
@@ -386,6 +451,9 @@ export async function createSowDocument(input: SowDocumentInput) {
         customer_type: input.customer_type,
         include_vat: input.include_vat,
         show_quoted_hours: input.show_quoted_hours ?? false,
+        show_payment_schedule: input.show_payment_schedule ?? true,
+        start_date: input.start_date || null,
+        end_date: input.end_date || null,
         notes: input.notes?.trim() || null,
         status: 'draft',
         created_by: auth.userId,
@@ -400,6 +468,12 @@ export async function createSowDocument(input: SowDocumentInput) {
     const rows = mappedItems.map((item) => ({ ...item, sow_id: document.id }))
     const { error: itemsError } = await auth.supabase.from('sow_line_items').insert(rows)
     if (itemsError) throw itemsError
+
+    const milestoneRows = mapPaymentMilestones(input.payment_milestones, document.id)
+    const { error: milestonesError } = await auth.supabase
+      .from('sow_payment_milestones')
+      .insert(milestoneRows)
+    if (milestonesError) throw milestonesError
 
     let pushWarning: string | undefined
     if (input.push_to_monday && !mondayLink.monday_project_id) {
@@ -417,7 +491,7 @@ export async function createSowDocument(input: SowDocumentInput) {
     }
   } catch (error) {
     console.error('Error creating SoW:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to create statement of work' }
+    return { error: getActionError(error, 'Failed to create statement of work') }
   }
 }
 
@@ -452,6 +526,9 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         customer_type: input.customer_type,
         include_vat: input.include_vat,
         show_quoted_hours: input.show_quoted_hours ?? false,
+        show_payment_schedule: input.show_payment_schedule ?? true,
+        start_date: input.start_date || null,
+        end_date: input.end_date || null,
         notes: input.notes?.trim() || null,
         ...totals,
       })
@@ -464,10 +541,17 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
     const { error: itemsError } = await auth.supabase.from('sow_line_items').insert(rows)
     if (itemsError) throw itemsError
 
+    await auth.supabase.from('sow_payment_milestones').delete().eq('sow_id', id)
+    const milestoneRows = mapPaymentMilestones(input.payment_milestones, id)
+    const { error: milestonesError } = await auth.supabase
+      .from('sow_payment_milestones')
+      .insert(milestoneRows)
+    if (milestonesError) throw milestonesError
+
     return { success: true }
   } catch (error) {
     console.error('Error updating SoW:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to update statement of work' }
+    return { error: getActionError(error, 'Failed to update statement of work') }
   }
 }
 
@@ -485,7 +569,7 @@ export async function archiveSowDocument(id: string) {
     return { success: true }
   } catch (error) {
     console.error('Error archiving SoW:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to archive statement of work' }
+    return { error: getActionError(error, 'Failed to archive statement of work') }
   }
 }
 
@@ -500,7 +584,7 @@ export async function deleteSowDocument(id: string) {
     return { success: true }
   } catch (error) {
     console.error('Error deleting SoW:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to delete statement of work' }
+    return { error: getActionError(error, 'Failed to delete statement of work') }
   }
 }
 
@@ -533,7 +617,7 @@ export async function createSowShareLink(sowId: string) {
     return { success: true, shareLink: data as SowShareLink }
   } catch (error) {
     console.error('Error creating SoW share link:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to create share link' }
+    return { error: getActionError(error, 'Failed to create share link') }
   }
 }
 
@@ -551,6 +635,6 @@ export async function deactivateSowShareLink(linkId: string) {
     return { success: true }
   } catch (error) {
     console.error('Error deactivating SoW share link:', error)
-    return { error: error instanceof Error ? error.message : 'Failed to deactivate share link' }
+    return { error: getActionError(error, 'Failed to deactivate share link') }
   }
 }

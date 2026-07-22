@@ -96,6 +96,12 @@ export async function getSowLeadImportData(projectId: string) {
       description: null,
       quantity: task.quoted_hours ? Number(task.quoted_hours) : 0,
       is_days: false,
+      timeline_start: task.timeline_start
+        ? String(task.timeline_start).slice(0, 10)
+        : null,
+      timeline_end: task.timeline_end
+        ? String(task.timeline_end).slice(0, 10)
+        : null,
     }))
 
     const importData: SowLeadImportData = {
