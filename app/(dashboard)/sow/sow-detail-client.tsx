@@ -60,7 +60,7 @@ import {
 } from '@/app/actions/sow-leads'
 import { getQuoteRates, type QuoteRate } from '@/app/actions/quote-rates'
 import { pushSowToMonday, updateSowOnMonday } from '@/app/actions/sow-to-monday'
-import { VAT_RATE, DEFAULT_PAYMENT_SCHEDULE } from '@/lib/sow/calculations'
+import { VAT_RATE, DEFAULT_PAYMENT_SCHEDULE, getRateMultiplier, scaleForQuote } from '@/lib/sow/calculations'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -121,7 +121,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [mondayProjectId, setMondayProjectId] = useState<string | null>(null)
   const [pushToMonday, setPushToMonday] = useState(false)
   const [updatingMonday, setUpdatingMonday] = useState(false)
-  const [editorTab, setEditorTab] = useState<'details' | 'deliverables' | 'payment'>('details')
+  const [editorTab, setEditorTab] = useState<'details' | 'deliverables' | 'payment' | 'rates'>(
+    'details'
+  )
 
   const [title, setTitle] = useState('')
   const [agencyName, setAgencyName] = useState('')
@@ -135,6 +137,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [notes, setNotes] = useState('')
+  /** Empty string = use standard rate (no override) */
+  const [dayRateOverrideInput, setDayRateOverrideInput] = useState('')
   const [lineItems, setLineItems] = useState<LineItemForm[]>([])
   const [paymentMilestones, setPaymentMilestones] = useState<PaymentMilestoneForm[]>(() =>
     DEFAULT_PAYMENT_SCHEDULE.map((m) => ({
@@ -236,6 +240,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         setStartDate(doc.start_date || '')
         setEndDate(doc.end_date || '')
         setNotes(doc.notes || '')
+        setDayRateOverrideInput(
+          doc.day_rate_override_gbp != null ? String(doc.day_rate_override_gbp) : ''
+        )
         setLineItems(
           (doc.line_items || []).map((item) => ({
             id: item.id,
@@ -294,6 +301,23 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     const vat = includeVat ? subtotal * VAT_RATE : 0
     return { subtotal, vat, total: subtotal + vat, hours }
   }, [lineItems, currentRate, hourlyRate, includeVat])
+
+  const baseDayRate = currentRate ? Number(currentRate.day_rate_gbp) : 0
+  const hoursPerDay = currentRate ? Number(currentRate.hours_per_day) : 6
+  const dayRateOverride = useMemo(() => {
+    const trimmed = dayRateOverrideInput.trim()
+    if (!trimmed) return null
+    const n = parseFloat(trimmed)
+    return n > 0 ? n : null
+  }, [dayRateOverrideInput])
+  const rateMultiplier = useMemo(
+    () => getRateMultiplier(baseDayRate, dayRateOverride),
+    [baseDayRate, dayRateOverride]
+  )
+  const quotedHours = useMemo(
+    () => scaleForQuote(preview.hours, rateMultiplier),
+    [preview.hours, rateMultiplier]
+  )
 
   function handleCustomerTypeChange(value: 'partner' | 'client') {
     setCustomerType(value)
@@ -478,6 +502,10 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       toast.error('Add at least one line item')
       return
     }
+    if (dayRateOverrideInput.trim() && dayRateOverride == null) {
+      toast.error('Quoted day rate must be greater than 0')
+      return
+    }
 
     setSaving(true)
     try {
@@ -491,6 +519,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         show_payment_schedule: showPaymentSchedule,
         start_date: startDate || null,
         end_date: endDate || null,
+        day_rate_override_gbp: dayRateOverride,
         notes: notes.trim() || null,
         monday_project_id: mondayProjectId,
         push_to_monday: isNew && pushToMonday && !hasMondayLink,
@@ -566,6 +595,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           show_payment_schedule: showPaymentSchedule,
           start_date: startDate || null,
           end_date: endDate || null,
+          day_rate_override_gbp: dayRateOverride,
           notes: notes.trim() || null,
           monday_project_id: mondayProjectId,
           push_to_monday: false,
@@ -750,12 +780,15 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         <div className="lg:col-span-2 space-y-6">
           <Tabs
             value={editorTab}
-            onValueChange={(v) => setEditorTab(v as 'details' | 'deliverables' | 'payment')}
+            onValueChange={(v) =>
+              setEditorTab(v as 'details' | 'deliverables' | 'payment' | 'rates')
+            }
           >
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="details">Project</TabsTrigger>
               <TabsTrigger value="deliverables">Deliverables</TabsTrigger>
               <TabsTrigger value="payment">Payment</TabsTrigger>
+              <TabsTrigger value="rates">Rates</TabsTrigger>
             </TabsList>
 
             <TabsContent value="details" className="space-y-6 mt-6">
@@ -1274,6 +1307,77 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            <TabsContent value="rates" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Rates</CardTitle>
+                  <CardDescription>
+                    Override the quoted day rate for this SoW. Deliverables stay as true effort;
+                    the client share view scales hours when enabled. Monday always gets true hours.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Standard day rate</Label>
+                      <Input
+                        value={
+                          currentRate
+                            ? `${formatMoney(baseDayRate)} / day (${hoursPerDay}h)`
+                            : 'Loading…'
+                        }
+                        disabled
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        From quote rates for {isPartnerWork ? 'partner' : 'client'} work
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="sow-quoted-rate">Quoted day rate</Label>
+                      <Input
+                        id="sow-quoted-rate"
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        placeholder={baseDayRate ? String(baseDayRate) : 'e.g. 500'}
+                        value={dayRateOverrideInput}
+                        onChange={(e) => setDayRateOverrideInput(e.target.value)}
+                        disabled={isReadOnly}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Leave blank to use the standard rate with no hour scaling
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border p-4 space-y-3 text-sm">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">Multiplier</span>
+                      <span className="font-medium">{rateMultiplier.toFixed(3)}×</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">True hours (deliverables / Monday)</span>
+                      <span>{preview.hours.toFixed(1)}h</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">Quoted hours (share view)</span>
+                      <span>{quotedHours.toFixed(1)}h</span>
+                    </div>
+                    {dayRateOverride != null && rateMultiplier !== 1 && (
+                      <p className="text-xs text-muted-foreground pt-1 border-t">
+                        Totals stay based on true effort × standard rate, which matches quoted hours
+                        × {formatMoney(dayRateOverride)}/day.
+                      </p>
+                    )}
+                  </div>
+
+                  {dayRateOverrideInput.trim() && dayRateOverride == null && (
+                    <p className="text-sm text-destructive">Enter a day rate greater than 0</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
           </Tabs>
         </div>
 
@@ -1298,12 +1402,20 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                 <span>{formatMoney(preview.total)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground pt-1">
-                <span>Total hours</span>
+                <span>Total hours (true)</span>
                 <span>{preview.hours.toFixed(1)}h</span>
               </div>
+              {rateMultiplier !== 1 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Quoted hours</span>
+                  <span>{quotedHours.toFixed(1)}h</span>
+                </div>
+              )}
               {currentRate && (
                 <p className="text-xs text-muted-foreground pt-2">
-                  Rate: {formatMoney(Number(currentRate.day_rate_gbp))}/day ({currentRate.hours_per_day}h)
+                  {dayRateOverride != null && rateMultiplier !== 1
+                    ? `Rate: ${formatMoney(dayRateOverride)}/day quoted · ${formatMoney(baseDayRate)} base (${hoursPerDay}h)`
+                    : `Rate: ${formatMoney(baseDayRate)}/day (${hoursPerDay}h)`}
                 </p>
               )}
             </CardContent>

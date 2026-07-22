@@ -22,6 +22,7 @@ import {
   rejectSowByToken,
   type PublicSowDocument,
 } from '@/app/actions/sow-public'
+import { getRateMultiplier, scaleForQuote } from '@/lib/sow/calculations'
 import { cn } from '@/lib/utils'
 
 interface SowShareClientProps {
@@ -110,6 +111,11 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
   const canRespond = !isApproved && !isRejected
   const showQuotedHours = document.show_quoted_hours ?? true
   const showPaymentSchedule = document.show_payment_schedule ?? true
+  const rateMultiplier = getRateMultiplier(
+    Number(document.base_day_rate_gbp) || 0,
+    document.day_rate_override_gbp != null ? Number(document.day_rate_override_gbp) : null
+  )
+  const displayTotalHours = scaleForQuote(Number(document.total_hours), rateMultiplier)
 
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">
@@ -239,8 +245,12 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                       {showQuotedHours && (
                         <TableCell className="text-right text-muted-foreground">
                           {item.is_days
-                            ? `${item.quantity} day${Number(item.quantity) !== 1 ? 's' : ''} (${Number(item.hours).toFixed(1)}h)`
-                            : `${Number(item.hours).toFixed(1)}h`}
+                            ? `${scaleForQuote(Number(item.quantity), rateMultiplier)} day${
+                                scaleForQuote(Number(item.quantity), rateMultiplier) !== 1
+                                  ? 's'
+                                  : ''
+                              } (${scaleForQuote(Number(item.hours), rateMultiplier).toFixed(1)}h)`
+                            : `${scaleForQuote(Number(item.hours), rateMultiplier).toFixed(1)}h`}
                         </TableCell>
                       )}
                       <TableCell className="text-right">
@@ -270,7 +280,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
               {showQuotedHours && (
                 <div className="flex justify-between text-muted-foreground">
                   <span>Total hours</span>
-                  <span>{Number(document.total_hours).toFixed(1)}h</span>
+                  <span>{displayTotalHours.toFixed(1)}h</span>
                 </div>
               )}
             </div>

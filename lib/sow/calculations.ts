@@ -70,6 +70,20 @@ export function hourlyRateFromQuoteRate(dayRateGbp: number, hoursPerDay: number)
   return dayRateGbp / hoursPerDay
 }
 
+/** When a quoted day rate is set below (or above) base, scale share-view hours so money still matches base × true effort. */
+export function getRateMultiplier(
+  baseDayRate: number,
+  quotedDayRate: number | null | undefined
+): number {
+  if (quotedDayRate == null || !(quotedDayRate > 0) || !(baseDayRate > 0)) return 1
+  if (Math.abs(quotedDayRate - baseDayRate) < 0.005) return 1
+  return baseDayRate / quotedDayRate
+}
+
+export function scaleForQuote(value: number, multiplier: number): number {
+  return Math.round(value * multiplier * 100) / 100
+}
+
 export function validatePaymentSchedule(
   milestones: SowPaymentMilestoneInput[]
 ): string | null {

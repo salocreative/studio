@@ -62,6 +62,9 @@ export interface SowDocument {
   show_payment_schedule: boolean
   start_date: string | null
   end_date: string | null
+  day_rate_override_gbp: number | null
+  base_day_rate_gbp: number
+  hours_per_day: number
   subtotal_gbp: number
   vat_amount_gbp: number
   total_gbp: number
@@ -124,18 +127,23 @@ async function requireTeamMember() {
 }
 
 async function getRatesForCustomerType(customerType: 'partner' | 'client'): Promise<
-  { error: string } | { hourlyRate: number; hoursPerDay: number }
+  { error: string } | { hourlyRate: number; hoursPerDay: number; dayRateGbp: number }
 > {
   const rateResult = await getQuoteRateByType(customerType)
   if (rateResult.error || !rateResult.rate) {
     return { error: rateResult.error || 'Quote rates not configured. Set them in Settings.' }
   }
   const hoursPerDay = Number(rateResult.rate.hours_per_day)
-  const hourlyRate = hourlyRateFromQuoteRate(
-    Number(rateResult.rate.day_rate_gbp),
-    hoursPerDay
-  )
-  return { hourlyRate, hoursPerDay }
+  const dayRateGbp = Number(rateResult.rate.day_rate_gbp)
+  const hourlyRate = hourlyRateFromQuoteRate(dayRateGbp, hoursPerDay)
+  return { hourlyRate, hoursPerDay, dayRateGbp }
+}
+
+function normalizeDayRateOverride(value: number | null | undefined): number | null {
+  if (value == null || value === undefined) return null
+  const n = Number(value)
+  if (!(n > 0)) return null
+  return Math.round(n * 100) / 100
 }
 
 function mapLineItems(
@@ -237,6 +245,12 @@ function validateSowInput(input: SowDocumentInput): string | null {
   }
   if (input.start_date && input.end_date && input.start_date > input.end_date) {
     return 'Project end date must be on or after the start date'
+  }
+  if (
+    input.day_rate_override_gbp != null &&
+    !(Number(input.day_rate_override_gbp) > 0)
+  ) {
+    return 'Quoted day rate must be greater than 0'
   }
   for (const item of input.line_items) {
     const timelineError = validateLineItemTimeline(item.timeline_start, item.timeline_end)
@@ -396,6 +410,7 @@ export type SowDocumentInput = {
   show_payment_schedule?: boolean
   start_date?: string | null
   end_date?: string | null
+  day_rate_override_gbp?: number | null
   notes?: string | null
   line_items: SowLineItemInput[]
   payment_milestones: SowPaymentMilestoneInput[]
@@ -417,6 +432,7 @@ export async function createSowDocument(input: SowDocumentInput) {
   const totals = computeSowTotals(mappedItems, input.include_vat)
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
+  const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
 
   let mondayLink: {
     monday_project_id?: string | null
@@ -454,6 +470,9 @@ export async function createSowDocument(input: SowDocumentInput) {
         show_payment_schedule: input.show_payment_schedule ?? true,
         start_date: input.start_date || null,
         end_date: input.end_date || null,
+        day_rate_override_gbp: dayRateOverride,
+        base_day_rate_gbp: rates.dayRateGbp,
+        hours_per_day: rates.hoursPerDay,
         notes: input.notes?.trim() || null,
         status: 'draft',
         created_by: auth.userId,
@@ -515,6 +534,7 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
   const totals = computeSowTotals(mappedItems, input.include_vat)
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
+  const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
 
   try {
     const { error: docError } = await auth.supabase
@@ -529,6 +549,9 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         show_payment_schedule: input.show_payment_schedule ?? true,
         start_date: input.start_date || null,
         end_date: input.end_date || null,
+        day_rate_override_gbp: dayRateOverride,
+        base_day_rate_gbp: rates.dayRateGbp,
+        hours_per_day: rates.hoursPerDay,
         notes: input.notes?.trim() || null,
         ...totals,
       })
