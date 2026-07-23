@@ -27,9 +27,16 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   ArrowLeft,
   Copy,
   Check,
+  ChevronDown,
   Loader2,
   Plus,
   Pencil,
@@ -38,6 +45,9 @@ import {
   ScrollText,
   Download,
   RefreshCw,
+  Upload,
+  FileDown,
+  ClipboardCopy,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -71,6 +81,11 @@ import {
   formatSowMoney,
   type SowCurrency,
 } from '@/lib/sow/calculations'
+import {
+  SOW_DELIVERABLES_CSV_SCHEMA,
+  buildSowDeliverablesTemplateCsv,
+  parseSowDeliverablesCsv,
+} from '@/lib/sow/csv-import'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -153,6 +168,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [currency, setCurrency] = useState<SowCurrency>('GBP')
   const [fxRateInput, setFxRateInput] = useState('1')
   const [fetchingFx, setFetchingFx] = useState(false)
+  const [importingCsv, setImportingCsv] = useState(false)
+  const csvInputRef = useRef<HTMLInputElement>(null)
   const [lineItems, setLineItems] = useState<LineItemForm[]>([])
   const [paymentMilestones, setPaymentMilestones] = useState<PaymentMilestoneForm[]>(() =>
     DEFAULT_PAYMENT_SCHEDULE.map((m) => ({
@@ -580,6 +597,77 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   function handleRemoveItem(id: string) {
     setLineItems((prev) => prev.filter((item) => item.id !== id))
     if (editingItemId === id) clearLineItemForm()
+  }
+
+  function downloadDeliverablesTemplate() {
+    const blob = new Blob([buildSowDeliverablesTemplateCsv()], {
+      type: 'text/csv;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = window.document.createElement('a')
+    a.href = url
+    a.download = 'sow-deliverables-template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function copyDeliverablesSchema() {
+    await navigator.clipboard.writeText(SOW_DELIVERABLES_CSV_SCHEMA)
+    toast.success('CSV schema copied — paste into Claude')
+  }
+
+  async function handleDeliverablesCsvFile(
+    file: File,
+    mode: 'append' | 'replace'
+  ) {
+    setImportingCsv(true)
+    try {
+      const text = await file.text()
+      const parsed = parseSowDeliverablesCsv(text)
+      if (parsed.error) {
+        toast.error('Could not import CSV', { description: parsed.error })
+        return
+      }
+
+      const imported: LineItemForm[] = parsed.rows.map((row) => ({
+        id: crypto.randomUUID(),
+        title: row.title,
+        description: row.description,
+        quantity: row.quantity,
+        is_days: row.is_days,
+        timeline_start: row.timeline_start,
+        timeline_end: row.timeline_end,
+      }))
+
+      setLineItems((prev) => (mode === 'replace' ? imported : [...prev, ...imported]))
+      clearLineItemForm()
+
+      const missingTime = imported.filter((r) => !(r.quantity > 0)).length
+      const description =
+        [
+          `${imported.length} deliverable${imported.length === 1 ? '' : 's'} ${mode === 'replace' ? 'loaded' : 'added'}`,
+          missingTime > 0
+            ? `${missingTime} without hours/days — set time before saving`
+            : null,
+          parsed.warnings.length > 0 ? parsed.warnings.slice(0, 3).join(' · ') : null,
+        ]
+          .filter(Boolean)
+          .join('. ')
+
+      toast.success('Deliverables imported', { description })
+      if (parsed.warnings.length > 3) {
+        toast.message(`${parsed.warnings.length - 3} more CSV warnings`, {
+          description: parsed.warnings.slice(3, 6).join(' · '),
+        })
+      }
+    } catch (error) {
+      toast.error('Could not read CSV', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    } finally {
+      setImportingCsv(false)
+      if (csvInputRef.current) csvInputRef.current.value = ''
+    }
   }
 
   function handleResetPaymentSchedule() {
@@ -1176,8 +1264,75 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
             <TabsContent value="deliverables" className="mt-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Line items</CardTitle>
-                  <CardDescription>Tasks with time, cost, and optional Monday timelines</CardDescription>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <CardTitle>Line items</CardTitle>
+                      <CardDescription>
+                        Tasks with time, cost, and optional Monday timelines
+                      </CardDescription>
+                    </div>
+                    {!isReadOnly && (
+                      <>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={importingCsv}
+                            >
+                              {importingCsv ? (
+                                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Upload className="mr-1 h-4 w-4" />
+                              )}
+                              CSV
+                              <ChevronDown className="ml-1 h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onSelect={() => csvInputRef.current?.click()}
+                            >
+                              <Upload className="h-4 w-4" />
+                              Import CSV
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={downloadDeliverablesTemplate}>
+                              <FileDown className="h-4 w-4" />
+                              Download template
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                void copyDeliverablesSchema()
+                              }}
+                            >
+                              <ClipboardCopy className="h-4 w-4" />
+                              Copy schema for Claude
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                        <input
+                          ref={csvInputRef}
+                          type="file"
+                          accept=".csv,text/csv"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (!file) return
+                            const mode: 'append' | 'replace' =
+                              lineItems.length === 0
+                                ? 'append'
+                                : confirm(
+                                      'Replace existing deliverables with this CSV?\n\nOK = replace\nCancel = append'
+                                    )
+                                  ? 'replace'
+                                  : 'append'
+                            void handleDeliverablesCsvFile(file, mode)
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {lineItems.length > 0 && (
