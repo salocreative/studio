@@ -190,6 +190,29 @@ export function formatSowMoney(
   })}`
 }
 
+/** Locale for client-facing SoW dates: US when quoting USD, UK otherwise. */
+export function sowDateLocale(currency: SowCurrency | string = 'GBP'): string {
+  return currency === 'USD' ? 'en-US' : 'en-GB'
+}
+
+/**
+ * Format a date for SoW share/display.
+ * Date-only strings (YYYY-MM-DD) are parsed as local calendar dates to avoid UTC day-shift bugs.
+ */
+export function formatSowDate(
+  value: string | null | undefined,
+  currency: SowCurrency | string = 'GBP'
+): string {
+  if (!value) return ''
+  const locale = sowDateLocale(currency)
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim())
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString(locale)
+}
+
 export function validatePaymentSchedule(
   milestones: SowPaymentMilestoneInput[]
 ): string | null {

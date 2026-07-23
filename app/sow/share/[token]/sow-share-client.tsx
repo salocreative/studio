@@ -22,7 +22,7 @@ import {
   rejectSowByToken,
   type PublicSowDocument,
 } from '@/app/actions/sow-public'
-import { getRateMultiplier, scaleForQuote, formatSowMoney } from '@/lib/sow/calculations'
+import { getRateMultiplier, scaleForQuote, formatSowMoney, formatSowDate } from '@/lib/sow/calculations'
 import { cn } from '@/lib/utils'
 
 interface SowShareClientProps {
@@ -149,9 +149,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 <p className="font-semibold text-green-800 dark:text-green-300">Approved</p>
                 <p className="text-sm text-green-700 dark:text-green-400">
                   {document.approved_by_name} approved this on{' '}
-                  {document.approved_at
-                    ? new Date(document.approved_at).toLocaleDateString()
-                    : '—'}
+                  {document.approved_at ? formatSowDate(document.approved_at, currency) : '—'}
                 </p>
               </div>
             </CardContent>
@@ -166,9 +164,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 <p className="font-semibold">Declined</p>
                 <p className="text-sm text-muted-foreground">
                   {document.rejected_by_name} declined on{' '}
-                  {document.rejected_at
-                    ? new Date(document.rejected_at).toLocaleDateString()
-                    : '—'}
+                  {document.rejected_at ? formatSowDate(document.rejected_at, currency) : '—'}
                 </p>
                 {document.rejection_notes && (
                   <p className="text-sm mt-2">{document.rejection_notes}</p>
@@ -198,7 +194,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                   <div className="rounded-lg border p-3">
                     <p className="text-muted-foreground">Project start</p>
                     <p className="font-medium mt-1">
-                      {new Date(document.start_date).toLocaleDateString()}
+                      {formatSowDate(document.start_date, currency)}
                     </p>
                   </div>
                 )}
@@ -206,7 +202,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                   <div className="rounded-lg border p-3">
                     <p className="text-muted-foreground">Project end</p>
                     <p className="font-medium mt-1">
-                      {new Date(document.end_date).toLocaleDateString()}
+                      {formatSowDate(document.end_date, currency)}
                     </p>
                   </div>
                 )}
@@ -235,11 +231,11 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                         {(item.timeline_start || item.timeline_end) && (
                           <p className="text-xs text-muted-foreground mt-1">
                             {item.timeline_start
-                              ? new Date(item.timeline_start).toLocaleDateString()
+                              ? formatSowDate(item.timeline_start, currency)
                               : '—'}
                             {' → '}
                             {item.timeline_end
-                              ? new Date(item.timeline_end).toLocaleDateString()
+                              ? formatSowDate(item.timeline_end, currency)
                               : '—'}
                           </p>
                         )}
@@ -310,7 +306,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                             {' '}
                             · {Number(milestone.percentage).toFixed(0)}%
                             {milestone.due_date
-                              ? ` · due ${new Date(milestone.due_date).toLocaleDateString()}`
+                              ? ` · due ${formatSowDate(milestone.due_date, currency)}`
                               : ''}
                           </span>
                         </span>
