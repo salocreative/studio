@@ -148,6 +148,15 @@ function normalizeDayRateOverride(value: number | null | undefined): number | nu
   return Math.round(n * 100) / 100
 }
 
+function normalizeHoursPerDay(
+  value: number | null | undefined,
+  fallback: number
+): number {
+  const n = Number(value)
+  if (n > 0) return Math.round(n * 100) / 100
+  return fallback > 0 ? fallback : 6
+}
+
 function normalizeCurrency(value: string | null | undefined): 'GBP' | 'USD' {
   return value === 'USD' ? 'USD' : 'GBP'
 }
@@ -264,6 +273,9 @@ function validateSowInput(input: SowDocumentInput): string | null {
     !(Number(input.day_rate_override_gbp) > 0)
   ) {
     return 'Quoted day rate must be greater than 0'
+  }
+  if (input.hours_per_day != null && !(Number(input.hours_per_day) > 0)) {
+    return 'Hours per day must be greater than 0'
   }
   const currency = input.currency === 'USD' ? 'USD' : 'GBP'
   const fxRate = Number(input.fx_rate ?? 1)
@@ -430,6 +442,7 @@ export type SowDocumentInput = {
   start_date?: string | null
   end_date?: string | null
   day_rate_override_gbp?: number | null
+  hours_per_day?: number
   currency?: 'GBP' | 'USD'
   fx_rate?: number
   notes?: string | null
@@ -449,7 +462,9 @@ export async function createSowDocument(input: SowDocumentInput) {
   const rates = await getRatesForCustomerType(input.customer_type)
   if ('error' in rates) return { error: rates.error }
 
-  const mappedItems = mapLineItems(input.line_items, rates.hoursPerDay, rates.hourlyRate)
+  const hoursPerDay = normalizeHoursPerDay(input.hours_per_day, rates.hoursPerDay)
+  const hourlyRate = hourlyRateFromQuoteRate(rates.dayRateGbp, hoursPerDay)
+  const mappedItems = mapLineItems(input.line_items, hoursPerDay, hourlyRate)
   const totals = computeSowTotals(mappedItems, input.include_vat)
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
@@ -495,7 +510,7 @@ export async function createSowDocument(input: SowDocumentInput) {
         end_date: input.end_date || null,
         day_rate_override_gbp: dayRateOverride,
         base_day_rate_gbp: rates.dayRateGbp,
-        hours_per_day: rates.hoursPerDay,
+        hours_per_day: hoursPerDay,
         currency,
         fx_rate: fxRate,
         notes: input.notes?.trim() || null,
@@ -555,7 +570,9 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
   const rates = await getRatesForCustomerType(input.customer_type)
   if ('error' in rates) return { error: rates.error }
 
-  const mappedItems = mapLineItems(input.line_items, rates.hoursPerDay, rates.hourlyRate)
+  const hoursPerDay = normalizeHoursPerDay(input.hours_per_day, rates.hoursPerDay)
+  const hourlyRate = hourlyRateFromQuoteRate(rates.dayRateGbp, hoursPerDay)
+  const mappedItems = mapLineItems(input.line_items, hoursPerDay, hourlyRate)
   const totals = computeSowTotals(mappedItems, input.include_vat)
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
@@ -578,7 +595,7 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         end_date: input.end_date || null,
         day_rate_override_gbp: dayRateOverride,
         base_day_rate_gbp: rates.dayRateGbp,
-        hours_per_day: rates.hoursPerDay,
+        hours_per_day: hoursPerDay,
         currency,
         fx_rate: fxRate,
         notes: input.notes?.trim() || null,

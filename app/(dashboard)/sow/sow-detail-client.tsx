@@ -165,6 +165,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [notes, setNotes] = useState('')
   /** Empty string = use standard rate (no override) */
   const [dayRateOverrideInput, setDayRateOverrideInput] = useState('')
+  const [hoursPerDayInput, setHoursPerDayInput] = useState('6')
   const [currency, setCurrency] = useState<SowCurrency>('GBP')
   const [fxRateInput, setFxRateInput] = useState('1')
   const [fetchingFx, setFetchingFx] = useState(false)
@@ -385,6 +386,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         setDayRateOverrideInput(
           doc.day_rate_override_gbp != null ? String(doc.day_rate_override_gbp) : ''
         )
+        setHoursPerDayInput(
+          doc.hours_per_day != null ? String(Number(doc.hours_per_day)) : '6'
+        )
         setCurrency(doc.currency === 'USD' ? 'USD' : 'GBP')
         setFxRateInput(
           doc.currency === 'USD' && doc.fx_rate != null ? String(doc.fx_rate) : '1'
@@ -429,14 +433,25 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     [quoteRates, customerType]
   )
 
+  // Default hours/day from quote rates for new SoWs (and when rates first load)
+  useEffect(() => {
+    if (!isNew || !currentRate) return
+    setHoursPerDayInput(String(Number(currentRate.hours_per_day)))
+  }, [isNew, customerType, currentRate?.hours_per_day])
+
+  const hoursPerDay = useMemo(() => {
+    const n = parseFloat(hoursPerDayInput)
+    if (n > 0) return n
+    return currentRate ? Number(currentRate.hours_per_day) : 6
+  }, [hoursPerDayInput, currentRate])
+
   const hourlyRate = useMemo(() => {
-    if (!currentRate || !currentRate.hours_per_day) return 0
-    return Number(currentRate.day_rate_gbp) / Number(currentRate.hours_per_day)
-  }, [currentRate])
+    if (!currentRate || !(hoursPerDay > 0)) return 0
+    return Number(currentRate.day_rate_gbp) / hoursPerDay
+  }, [currentRate, hoursPerDay])
 
   const preview = useMemo(() => {
     if (!currentRate) return { subtotal: 0, vat: 0, total: 0, hours: 0 }
-    const hoursPerDay = Number(currentRate.hours_per_day)
     let subtotal = 0
     let hours = 0
     for (const item of lineItems) {
@@ -446,10 +461,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     }
     const vat = includeVat ? subtotal * VAT_RATE : 0
     return { subtotal, vat, total: subtotal + vat, hours }
-  }, [lineItems, currentRate, hourlyRate, includeVat])
+  }, [lineItems, currentRate, hourlyRate, hoursPerDay, includeVat])
 
   const baseDayRate = currentRate ? Number(currentRate.day_rate_gbp) : 0
-  const hoursPerDay = currentRate ? Number(currentRate.hours_per_day) : 6
   const dayRateOverride = useMemo(() => {
     const trimmed = dayRateOverrideInput.trim()
     if (!trimmed) return null
@@ -467,15 +481,16 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   )
   const quotedHours = useMemo(() => {
     if (!currentRate) return 0
-    const hpd = Number(currentRate.hours_per_day)
     return lineItems.reduce((sum, item) => {
-      const itemHours = item.is_days ? item.quantity * hpd : item.quantity
+      const itemHours = item.is_days ? item.quantity * hoursPerDay : item.quantity
       return sum + scaleForQuote(itemHours, rateMultiplier)
     }, 0)
-  }, [lineItems, currentRate, rateMultiplier])
+  }, [lineItems, currentRate, hoursPerDay, rateMultiplier])
 
   function handleCustomerTypeChange(value: 'partner' | 'client') {
     setCustomerType(value)
+    const rate = quoteRates.find((r) => r.customer_type === value)
+    if (rate) setHoursPerDayInput(String(Number(rate.hours_per_day)))
     if (value === 'client') {
       setAgencyName('')
       setCustomAgency('')
@@ -732,6 +747,10 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       toast.error('Quoted day rate must be greater than 0')
       return
     }
+    if (!(parseFloat(hoursPerDayInput) > 0)) {
+      toast.error('Hours per day must be greater than 0')
+      return
+    }
     if (currency === 'USD' && !(parseFloat(fxRateInput) > 0)) {
       toast.error('Enter a valid USD exchange rate (units per £1)')
       return
@@ -750,6 +769,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         start_date: startDate || null,
         end_date: endDate || null,
         day_rate_override_gbp: dayRateOverride,
+        hours_per_day: hoursPerDay,
         currency,
         fx_rate: fxRate,
         notes: notes.trim() || null,
@@ -828,6 +848,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           start_date: startDate || null,
           end_date: endDate || null,
           day_rate_override_gbp: dayRateOverride,
+          hours_per_day: hoursPerDay,
           currency,
           fx_rate: fxRate,
           notes: notes.trim() || null,
@@ -1349,7 +1370,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       <TableBody>
                         {lineItems.map((item) => {
                           const hours = item.is_days
-                            ? item.quantity * (currentRate?.hours_per_day || 6)
+                            ? item.quantity * hoursPerDay
                             : item.quantity
                           const cost = hours * hourlyRate
                           return (
@@ -1626,15 +1647,37 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       <Input
                         value={
                           currentRate
-                            ? `${formatMoney(baseDayRate)} / day (${hoursPerDay}h)`
+                            ? `${formatMoney(baseDayRate)} / day`
                             : 'Loading…'
                         }
                         disabled
                       />
                       <p className="text-xs text-muted-foreground">
                         From quote rates for {isPartnerWork ? 'partner' : 'client'} work
+                        {currentRate
+                          ? ` · settings default ${Number(currentRate.hours_per_day)}h/day`
+                          : ''}
                       </p>
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="sow-hours-per-day">Hours per day</Label>
+                      <Input
+                        id="sow-hours-per-day"
+                        type="number"
+                        min={0.25}
+                        step={0.25}
+                        value={hoursPerDayInput}
+                        onChange={(e) => setHoursPerDayInput(e.target.value)}
+                        disabled={isReadOnly}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Working day length for this SoW. Same day rate ÷ more hours lowers the
+                        hourly rate (e.g. 8h at {formatMoney(baseDayRate || 0)}/day).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="sow-quoted-rate">Quoted day rate (GBP)</Label>
                       <Input
@@ -1656,6 +1699,20 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                           : matchedPartyRate
                             ? ` · Settings has ${formatMoney(matchedPartyRate.rate)}/day for ${matchedPartyRate.label}`
                             : ''}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Effective hourly</Label>
+                      <Input
+                        value={
+                          hourlyRate > 0
+                            ? `${formatMoney(hourlyRate)} / hour`
+                            : '—'
+                        }
+                        disabled
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Standard day rate ÷ hours per day
                       </p>
                     </div>
                   </div>
@@ -1748,6 +1805,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                     )}
                   </div>
 
+                  {hoursPerDayInput.trim() && !(parseFloat(hoursPerDayInput) > 0) && (
+                    <p className="text-sm text-destructive">Enter hours per day greater than 0</p>
+                  )}
                   {dayRateOverrideInput.trim() && dayRateOverride == null && (
                     <p className="text-sm text-destructive">Enter a day rate greater than 0</p>
                   )}
