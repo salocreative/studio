@@ -14,7 +14,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Plus, Loader2, ScrollText, ExternalLink, Link2 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Plus, Loader2, ScrollText, ExternalLink, Link2, Copy } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSowDocuments, type SowDocument, type SowStatus } from '@/app/actions/sow'
 import { getClientApprovalStatus } from '@/lib/sow/status'
@@ -69,21 +75,37 @@ export default function SowListPage() {
     }
   }
 
+  function getPublicShareUrl(doc: SowDocument) {
+    if (!doc.active_share_token) return null
+    return `${window.location.origin}/sow/share/${doc.active_share_token}`
+  }
+
   async function handleCopyPublicLink(doc: SowDocument) {
-    if (!doc.active_share_token) {
+    const url = getPublicShareUrl(doc)
+    if (!url) {
       toast.error('No public link yet', {
         description: 'Open the SoW and create a share link first.',
       })
       return
     }
 
-    const url = `${window.location.origin}/sow/share/${doc.active_share_token}`
     try {
       await navigator.clipboard.writeText(url)
       toast.success('Public link copied')
     } catch {
       toast.error('Could not copy link')
     }
+  }
+
+  function handleOpenPublicLink(doc: SowDocument) {
+    const url = getPublicShareUrl(doc)
+    if (!url) {
+      toast.error('No public link yet', {
+        description: 'Open the SoW and create a share link first.',
+      })
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   const counts = useMemo(() => {
@@ -168,7 +190,11 @@ export default function SowListPage() {
                       )}
                     </div>
                   ) : (
-                    <SowTable documents={tabDocuments} onCopyPublicLink={handleCopyPublicLink} />
+                    <SowTable
+                      documents={tabDocuments}
+                      onCopyPublicLink={handleCopyPublicLink}
+                      onOpenPublicLink={handleOpenPublicLink}
+                    />
                   )}
                 </CardContent>
               </Card>
@@ -183,9 +209,11 @@ export default function SowListPage() {
 function SowTable({
   documents,
   onCopyPublicLink,
+  onOpenPublicLink,
 }: {
   documents: SowDocument[]
   onCopyPublicLink: (doc: SowDocument) => void
+  onOpenPublicLink: (doc: SowDocument) => void
 }) {
   return (
     <Table>
@@ -204,6 +232,7 @@ function SowTable({
       <TableBody>
         {documents.map((doc) => {
           const approval = getClientApprovalStatus(doc.status, doc)
+          const hasShareLink = Boolean(doc.active_share_token)
           return (
             <TableRow key={doc.id}>
               <TableCell className="font-medium">{doc.title}</TableCell>
@@ -240,25 +269,35 @@ function SowTable({
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={!hasShareLink}
+                        title={
+                          hasShareLink
+                            ? 'Share link'
+                            : 'No share link yet — open the SoW to create one'
+                        }
+                      >
+                        <Link2 className="h-4 w-4" />
+                        <span className="sr-only">Share link</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => onOpenPublicLink(doc)}>
+                        <ExternalLink className="h-4 w-4" />
+                        Open link
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onCopyPublicLink(doc)}>
+                        <Copy className="h-4 w-4" />
+                        Copy link
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/sow/${doc.id}`}>
-                      <ExternalLink className="mr-1 h-4 w-4" />
-                      Open
-                    </Link>
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onCopyPublicLink(doc)}
-                    disabled={!doc.active_share_token}
-                    title={
-                      doc.active_share_token
-                        ? 'Copy public link'
-                        : 'No share link yet — open the SoW to create one'
-                    }
-                  >
-                    <Link2 className="mr-1 h-4 w-4" />
-                    Copy link
+                    <Link href={`/sow/${doc.id}`}>Open</Link>
                   </Button>
                 </div>
               </TableCell>
