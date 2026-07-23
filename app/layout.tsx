@@ -15,6 +15,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Studio - Salo Creative",
   description: "Business management platform for Salo Creative Agency",
+  icons: {
+    icon: [
+      { url: "/favicon/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon/favicon-96x96.png", sizes: "96x96", type: "image/png" },
+      { url: "/favicon/favicon.ico", sizes: "48x48" },
+    ],
+    shortcut: "/favicon/favicon.ico",
+    apple: [{ url: "/favicon/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export default function RootLayout({

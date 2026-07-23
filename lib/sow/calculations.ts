@@ -89,6 +89,107 @@ export function scaleForQuote(value: number, multiplier: number): number {
   return roundToHalf(value * multiplier)
 }
 
+export type SowPartyType = 'agency' | 'client'
+export type SowCurrency = 'GBP' | 'USD'
+
+export interface SowPartyRateLookup {
+  name: string
+  party_type: SowPartyType
+  day_rate_gbp: number
+  currency?: SowCurrency | string
+}
+
+/** Resolve quoted day rate + default currency for a SoW from configured agency/client rates. */
+export function resolvePartyRate(params: {
+  customerType: 'partner' | 'client'
+  agencyName?: string | null
+  clientName?: string | null
+  rates: SowPartyRateLookup[]
+}): { day_rate_gbp: number; currency: SowCurrency } | null {
+  const agencyName = params.agencyName?.trim() || ''
+  const clientName = params.clientName?.trim() || ''
+
+  const normalizeCurrency = (value?: string | null): SowCurrency =>
+    value === 'USD' ? 'USD' : 'GBP'
+
+  if (params.customerType === 'partner') {
+    if (agencyName) {
+      const agencyRate = params.rates.find(
+        (r) => r.party_type === 'agency' && r.name === agencyName
+      )
+      if (agencyRate) {
+        return {
+          day_rate_gbp: Number(agencyRate.day_rate_gbp),
+          currency: normalizeCurrency(agencyRate.currency),
+        }
+      }
+    }
+    if (clientName) {
+      const clientRate = params.rates.find(
+        (r) => r.party_type === 'client' && r.name === clientName
+      )
+      if (clientRate) {
+        return {
+          day_rate_gbp: Number(clientRate.day_rate_gbp),
+          currency: normalizeCurrency(clientRate.currency),
+        }
+      }
+    }
+    return null
+  }
+
+  if (!clientName) return null
+  const clientRate = params.rates.find(
+    (r) => r.party_type === 'client' && r.name === clientName
+  )
+  if (!clientRate) return null
+  return {
+    day_rate_gbp: Number(clientRate.day_rate_gbp),
+    currency: normalizeCurrency(clientRate.currency),
+  }
+}
+
+/** @deprecated Prefer resolvePartyRate */
+export function resolvePartyDayRate(params: {
+  customerType: 'partner' | 'client'
+  agencyName?: string | null
+  clientName?: string | null
+  rates: SowPartyRateLookup[]
+}): number | null {
+  return resolvePartyRate(params)?.day_rate_gbp ?? null
+}
+
+/** Convert a GBP amount into the SoW display currency. */
+export function convertFromGbp(
+  amountGbp: number,
+  fxRate: number,
+  options?: { round?: 'cent' | 'whole' }
+): number {
+  const rate = fxRate > 0 ? fxRate : 1
+  const raw = amountGbp * rate
+  if (options?.round === 'whole') {
+    return Math.round(raw)
+  }
+  return Math.round(raw * 100) / 100
+}
+
+export function formatSowMoney(
+  amountGbp: number,
+  currency: SowCurrency | string = 'GBP',
+  fxRate = 1
+): string {
+  const isForeign = currency !== 'GBP'
+  const converted = convertFromGbp(amountGbp, isForeign ? fxRate : 1, {
+    // FX amounts round to nearest whole unit to avoid noisy cents
+    round: isForeign ? 'whole' : 'cent',
+  })
+  const symbol = currency === 'USD' ? '$' : '£'
+  return `${symbol}${converted.toLocaleString('en-GB', {
+    minimumFractionDigits: isForeign ? 0 : 2,
+    maximumFractionDigits: isForeign ? 0 : 2,
+  })}`
+}
+
 export function validatePaymentSchedule(
   milestones: SowPaymentMilestoneInput[]
 ): string | null {

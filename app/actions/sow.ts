@@ -65,6 +65,8 @@ export interface SowDocument {
   day_rate_override_gbp: number | null
   base_day_rate_gbp: number
   hours_per_day: number
+  currency: 'GBP' | 'USD'
+  fx_rate: number
   subtotal_gbp: number
   vat_amount_gbp: number
   total_gbp: number
@@ -144,6 +146,17 @@ function normalizeDayRateOverride(value: number | null | undefined): number | nu
   const n = Number(value)
   if (!(n > 0)) return null
   return Math.round(n * 100) / 100
+}
+
+function normalizeCurrency(value: string | null | undefined): 'GBP' | 'USD' {
+  return value === 'USD' ? 'USD' : 'GBP'
+}
+
+function normalizeFxRate(currency: 'GBP' | 'USD', value: number | null | undefined): number {
+  if (currency === 'GBP') return 1
+  const n = Number(value)
+  if (!(n > 0)) return 1
+  return Math.round(n * 1_000_000) / 1_000_000
 }
 
 function mapLineItems(
@@ -251,6 +264,12 @@ function validateSowInput(input: SowDocumentInput): string | null {
     !(Number(input.day_rate_override_gbp) > 0)
   ) {
     return 'Quoted day rate must be greater than 0'
+  }
+  const currency = input.currency === 'USD' ? 'USD' : 'GBP'
+  const fxRate = Number(input.fx_rate ?? 1)
+  if (!(fxRate > 0)) return 'Exchange rate must be greater than 0'
+  if (currency === 'GBP' && Math.abs(fxRate - 1) > 0.000001) {
+    // allow slight drift but prefer normalizing on save
   }
   for (const item of input.line_items) {
     const timelineError = validateLineItemTimeline(item.timeline_start, item.timeline_end)
@@ -411,6 +430,8 @@ export type SowDocumentInput = {
   start_date?: string | null
   end_date?: string | null
   day_rate_override_gbp?: number | null
+  currency?: 'GBP' | 'USD'
+  fx_rate?: number
   notes?: string | null
   line_items: SowLineItemInput[]
   payment_milestones: SowPaymentMilestoneInput[]
@@ -433,6 +454,8 @@ export async function createSowDocument(input: SowDocumentInput) {
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
   const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
+  const currency = normalizeCurrency(input.currency)
+  const fxRate = normalizeFxRate(currency, input.fx_rate)
 
   let mondayLink: {
     monday_project_id?: string | null
@@ -473,6 +496,8 @@ export async function createSowDocument(input: SowDocumentInput) {
         day_rate_override_gbp: dayRateOverride,
         base_day_rate_gbp: rates.dayRateGbp,
         hours_per_day: rates.hoursPerDay,
+        currency,
+        fx_rate: fxRate,
         notes: input.notes?.trim() || null,
         status: 'draft',
         created_by: auth.userId,
@@ -535,6 +560,8 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
   const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
+  const currency = normalizeCurrency(input.currency)
+  const fxRate = normalizeFxRate(currency, input.fx_rate)
 
   try {
     const { error: docError } = await auth.supabase
@@ -552,6 +579,8 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         day_rate_override_gbp: dayRateOverride,
         base_day_rate_gbp: rates.dayRateGbp,
         hours_per_day: rates.hoursPerDay,
+        currency,
+        fx_rate: fxRate,
         notes: input.notes?.trim() || null,
         ...totals,
       })

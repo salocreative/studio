@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -59,8 +59,18 @@ import {
   type SowLeadOption,
 } from '@/app/actions/sow-leads'
 import { getQuoteRates, type QuoteRate } from '@/app/actions/quote-rates'
+import { getSowPartyRates, type SowPartyRate } from '@/app/actions/sow-party-rates'
 import { pushSowToMonday, updateSowOnMonday } from '@/app/actions/sow-to-monday'
-import { VAT_RATE, DEFAULT_PAYMENT_SCHEDULE, getRateMultiplier, scaleForQuote } from '@/lib/sow/calculations'
+import { getGbpFxRate } from '@/app/actions/sow-fx'
+import {
+  VAT_RATE,
+  DEFAULT_PAYMENT_SCHEDULE,
+  getRateMultiplier,
+  scaleForQuote,
+  resolvePartyRate,
+  formatSowMoney,
+  type SowCurrency,
+} from '@/lib/sow/calculations'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -113,6 +123,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [agencies, setAgencies] = useState<string[]>([])
   const [clients, setClients] = useState<string[]>([])
   const [quoteRates, setQuoteRates] = useState<QuoteRate[]>([])
+  const [partyRates, setPartyRates] = useState<SowPartyRate[]>([])
   const [creatingLink, setCreatingLink] = useState(false)
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null)
   const [leads, setLeads] = useState<SowLeadOption[]>([])
@@ -139,6 +150,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [notes, setNotes] = useState('')
   /** Empty string = use standard rate (no override) */
   const [dayRateOverrideInput, setDayRateOverrideInput] = useState('')
+  const [currency, setCurrency] = useState<SowCurrency>('GBP')
+  const [fxRateInput, setFxRateInput] = useState('1')
+  const [fetchingFx, setFetchingFx] = useState(false)
   const [lineItems, setLineItems] = useState<LineItemForm[]>([])
   const [paymentMilestones, setPaymentMilestones] = useState<PaymentMilestoneForm[]>(() =>
     DEFAULT_PAYMENT_SCHEDULE.map((m) => ({
@@ -163,8 +177,11 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const hasMondayLink = Boolean(
     mondayProjectId || document?.monday_project_id || document?.monday_item_id
   )
+  const partySelectionKey = `${customerType}|${resolvedAgencyName}|${resolvedClientName}`
+  const partySelectionKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
+    partySelectionKeyRef.current = null
     loadSupportingData()
     if (sowId) loadDocument(sowId)
   }, [sowId])
@@ -173,18 +190,126 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     loadClientsForAgency(isPartnerWork ? resolvedAgencyName || null : null)
   }, [customerType, resolvedAgencyName])
 
-  const clientApproval = document
+  // Auto-fill quoted day rate when agency/client changes (keep saved override on initial load)
+  useEffect(() => {
+    if (loading) return
+
+    if (!isNew) {
+      if (partySelectionKeyRef.current === null) {
+        partySelectionKeyRef.current = partySelectionKey
+        return
+      }
+      if (partySelectionKeyRef.current === partySelectionKey) return
+      partySelectionKeyRef.current = partySelectionKey
+    }
+
+    const rate = resolvePartyRate({
+      customerType,
+      agencyName: isPartnerWork ? resolvedAgencyName : null,
+      clientName: resolvedClientName,
+      rates: partyRates,
+    })
+    setDayRateOverrideInput(rate != null ? String(rate.day_rate_gbp) : '')
+    if (rate) {
+      setCurrency(rate.currency)
+      if (rate.currency === 'GBP') {
+        setFxRateInput('1')
+      } else {
+        void fetchCurrentFxRate(rate.currency)
+      }
+    } else {
+      setCurrency('GBP')
+      setFxRateInput('1')
+    }
+  }, [
+    loading,
+    isNew,
+    partySelectionKey,
+    customerType,
+    isPartnerWork,
+    resolvedAgencyName,
+    resolvedClientName,
+    partyRates,
+  ])
+
+  const matchedPartyRate = useMemo(() => {
+    const rate = resolvePartyRate({
+      customerType,
+      agencyName: isPartnerWork ? resolvedAgencyName : null,
+      clientName: resolvedClientName,
+      rates: partyRates,
+    })
+    if (!rate) return null
+    if (isPartnerWork && resolvedAgencyName) {
+      const agencyMatch = partyRates.find(
+        (r) => r.party_type === 'agency' && r.name === resolvedAgencyName
+      )
+      if (agencyMatch) {
+        return {
+          label: `agency ${agencyMatch.name}`,
+          rate: Number(agencyMatch.day_rate_gbp),
+          currency: (agencyMatch.currency === 'USD' ? 'USD' : 'GBP') as SowCurrency,
+        }
+      }
+    }
+    if (resolvedClientName) {
+      const clientMatch = partyRates.find(
+        (r) => r.party_type === 'client' && r.name === resolvedClientName
+      )
+      if (clientMatch) {
+        return {
+          label: `client ${clientMatch.name}`,
+          rate: Number(clientMatch.day_rate_gbp),
+          currency: (clientMatch.currency === 'USD' ? 'USD' : 'GBP') as SowCurrency,
+        }
+      }
+    }
+    return null
+  }, [
+    customerType,
+    isPartnerWork,
+    resolvedAgencyName,
+    resolvedClientName,
+    partyRates,
+  ])
+
+  async function fetchCurrentFxRate(targetCurrency: SowCurrency = currency) {
+    if (targetCurrency === 'GBP') {
+      setFxRateInput('1')
+      return
+    }
+    setFetchingFx(true)
+    try {
+      const result = await getGbpFxRate(targetCurrency)
+      if (result.error || !result.rate) {
+        toast.error('Could not fetch exchange rate', {
+          description: result.error || 'Enter the rate manually',
+        })
+        return
+      }
+      setFxRateInput(String(result.rate))
+      toast.success(
+        result.asOf
+          ? `FX rate updated (as of ${result.asOf})`
+          : 'FX rate updated'
+      )
+    } finally {
+      setFetchingFx(false)
+    }
+  }  const clientApproval = document
     ? getClientApprovalStatus(document.status, document)
     : null
 
   async function loadSupportingData() {
-    const [agenciesResult, ratesResult, leadsResult] = await Promise.all([
+    const [agenciesResult, ratesResult, partyRatesResult, leadsResult] = await Promise.all([
       getSowAgencies(),
       getQuoteRates(),
+      getSowPartyRates(),
       isNew ? getSowLeadsForImport() : Promise.resolve({ success: true as const, leads: [] }),
     ])
     if (agenciesResult.success && agenciesResult.agencies) setAgencies(agenciesResult.agencies)
     if (ratesResult.success && ratesResult.rates) setQuoteRates(ratesResult.rates)
+    if (partyRatesResult.success && partyRatesResult.rates) setPartyRates(partyRatesResult.rates)
     if (leadsResult.success && leadsResult.leads) setLeads(leadsResult.leads)
   }
 
@@ -242,6 +367,10 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         setNotes(doc.notes || '')
         setDayRateOverrideInput(
           doc.day_rate_override_gbp != null ? String(doc.day_rate_override_gbp) : ''
+        )
+        setCurrency(doc.currency === 'USD' ? 'USD' : 'GBP')
+        setFxRateInput(
+          doc.currency === 'USD' && doc.fx_rate != null ? String(doc.fx_rate) : '1'
         )
         setLineItems(
           (doc.line_items || []).map((item) => ({
@@ -310,6 +439,11 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     const n = parseFloat(trimmed)
     return n > 0 ? n : null
   }, [dayRateOverrideInput])
+  const fxRate = useMemo(() => {
+    if (currency === 'GBP') return 1
+    const n = parseFloat(fxRateInput)
+    return n > 0 ? n : 1
+  }, [currency, fxRateInput])
   const rateMultiplier = useMemo(
     () => getRateMultiplier(baseDayRate, dayRateOverride),
     [baseDayRate, dayRateOverride]
@@ -510,6 +644,10 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       toast.error('Quoted day rate must be greater than 0')
       return
     }
+    if (currency === 'USD' && !(parseFloat(fxRateInput) > 0)) {
+      toast.error('Enter a valid USD exchange rate (units per £1)')
+      return
+    }
 
     setSaving(true)
     try {
@@ -524,6 +662,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         start_date: startDate || null,
         end_date: endDate || null,
         day_rate_override_gbp: dayRateOverride,
+        currency,
+        fx_rate: fxRate,
         notes: notes.trim() || null,
         monday_project_id: mondayProjectId,
         push_to_monday: isNew && pushToMonday && !hasMondayLink,
@@ -600,6 +740,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           start_date: startDate || null,
           end_date: endDate || null,
           day_rate_override_gbp: dayRateOverride,
+          currency,
+          fx_rate: fxRate,
           notes: notes.trim() || null,
           monday_project_id: mondayProjectId,
           push_to_monday: false,
@@ -1319,6 +1461,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                   <CardDescription>
                     Override the quoted day rate for this SoW. Deliverables stay as true effort;
                     the client share view scales hours when enabled. Monday always gets true hours.
+                    Pricing stays in GBP; choose USD to convert share-view money via FX.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1338,7 +1481,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="sow-quoted-rate">Quoted day rate</Label>
+                      <Label htmlFor="sow-quoted-rate">Quoted day rate (GBP)</Label>
                       <Input
                         id="sow-quoted-rate"
                         type="number"
@@ -1351,6 +1494,68 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       />
                       <p className="text-xs text-muted-foreground">
                         Leave blank to use the standard rate with no hour scaling
+                        {matchedPartyRate &&
+                        dayRateOverride != null &&
+                        Math.abs(dayRateOverride - matchedPartyRate.rate) < 0.005
+                          ? ` · From ${matchedPartyRate.label} rate in Settings`
+                          : matchedPartyRate
+                            ? ` · Settings has ${formatMoney(matchedPartyRate.rate)}/day for ${matchedPartyRate.label}`
+                            : ''}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Share currency</Label>
+                      <Select
+                        value={currency}
+                        onValueChange={(v) => {
+                          const next = v as SowCurrency
+                          setCurrency(next)
+                          if (next === 'GBP') setFxRateInput('1')
+                          else if (!fxRateInput || fxRateInput === '1') void fetchCurrentFxRate(next)
+                        }}
+                        disabled={isReadOnly}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="GBP">GBP (£)</SelectItem>
+                          <SelectItem value="USD">USD ($)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="sow-fx-rate">FX rate (per £1)</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="sow-fx-rate"
+                          type="number"
+                          min={0}
+                          step={0.000001}
+                          value={fxRateInput}
+                          onChange={(e) => setFxRateInput(e.target.value)}
+                          disabled={isReadOnly || currency === 'GBP'}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fetchCurrentFxRate()}
+                          disabled={isReadOnly || currency === 'GBP' || fetchingFx}
+                        >
+                          {fetchingFx ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            'Current rate'
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {currency === 'GBP'
+                          ? 'GBP SoWs always use a rate of 1'
+                          : 'How many USD equal £1. Fetched from ECB via Frankfurter, or enter manually.'}
                       </p>
                     </div>
                   </div>
@@ -1368,6 +1573,18 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       <span className="text-muted-foreground">Quoted hours (share view)</span>
                       <span>{quotedHours.toFixed(1)}h</span>
                     </div>
+                    <div className="flex justify-between gap-4 pt-2 border-t">
+                      <span className="text-muted-foreground">Total (GBP)</span>
+                      <span>{formatMoney(preview.total)}</span>
+                    </div>
+                    {currency !== 'GBP' && (
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Total ({currency})</span>
+                        <span className="font-medium">
+                          {formatSowMoney(preview.total, currency, fxRate)}
+                        </span>
+                      </div>
+                    )}
                     {dayRateOverride != null && rateMultiplier !== 1 && (
                       <p className="text-xs text-muted-foreground pt-1 border-t">
                         Totals stay based on true effort × standard rate, which matches quoted hours
@@ -1405,6 +1622,12 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                 <span>Total</span>
                 <span>{formatMoney(preview.total)}</span>
               </div>
+              {currency !== 'GBP' && (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Total ({currency})</span>
+                  <span>{formatSowMoney(preview.total, currency, fxRate)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-muted-foreground pt-1">
                 <span>Total hours (true)</span>
                 <span>{preview.hours.toFixed(1)}h</span>

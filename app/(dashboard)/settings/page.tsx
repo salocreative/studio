@@ -37,6 +37,7 @@ import { FlexiDesignBoardsForm } from './flexi-design-boards-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
+import { SowPartyRatesForm } from './sow-party-rates-form'
 import { QuoteValueDebugger } from './quote-value-debugger'
 import { LeadsStatusConfigForm } from './leads-status-config-form'
 import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
@@ -802,6 +803,18 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <QuoteRatesForm />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Agency &amp; client rates</CardTitle>
+                    <CardDescription>
+                      Optional day rates for specific agencies or end clients. These auto-fill the
+                      quoted rate (and hour multiplier) on Statements of Work.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <SowPartyRatesForm />
                   </CardContent>
                 </Card>
               </div>

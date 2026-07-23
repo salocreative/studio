@@ -22,15 +22,11 @@ import {
   rejectSowByToken,
   type PublicSowDocument,
 } from '@/app/actions/sow-public'
-import { getRateMultiplier, scaleForQuote } from '@/lib/sow/calculations'
+import { getRateMultiplier, scaleForQuote, formatSowMoney } from '@/lib/sow/calculations'
 import { cn } from '@/lib/utils'
 
 interface SowShareClientProps {
   shareToken: string
-}
-
-function formatMoney(value: number) {
-  return `£${value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export default function SowShareClient({ shareToken }: SowShareClientProps) {
@@ -111,6 +107,9 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
   const canRespond = !isApproved && !isRejected
   const showQuotedHours = document.show_quoted_hours ?? true
   const showPaymentSchedule = document.show_payment_schedule ?? true
+  const currency = document.currency === 'USD' ? 'USD' : 'GBP'
+  const fxRate = currency === 'GBP' ? 1 : Number(document.fx_rate) > 0 ? Number(document.fx_rate) : 1
+  const money = (amountGbp: number) => formatSowMoney(amountGbp, currency, fxRate)
   const rateMultiplier = getRateMultiplier(
     Number(document.base_day_rate_gbp) || 0,
     document.day_rate_override_gbp != null ? Number(document.day_rate_override_gbp) : null
@@ -257,7 +256,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                         </TableCell>
                       )}
                       <TableCell className="text-right">
-                        {formatMoney(Number(item.line_total_gbp))}
+                        {money(Number(item.line_total_gbp))}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -266,19 +265,24 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
             </div>
 
             <div className="space-y-1 text-sm border-t pt-4">
+              {currency !== 'GBP' && (
+                <p className="text-xs text-muted-foreground pb-2">
+                  Amounts in USD (rate £1 = ${Number(fxRate).toFixed(4)})
+                </p>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
-                <span>{formatMoney(Number(document.subtotal_gbp))}</span>
+                <span>{money(Number(document.subtotal_gbp))}</span>
               </div>
               {document.include_vat && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">VAT (20%)</span>
-                  <span>{formatMoney(Number(document.vat_amount_gbp))}</span>
+                  <span>{money(Number(document.vat_amount_gbp))}</span>
                 </div>
               )}
               <div className="flex justify-between font-semibold text-base pt-2">
                 <span>Total</span>
-                <span>{formatMoney(Number(document.total_gbp))}</span>
+                <span>{money(Number(document.total_gbp))}</span>
               </div>
               {showQuotedHours && (
                 <div className="flex justify-between text-muted-foreground">
@@ -310,7 +314,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                               : ''}
                           </span>
                         </span>
-                        <span className="font-medium whitespace-nowrap">{formatMoney(amount)}</span>
+                        <span className="font-medium whitespace-nowrap">{money(amount)}</span>
                       </div>
                     )
                   })}
