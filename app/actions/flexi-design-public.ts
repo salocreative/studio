@@ -2,6 +2,8 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 
+const FLEXI_BUCKET = 'flexi-design'
+
 /**
  * Get Flexi-Design client data for public view (by client name)
  * This version uses admin client to bypass authentication
@@ -239,5 +241,87 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
   } catch (error) {
     console.error('Error fetching Flexi-Design client data:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch client data' }
+  }
+}
+
+export interface FlexiDesignPublicGalleryItem {
+  id: string
+  title: string | null
+  caption: string | null
+  storage_path: string
+  mime_type: string | null
+  url: string
+}
+
+/**
+ * Public gallery for a Flexi-Design share link.
+ * Validates the token, then returns signed image URLs (no auth session required).
+ */
+export async function getFlexiDesignGalleryByShareToken(shareToken: string) {
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin client not available' }
+  }
+
+  try {
+    const { data: link, error: linkError } = await adminClient
+      .from('flexi_design_share_links')
+      .select('id, expires_at, is_active, flexi_design_client_id')
+      .eq('share_token', shareToken)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (linkError) throw linkError
+    if (!link) return { error: 'Share link not found or inactive' }
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      return { error: 'Share link has expired' }
+    }
+
+    const clientId = link.flexi_design_client_id as string
+    const { data: items, error: itemsError } = await adminClient
+      .from('flexi_design_gallery_items')
+      .select('id, title, caption, storage_path, mime_type')
+      .eq('client_id', clientId)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: false })
+
+    if (itemsError) throw itemsError
+
+    const rows = items || []
+    if (rows.length === 0) {
+      return { success: true, items: [] as FlexiDesignPublicGalleryItem[] }
+    }
+
+    const paths = rows.map((r) => r.storage_path).filter(Boolean)
+    const { data: signed, error: signedError } = await adminClient.storage
+      .from(FLEXI_BUCKET)
+      .createSignedUrls(paths, 60 * 60) // 1 hour
+
+    if (signedError) throw signedError
+
+    const urlByPath = new Map<string, string>()
+    for (const row of signed || []) {
+      if (row?.path && row?.signedUrl) urlByPath.set(row.path, row.signedUrl)
+    }
+
+    const publicItems: FlexiDesignPublicGalleryItem[] = rows
+      .map((item) => {
+        const url = urlByPath.get(item.storage_path)
+        if (!url) return null
+        return {
+          id: item.id,
+          title: item.title,
+          caption: item.caption,
+          storage_path: item.storage_path,
+          mime_type: item.mime_type,
+          url,
+        }
+      })
+      .filter(Boolean) as FlexiDesignPublicGalleryItem[]
+
+    return { success: true, items: publicItems }
+  } catch (error) {
+    console.error('Error fetching public Flexi-Design gallery:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to fetch gallery' }
   }
 }
