@@ -1,47 +1,75 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { hashStudioApiToken } from '@/lib/studio-api-tokens'
+import { hashStudioApiToken, looksLikeStudioApiToken } from '@/lib/studio-api-tokens'
 
-export function figmaApiCorsHeaders(request?: NextRequest) {
-  const origin = request?.headers.get('origin') || '*'
+export type FigmaApiUser = {
+  id: string | null
+  role: string
+  email: string | null
+  full_name: string | null
+}
+
+/** Plugin contract: allow any origin (Figma iframe / null). */
+export function figmaApiCorsHeaders() {
   return {
-    'Access-Control-Allow-Origin': origin === 'null' ? '*' : origin,
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Access-Control-Max-Age': '86400',
   }
 }
 
-export function figmaOptionsResponse(request: NextRequest) {
+export function figmaOptionsResponse() {
   return new NextResponse(null, {
     status: 204,
-    headers: figmaApiCorsHeaders(request),
+    headers: figmaApiCorsHeaders(),
   })
 }
 
 export function jsonWithCors(
-  request: NextRequest,
   body: unknown,
   init?: { status?: number }
 ) {
   return NextResponse.json(body, {
     status: init?.status ?? 200,
-    headers: figmaApiCorsHeaders(request),
+    headers: figmaApiCorsHeaders(),
   })
 }
 
-export async function requireFigmaApiAuth(request: NextRequest) {
+/**
+ * Auth for Figma plugin:
+ * 1. Shared env secret FIGMA_PLUGIN_API_TOKEN (plugin contract v1)
+ * 2. Or a Studio API token (salo_…) from Settings → Integrations
+ */
+export async function requireFigmaApiAuth(request: NextRequest): Promise<
+  | { error: 'unauthenticated' | 'forbidden' | 'Service unavailable'; user?: undefined }
+  | { error?: undefined; user: FigmaApiUser; tokenId: string | null }
+> {
   const header = request.headers.get('authorization') || ''
   const match = header.match(/^Bearer\s+(.+)$/i)
-  if (!match?.[1]) {
-    return { error: 'Missing Authorization Bearer token' as const }
+  const token = match?.[1]?.trim()
+  if (!token) return { error: 'unauthenticated' }
+
+  const envToken = process.env.FIGMA_PLUGIN_API_TOKEN?.trim()
+  if (envToken && token === envToken) {
+    return {
+      tokenId: null,
+      user: {
+        id: null,
+        role: 'admin',
+        email: null,
+        full_name: 'Figma plugin',
+      },
+    }
   }
 
-  const token = match[1].trim()
-  if (!token) return { error: 'Missing Authorization Bearer token' as const }
+  if (!looksLikeStudioApiToken(token)) {
+    // Wrong secret, or env not configured
+    return { error: 'unauthenticated' }
+  }
 
   const admin = await createAdminClient()
-  if (!admin) return { error: 'Service unavailable' as const }
+  if (!admin) return { error: 'Service unavailable' }
 
   const hash = hashStudioApiToken(token)
 
@@ -53,11 +81,10 @@ export async function requireFigmaApiAuth(request: NextRequest) {
 
   if (error) {
     console.error('Error looking up studio API token:', error)
-    return { error: 'Failed to validate API token' as const }
+    return { error: 'unauthenticated' }
   }
-  if (!row) return { error: 'Invalid API token' as const }
-  if (row.revoked_at) return { error: 'API token has been revoked' as const }
-  if (!row.created_by) return { error: 'API token has no owner' as const }
+  if (!row || row.revoked_at) return { error: 'unauthenticated' }
+  if (!row.created_by) return { error: 'unauthenticated' }
 
   const { data: user, error: userError } = await admin
     .from('users')
@@ -66,11 +93,11 @@ export async function requireFigmaApiAuth(request: NextRequest) {
     .single()
 
   if (userError || !user || user.deleted_at) {
-    return { error: 'API token owner is inactive' as const }
+    return { error: 'unauthenticated' }
   }
 
   if (user.role !== 'admin' && user.role !== 'designer' && user.role !== 'manager') {
-    return { error: 'API token owner is not authorized' as const }
+    return { error: 'forbidden' }
   }
 
   void admin
@@ -87,4 +114,28 @@ export async function requireFigmaApiAuth(request: NextRequest) {
       full_name: (user.full_name as string | null) ?? null,
     },
   }
+}
+
+export function authErrorResponse(
+  auth: { error: string }
+) {
+  const status = auth.error === 'forbidden' ? 403 : auth.error === 'Service unavailable' ? 503 : 401
+  const code =
+    auth.error === 'forbidden'
+      ? 'forbidden'
+      : auth.error === 'Service unavailable'
+        ? 'service_unavailable'
+        : 'unauthenticated'
+  return jsonWithCors(
+    {
+      error: code,
+      message:
+        auth.error === 'forbidden'
+          ? 'Token is not allowed to use this API'
+          : auth.error === 'Service unavailable'
+            ? 'Service unavailable'
+            : 'Missing or invalid API token',
+    },
+    { status }
+  )
 }

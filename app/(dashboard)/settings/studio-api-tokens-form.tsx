@@ -160,11 +160,13 @@ export function StudioApiTokensForm() {
           <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Figma plugin endpoints</p>
             <ul className="mt-2 list-inside list-disc space-y-1 font-mono text-xs">
-              <li>GET /api/figma/flexi-clients</li>
-              <li>POST /api/figma/gallery-upload</li>
+              <li>GET /api/figma/clients</li>
+              <li>POST /api/figma/gallery</li>
             </ul>
             <p className="mt-2">
-              Send header <code className="text-foreground">Authorization: Bearer salo_…</code>
+              Auth: <code className="text-foreground">Authorization: Bearer …</code> using either a
+              token created below, or the shared env secret{' '}
+              <code className="text-foreground">FIGMA_PLUGIN_API_TOKEN</code>.
             </p>
           </div>
 
