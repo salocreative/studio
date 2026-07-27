@@ -43,6 +43,7 @@ import { LeadsStatusConfigForm } from './leads-status-config-form'
 import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
 import { RetainersForm } from './retainers-form'
 import { ThankYouClientsForm } from './thank-you-clients-form'
+import { StudioApiTokensForm } from './studio-api-tokens-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion, updateUserExpectedUtilization, getFormerUsers } from '@/app/actions/users'
 import { toast } from 'sonner'
@@ -766,6 +767,16 @@ export default function SettingsPage() {
 
             {/* Integrations Tab */}
             <TabsContent value="integrations" className="mt-6 space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">API access</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Tokens for the Figma Flexi Gallery plugin and other Studio integrations
+                  </p>
+                </div>
+                <StudioApiTokensForm />
+              </div>
+
               <div className="space-y-4">
                 <div>
                   <h2 className="text-xl font-semibold">Xero Integration</h2>

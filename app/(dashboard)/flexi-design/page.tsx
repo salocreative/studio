@@ -20,6 +20,10 @@ import {
   deleteFlexiDesignCreditTransaction,
   type FlexiDesignShareLink
 } from '@/app/actions/flexi-design'
+import { FlexiClientFilesTab } from './flexi-client-files-tab'
+import { FlexiClientGalleryTab } from './flexi-client-gallery-tab'
+import { FlexiClientContactsTab } from './flexi-client-contacts-tab'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { format, differenceInMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -467,7 +471,15 @@ function FlexiDesignPageContent() {
               <div className="text-center text-muted-foreground">Loading client details...</div>
             </div>
           ) : (
-            <div className="space-y-6">
+            <Tabs defaultValue="projects" className="space-y-6">
+              <TabsList>
+                <TabsTrigger value="projects">Projects</TabsTrigger>
+                <TabsTrigger value="files">Files</TabsTrigger>
+                <TabsTrigger value="gallery">Gallery</TabsTrigger>
+                <TabsTrigger value="contacts">Contacts</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="projects" className="mt-0 space-y-6">
               {/* Summary Stats - 4 boxes */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* Box 1: Remaining Hours */}
@@ -645,7 +657,20 @@ function FlexiDesignPageContent() {
                   </CardContent>
                 </Card>
               </div>
-            </div>
+              </TabsContent>
+
+              <TabsContent value="files" className="mt-0">
+                <FlexiClientFilesTab clientId={clientDetail.id} />
+              </TabsContent>
+
+              <TabsContent value="gallery" className="mt-0">
+                <FlexiClientGalleryTab clientId={clientDetail.id} />
+              </TabsContent>
+
+              <TabsContent value="contacts" className="mt-0">
+                <FlexiClientContactsTab clientId={clientDetail.id} />
+              </TabsContent>
+            </Tabs>
           )}
         </div>
 
