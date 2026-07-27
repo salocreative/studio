@@ -8,12 +8,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Loader2, CheckCircle2, Clock, History } from 'lucide-react'
+import { Loader2, CheckCircle2, Clock, History, Mail } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { getFlexiDesignClientByToken } from '@/app/actions/flexi-design'
 import {
@@ -110,7 +109,6 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
   const [completedProjects, setCompletedProjects] = useState<Project[]>([])
   const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([])
   const [galleryItems, setGalleryItems] = useState<FlexiDesignPublicGalleryItem[]>([])
-  const [showCreditHistoryDialog, setShowCreditHistoryDialog] = useState(false)
   const [viewingGalleryItem, setViewingGalleryItem] = useState<FlexiDesignPublicGalleryItem | null>(
     null
   )
@@ -323,10 +321,27 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                 Account overview, active work, and recent history
               </p>
             </div>
-            <Button variant="outline" onClick={() => setShowCreditHistoryDialog(true)}>
-              <History className="mr-2 h-4 w-4" />
-              Credit History
-            </Button>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              <Button variant="outline" asChild>
+                <a
+                  href="https://cal.com/carlcahill/flexi-design"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Book Call
+                </a>
+              </Button>
+              <Button asChild>
+                <a
+                  href={`mailto:team@salo.uk?subject=${encodeURIComponent(
+                    `New Brief — ${clientData.client_name}`
+                  )}`}
+                >
+                  <Mail className="mr-2 h-4 w-4" />
+                  New Brief
+                </a>
+              </Button>
+            </div>
           </FadeInSection>
         </div>
       </section>
@@ -515,72 +530,118 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
           </TabsContent>
 
           <TabsContent value="history" className="mt-0">
-            <FadeInSection delayMs={80}>
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5" />
-                  Completed Projects ({completedProjects.length})
-                </CardTitle>
-                <CardDescription>Grouped by completion month</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {completedProjects.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-8">No completed projects</p>
-                ) : (
-                  <div className="space-y-6">
-                    {completedProjectsByMonth.map((group, groupIndex) => (
-                      <div
-                        key={group.monthKey}
-                        className="space-y-3"
-                        style={{
-                          contentVisibility: 'auto',
-                          containIntrinsicSize: '240px',
-                        }}
-                      >
-                        <div className="flex items-center justify-between border-b pb-2">
-                          <div className="flex items-baseline gap-2">
-                            <h3 className="font-semibold">{group.monthLabel}</h3>
-                            <span className="text-sm text-muted-foreground">
-                              {group.projects.length} project
-                              {group.projects.length !== 1 ? 's' : ''}
-                            </span>
-                          </div>
-                          <div className="text-sm font-semibold text-primary">
-                            {formatCredits(group.totalQuoted)} credits
-                          </div>
-                        </div>
-                        <div className="space-y-3">
-                          {group.projects.map((project, index) => (
-                            <div
-                              key={project.id}
-                              className="flex items-center justify-between rounded-lg border p-4 transition-all duration-500 hover:bg-muted/50 motion-reduce:transition-none"
-                              style={{
-                                transitionDelay: `${Math.min(groupIndex * 40 + index * 30, 220)}ms`,
-                              }}
-                            >
-                              <div className="flex-1">
-                                <h3 className="font-medium">{project.name}</h3>
-                                <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                                  {project.completed_date && (
-                                    <span>Completed {formatDate(project.completed_date)}</span>
-                                  )}
-                                  {project.quoted_hours !== null && (
-                                    <span>{formatCredits(project.quoted_hours)} credits</span>
-                                  )}
-                                </div>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-4 lg:items-start">
+              <FadeInSection delayMs={60} className="lg:col-span-3">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <CheckCircle2 className="h-5 w-5" />
+                      Completed Projects ({completedProjects.length})
+                    </CardTitle>
+                    <CardDescription>Grouped by completion month</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {completedProjects.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">
+                        No completed projects
+                      </p>
+                    ) : (
+                      <div className="space-y-6">
+                        {completedProjectsByMonth.map((group, groupIndex) => (
+                          <div
+                            key={group.monthKey}
+                            className="space-y-3"
+                            style={{
+                              contentVisibility: 'auto',
+                              containIntrinsicSize: '240px',
+                            }}
+                          >
+                            <div className="flex items-center justify-between border-b pb-2">
+                              <div className="flex items-baseline gap-2">
+                                <h3 className="font-semibold">{group.monthLabel}</h3>
+                                <span className="text-sm text-muted-foreground">
+                                  {group.projects.length} project
+                                  {group.projects.length !== 1 ? 's' : ''}
+                                </span>
                               </div>
-                                <Badge variant="default">Completed</Badge>
+                              <div className="text-sm font-semibold text-primary">
+                                {formatCredits(group.totalQuoted)} credits
+                              </div>
                             </div>
-                          ))}
-                        </div>
+                            <div className="space-y-3">
+                              {group.projects.map((project, index) => (
+                                <div
+                                  key={project.id}
+                                  className="flex items-center justify-between rounded-lg border p-4 transition-all duration-500 hover:bg-muted/50 motion-reduce:transition-none"
+                                  style={{
+                                    transitionDelay: `${Math.min(groupIndex * 40 + index * 30, 220)}ms`,
+                                  }}
+                                >
+                                  <div className="flex-1">
+                                    <h3 className="font-medium">{project.name}</h3>
+                                    <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
+                                      {project.completed_date && (
+                                        <span>
+                                          Completed {formatDate(project.completed_date)}
+                                        </span>
+                                      )}
+                                      {project.quoted_hours !== null && (
+                                        <span>
+                                          {formatCredits(project.quoted_hours)} credits
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <Badge variant="default">Completed</Badge>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            </FadeInSection>
+                    )}
+                  </CardContent>
+                </Card>
+              </FadeInSection>
+
+              <FadeInSection delayMs={100} className="lg:col-span-1">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <History className="h-5 w-5 shrink-0" />
+                      Credit History
+                    </CardTitle>
+                    <CardDescription>Credit additions</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {creditTransactions.length === 0 ? (
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        No credit transactions yet
+                      </p>
+                    ) : (
+                      <div className="max-h-[36rem] space-y-2 overflow-y-auto">
+                        {creditTransactions.map((transaction) => (
+                          <div
+                            key={transaction.id}
+                            className="rounded-lg border p-3"
+                          >
+                            <div className="font-medium text-green-500">
+                              +{formatCredits(transaction.hours)} credits
+                            </div>
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {formatDate(transaction.transaction_date)}
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground/80">
+                              Added {formatDate(transaction.created_at)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </FadeInSection>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
@@ -608,48 +669,6 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         </DialogContent>
       </Dialog>
 
-      {/* Credit History Dialog */}
-      <Dialog open={showCreditHistoryDialog} onOpenChange={setShowCreditHistoryDialog}>
-        <DialogContent className="dark max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Credit History</DialogTitle>
-            <DialogDescription>
-              History of all credit additions for {clientData.client_name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            {creditTransactions.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">No credit transactions yet</div>
-            ) : (
-              <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                {creditTransactions.map((transaction) => (
-                  <div
-                    key={transaction.id}
-                    className="flex items-center justify-between p-3 border rounded-lg"
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium text-green-600">
-                        +{formatCredits(transaction.hours)} credits
-                      </div>
-                      <div className="text-sm text-muted-foreground mt-0.5">
-                        Transaction Date: {formatDate(transaction.transaction_date)}
-                      </div>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Added {formatDate(transaction.created_at)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreditHistoryDialog(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
