@@ -309,7 +309,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
           <div className="absolute left-4 top-5 md:left-6 md:top-6 lg:left-8">
             <SaloLogo className="h-5 w-auto text-zinc-200/90 md:h-6" title="Salo" />
           </div>
-          <FadeInSection className="flex w-full items-end justify-between gap-4">
+          <FadeInSection className="flex w-full flex-col items-start gap-5 md:flex-row md:items-end md:justify-between md:gap-4">
             <div className="space-y-2 pb-0 md:pb-1">
               <p className="text-xs font-medium uppercase tracking-[0.22em] text-zinc-400">
                 Flexi-Design
@@ -321,7 +321,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                 Account overview, active work, and recent history
               </p>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end">
               <Button variant="outline" asChild>
                 <a
                   href="https://cal.com/carlcahill/flexi-design"
@@ -371,6 +371,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="inspo">Inspo</TabsTrigger>
             <TabsTrigger value="history">
               History
               {completedProjects.length > 0 ? ` (${completedProjects.length})` : ''}
@@ -527,6 +528,19 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                 </div>
               </FadeInSection>
             )}
+          </TabsContent>
+
+          <TabsContent value="inspo" className="mt-0">
+            <FadeInSection delayMs={60}>
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                  <p className="text-lg font-medium text-foreground">Coming soon</p>
+                  <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                    Inspiration boards and curated references will live here.
+                  </p>
+                </CardContent>
+              </Card>
+            </FadeInSection>
           </TabsContent>
 
           <TabsContent value="history" className="mt-0">
