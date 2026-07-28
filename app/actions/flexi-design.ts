@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
 import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
 import crypto from 'crypto'
+import { endOfWeek, format, startOfWeek } from 'date-fns'
 
 interface FlexiDesignClient {
   id: string
@@ -20,6 +21,14 @@ interface FlexiDesignClient {
   last_credit_date?: string | null
   /** Average hours per credit purchase transaction */
   avg_credit_purchase?: number | null
+}
+
+export interface FlexiDesignClientsSummary {
+  active_projects: number
+  completed_projects: number
+  credits_used: number
+  unused_credits: number
+  time_logged_this_week: number
 }
 
 interface FlexiDesignProject {
@@ -75,7 +84,17 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       : null
     
     if (flexiDesignBoardIds.size === 0) {
-      return { success: true, clients: [] }
+      return {
+        success: true,
+        clients: [],
+        summary: {
+          active_projects: 0,
+          completed_projects: 0,
+          credits_used: 0,
+          unused_credits: 0,
+          time_logged_this_week: 0,
+        } satisfies FlexiDesignClientsSummary,
+      }
     }
 
     // Filter out completed board from active board IDs
@@ -112,21 +131,41 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
 
     // Get all time entries for Flexi-Design projects (active + completed)
     const projectIds = allProjectsIncludingCompleted.map(p => p.id)
+    const projectClientById = new Map<string, string>()
+    for (const project of allProjectsIncludingCompleted) {
+      if (project.id && project.client_name) {
+        projectClientById.set(String(project.id), String(project.client_name))
+      }
+    }
+
     let timeEntriesByProject: Record<string, number> = {}
+    const hoursThisWeekByClient: Record<string, number> = {}
+    const weekStart = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+    const weekEnd = format(endOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
     
     if (projectIds.length > 0) {
       const { data: timeEntries, error: timeEntriesError } = await supabase
         .from('time_entries')
-        .select('project_id, hours')
+        .select('project_id, hours, date')
         .in('project_id', projectIds)
 
       if (timeEntriesError) throw timeEntriesError
 
-      // Aggregate hours by project
+      // Aggregate hours by project (all time) and by client for the current week
       if (timeEntries) {
         timeEntries.forEach((entry: any) => {
-          timeEntriesByProject[entry.project_id] = 
-            (timeEntriesByProject[entry.project_id] || 0) + Number(entry.hours)
+          const projectId = String(entry.project_id)
+          const hours = Number(entry.hours) || 0
+          timeEntriesByProject[projectId] = (timeEntriesByProject[projectId] || 0) + hours
+
+          const entryDate = String(entry.date || '')
+          if (entryDate >= weekStart && entryDate <= weekEnd) {
+            const clientName = projectClientById.get(projectId)
+            if (clientName) {
+              hoursThisWeekByClient[clientName] =
+                (hoursThisWeekByClient[clientName] || 0) + hours
+            }
+          }
         })
       }
     }
@@ -327,7 +366,21 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       ? clients
       : clients.filter((client) => !client.is_hidden)
 
-    return { success: true, clients: visibleClients }
+    const summary: FlexiDesignClientsSummary = {
+      active_projects: visibleClients.reduce((sum, c) => sum + (c.active_projects || 0), 0),
+      completed_projects: visibleClients.reduce(
+        (sum, c) => sum + Math.max(0, (c.total_projects || 0) - (c.active_projects || 0)),
+        0
+      ),
+      credits_used: visibleClients.reduce((sum, c) => sum + (c.quoted_hours_used || 0), 0),
+      unused_credits: visibleClients.reduce((sum, c) => sum + c.remaining_hours, 0),
+      time_logged_this_week: visibleClients.reduce(
+        (sum, c) => sum + (hoursThisWeekByClient[c.client_name] || 0),
+        0
+      ),
+    }
+
+    return { success: true, clients: visibleClients, summary }
   } catch (error) {
     console.error('Error fetching Flexi-Design clients:', error)
     const errorMessage = error instanceof Error ? error.message : 'Failed to fetch clients'

@@ -18,7 +18,8 @@ import {
   deactivateFlexiDesignShareLink,
   updateFlexiDesignCreditTransaction,
   deleteFlexiDesignCreditTransaction,
-  type FlexiDesignShareLink
+  type FlexiDesignShareLink,
+  type FlexiDesignClientsSummary,
 } from '@/app/actions/flexi-design'
 import { FlexiClientFilesTab } from './flexi-client-files-tab'
 import { FlexiClientGalleryTab } from './flexi-client-gallery-tab'
@@ -78,6 +79,13 @@ function FlexiDesignPageContent() {
   const clientName = searchParams.get('client')
   
   const [clients, setClients] = useState<FlexiDesignClient[]>([])
+  const [listSummary, setListSummary] = useState<FlexiDesignClientsSummary>({
+    active_projects: 0,
+    completed_projects: 0,
+    credits_used: 0,
+    unused_credits: 0,
+    time_logged_this_week: 0,
+  })
   const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -135,6 +143,9 @@ function FlexiDesignPageContent() {
         }
       } else if (result.clients) {
         setClients(result.clients)
+        if (result.summary) {
+          setListSummary(result.summary)
+        }
         setError(null)
       }
     } catch (error) {
@@ -1048,6 +1059,49 @@ function FlexiDesignPageContent() {
           </Card>
         ) : (
           <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border px-4 py-3 sm:grid-cols-3 lg:grid-cols-5">
+              {(
+                [
+                  {
+                    label: 'Active projects',
+                    value: String(listSummary.active_projects),
+                  },
+                  {
+                    label: 'Completed projects',
+                    value: String(listSummary.completed_projects),
+                  },
+                  {
+                    label: 'Credits used',
+                    value: listSummary.credits_used.toFixed(1),
+                  },
+                  {
+                    label: 'Unused credits',
+                    value: listSummary.unused_credits.toFixed(1),
+                    className:
+                      listSummary.unused_credits < 0
+                        ? 'text-destructive'
+                        : undefined,
+                  },
+                  {
+                    label: 'Time logged this week',
+                    value: `${listSummary.time_logged_this_week.toFixed(1)}h`,
+                  },
+                ] as Array<{ label: string; value: string; className?: string }>
+              ).map((stat) => (
+                <div key={stat.label} className="min-w-0">
+                  <div className="text-xs text-muted-foreground">{stat.label}</div>
+                  <div
+                    className={cn(
+                      'mt-0.5 text-base font-semibold tabular-nums',
+                      stat.className
+                    )}
+                  >
+                    {stat.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             {clients.length === 0 ? (
               <Card>
                 <CardContent className="py-12">
@@ -1063,9 +1117,6 @@ function FlexiDesignPageContent() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {clients.map((client) => {
-                  const quotedHoursUsed = client.quoted_hours_used || 0
-                  const totalCredits =
-                    client.total_credits ?? client.remaining_hours + quotedHoursUsed
                   const activeProjects = client.active_projects ?? 0
                   const avgPurchase = client.avg_credit_purchase
                   const balancePercent = getCreditBalancePercent(client.remaining_hours, avgPurchase)
@@ -1114,21 +1165,21 @@ function FlexiDesignPageContent() {
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-4 pt-0">
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-3 gap-3">
                           <div>
-                            <div className="text-xs text-muted-foreground">Active projects</div>
+                            <div className="text-xs text-muted-foreground">Active</div>
                             <div className="mt-0.5 text-lg font-semibold tabular-nums">
                               {activeProjects}
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-muted-foreground">Total projects</div>
+                            <div className="text-xs text-muted-foreground">Completed</div>
                             <div className="mt-0.5 text-lg font-semibold tabular-nums">
-                              {client.total_projects}
+                              {Math.max(0, client.total_projects - activeProjects)}
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-muted-foreground">Remaining credits</div>
+                            <div className="text-xs text-muted-foreground">Credits</div>
                             <div
                               className={cn(
                                 'mt-0.5 text-lg font-semibold tabular-nums',
@@ -1136,12 +1187,6 @@ function FlexiDesignPageContent() {
                               )}
                             >
                               {client.remaining_hours.toFixed(1)}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-xs text-muted-foreground">Total credits</div>
-                            <div className="mt-0.5 text-lg font-semibold tabular-nums">
-                              {totalCredits.toFixed(1)}
                             </div>
                           </div>
                         </div>
