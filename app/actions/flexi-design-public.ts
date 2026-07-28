@@ -326,6 +326,95 @@ export async function getFlexiDesignGalleryByShareToken(shareToken: string) {
   }
 }
 
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[items[i], items[j]] = [items[j], items[i]]
+  }
+  return items
+}
+
+/**
+ * Random gallery sample across all Flexi-Design clients for the public Inspo tab.
+ * Validates the share token, then returns up to `limit` signed image URLs.
+ */
+export async function getFlexiDesignInspoGalleryByShareToken(
+  shareToken: string,
+  limit = 16
+) {
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin client not available' }
+  }
+
+  const take = Math.min(Math.max(Math.floor(limit) || 16, 1), 16)
+
+  try {
+    const { data: link, error: linkError } = await adminClient
+      .from('flexi_design_share_links')
+      .select('id, expires_at, is_active')
+      .eq('share_token', shareToken)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (linkError) throw linkError
+    if (!link) return { error: 'Share link not found or inactive' }
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      return { error: 'Share link has expired' }
+    }
+
+    const { data: rows, error: itemsError } = await adminClient
+      .from('flexi_design_gallery_items')
+      .select('id, title, caption, storage_path, mime_type')
+
+    if (itemsError) throw itemsError
+
+    const pool = rows || []
+    if (pool.length === 0) {
+      return { success: true, items: [] as FlexiDesignPublicGalleryItem[] }
+    }
+
+    const picked = shuffleInPlace([...pool]).slice(0, take)
+    const paths = picked.map((row) => row.storage_path).filter(Boolean)
+    const { data: signed, error: signedError } = await adminClient.storage
+      .from(FLEXI_BUCKET)
+      .createSignedUrls(paths, 60 * 60)
+
+    if (signedError) throw signedError
+
+    const urlByPath = new Map<string, string>()
+    for (const row of signed || []) {
+      if (row?.path && row?.signedUrl) urlByPath.set(row.path, row.signedUrl)
+    }
+
+    const publicItems: FlexiDesignPublicGalleryItem[] = picked
+      .map((item) => {
+        const url = urlByPath.get(item.storage_path)
+        if (!url) return null
+        return {
+          id: item.id,
+          title: item.title,
+          caption: item.caption,
+          storage_path: item.storage_path,
+          mime_type: item.mime_type,
+          url,
+        }
+      })
+      .filter(Boolean) as FlexiDesignPublicGalleryItem[]
+
+    return { success: true, items: publicItems }
+  } catch (error) {
+    console.error('Error fetching public Flexi-Design inspo gallery:', error)
+    const message =
+      error && typeof error === 'object' && 'message' in error
+        ? String((error as { message: unknown }).message)
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch inspo gallery'
+    return { error: message }
+  }
+}
+
 export interface FlexiDesignPublicService {
   id: string
   category: string

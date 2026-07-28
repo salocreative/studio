@@ -18,6 +18,7 @@ import { getFlexiDesignClientByToken } from '@/app/actions/flexi-design'
 import {
   getFlexiDesignClientDataPublic,
   getFlexiDesignGalleryByShareToken,
+  getFlexiDesignInspoGalleryByShareToken,
   getFlexiDesignServicesByShareToken,
   type FlexiDesignPublicGalleryItem,
   type FlexiDesignPublicService,
@@ -112,6 +113,9 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
   const [completedProjects, setCompletedProjects] = useState<Project[]>([])
   const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([])
   const [galleryItems, setGalleryItems] = useState<FlexiDesignPublicGalleryItem[]>([])
+  const [inspoGalleryItems, setInspoGalleryItems] = useState<FlexiDesignPublicGalleryItem[]>([])
+  const [inspoLandscapeIds, setInspoLandscapeIds] = useState<Record<string, boolean>>({})
+  const [inspoMarqueeSpeed, setInspoMarqueeSpeed] = useState<'slow' | 'medium' | 'fast'>('slow')
   const [services, setServices] = useState<FlexiDesignPublicService[]>([])
   const [servicesError, setServicesError] = useState<string | null>(null)
   const [selectedServiceCategory, setSelectedServiceCategory] = useState<string | null>(null)
@@ -141,10 +145,11 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         return
       }
 
-      const [dataResult, galleryResult, servicesResult] = await Promise.all([
+      const [dataResult, galleryResult, servicesResult, inspoGalleryResult] = await Promise.all([
         getFlexiDesignClientDataPublic(shareResult.client.client_name),
         getFlexiDesignGalleryByShareToken(shareToken),
         getFlexiDesignServicesByShareToken(shareToken),
+        getFlexiDesignInspoGalleryByShareToken(shareToken, 16),
       ])
 
       if (dataResult.error) {
@@ -174,6 +179,14 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         setServicesError('Unable to load services catalog')
       }
       setSelectedServiceCategory(null)
+
+      if (inspoGalleryResult.success && inspoGalleryResult.items) {
+        setInspoGalleryItems(inspoGalleryResult.items)
+        setInspoLandscapeIds({})
+      } else {
+        setInspoGalleryItems([])
+        setInspoLandscapeIds({})
+      }
     } catch (err) {
       console.error('Error loading share data:', err)
       setError('Failed to load data')
@@ -249,6 +262,18 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
   const SelectedCategoryIcon = selectedServiceCategory
     ? getFlexiServiceCategoryIcon(selectedServiceCategory)
     : null
+
+  const inspoMarqueeItems = (() => {
+    if (inspoGalleryItems.length === 0) return []
+    const minItems = 10
+    const repeats = Math.max(2, Math.ceil(minItems / inspoGalleryItems.length))
+    return Array.from({ length: repeats }, (_, repeatIndex) =>
+      inspoGalleryItems.map((item) => ({
+        ...item,
+        loopKey: `${item.id}-${repeatIndex}`,
+      }))
+    ).flat()
+  })()
 
   const bannerRows = [0, 1, 2].map((rowIndex) => {
     const baseRow = galleryItems.filter((_, itemIndex) => itemIndex % 3 === rowIndex)
@@ -690,6 +715,113 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                 </CardContent>
               </Card>
             </FadeInSection>
+
+            {inspoMarqueeItems.length > 0 && (
+              <FadeInSection delayMs={140} className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2">
+                <section className="bg-black py-10 md:py-12">
+                  <div className="mx-auto mb-6 flex max-w-7xl items-end justify-between gap-4 px-4 md:px-6 lg:px-8">
+                    <div>
+                      <h2 className="text-2xl font-semibold tracking-tight text-zinc-50">
+                        Studio inspiration
+                      </h2>
+                      <p className="mt-1 text-sm text-zinc-400">
+                        A random selection of Flexi-Design work from across the studio.
+                      </p>
+                    </div>
+                    <div
+                      className="flex shrink-0 items-center rounded-md border border-zinc-800 bg-zinc-950 p-0.5"
+                      role="group"
+                      aria-label="Marquee speed"
+                    >
+                      {(
+                        [
+                          { id: 'slow', label: 'Slow' },
+                          { id: 'medium', label: 'Medium' },
+                          { id: 'fast', label: 'Fast' },
+                        ] as const
+                      ).map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => setInspoMarqueeSpeed(option.id)}
+                          className={cn(
+                            'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                            inspoMarqueeSpeed === option.id
+                              ? 'bg-zinc-100 text-zinc-950'
+                              : 'text-zinc-400 hover:text-zinc-200'
+                          )}
+                          aria-pressed={inspoMarqueeSpeed === option.id}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-black via-black/80 to-transparent sm:w-24 md:w-32" />
+                    <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-black via-black/80 to-transparent sm:w-24 md:w-32" />
+
+                    <div className="overflow-hidden py-2">
+                      <div
+                        className={cn(
+                          'flex min-w-max items-center gap-4 will-change-transform px-4 motion-reduce:animate-none sm:gap-5',
+                          inspoMarqueeSpeed === 'slow' &&
+                            'animate-[marquee-left_180s_linear_infinite]',
+                          inspoMarqueeSpeed === 'medium' &&
+                            'animate-[marquee-left_100s_linear_infinite]',
+                          inspoMarqueeSpeed === 'fast' &&
+                            'animate-[marquee-left_55s_linear_infinite]'
+                        )}
+                      >
+                        {[...inspoMarqueeItems, ...inspoMarqueeItems].map((item, itemIndex) => {
+                          const isLandscape = inspoLandscapeIds[item.id] === true
+                          return (
+                            <button
+                              key={`${item.loopKey}-${itemIndex}`}
+                              type="button"
+                              className="shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() =>
+                                setViewingGalleryItem({
+                                  id: item.id,
+                                  title: item.title,
+                                  caption: item.caption,
+                                  storage_path: item.storage_path,
+                                  mime_type: item.mime_type,
+                                  url: item.url,
+                                })
+                              }
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={item.url}
+                                alt={item.title || 'Studio inspiration'}
+                                className={cn(
+                                  'h-auto rounded-md',
+                                  isLandscape
+                                    ? 'w-[22rem] sm:w-[26rem] lg:w-[30rem]'
+                                    : 'w-44 sm:w-52 lg:w-60'
+                                )}
+                                loading="lazy"
+                                decoding="async"
+                                onLoad={(event) => {
+                                  const image = event.currentTarget
+                                  const landscape = image.naturalWidth > image.naturalHeight
+                                  setInspoLandscapeIds((current) => {
+                                    if (current[item.id] === landscape) return current
+                                    return { ...current, [item.id]: landscape }
+                                  })
+                                }}
+                              />
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </FadeInSection>
+            )}
           </TabsContent>
 
           <TabsContent value="history" className="mt-0">
