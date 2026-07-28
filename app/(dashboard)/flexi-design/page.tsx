@@ -39,6 +39,7 @@ interface FlexiDesignClient {
   quoted_hours_used?: number // quoted hours for credit deduction
   last_credit_hours?: number | null
   last_credit_date?: string | null
+  avg_credit_purchase?: number | null
 }
 
 interface FlexiDesignProject {
@@ -334,23 +335,31 @@ function FlexiDesignPageContent() {
     }
   }
 
-  // Colour and balance health are based on absolute remaining credits,
-  // not lifetime % used (which always looks bad for long-running clients).
-  const CREDIT_BALANCE_TARGET = 40
-  const CREDIT_LOW_THRESHOLD = 10
-  const CREDIT_WATCH_THRESHOLD = 20
+  // Balance health is remaining vs the client's average credit purchase size.
+  // Fallback target when no purchase history: 40.
+  const CREDIT_BALANCE_FALLBACK_TARGET = 40
 
   type CreditBalanceTone = 'healthy' | 'watch' | 'low' | 'critical'
 
-  function getCreditBalanceTone(remainingHours: number): CreditBalanceTone {
+  function getCreditBalanceTarget(avgCreditPurchase?: number | null) {
+    const avg = Number(avgCreditPurchase)
+    if (!Number.isFinite(avg) || avg <= 0) return CREDIT_BALANCE_FALLBACK_TARGET
+    return avg
+  }
+
+  function getCreditBalanceTone(
+    remainingHours: number,
+    avgCreditPurchase?: number | null
+  ): CreditBalanceTone {
+    const target = getCreditBalanceTarget(avgCreditPurchase)
     if (remainingHours < 0) return 'critical'
-    if (remainingHours < CREDIT_LOW_THRESHOLD) return 'low'
-    if (remainingHours < CREDIT_WATCH_THRESHOLD) return 'watch'
+    if (remainingHours < target * 0.25) return 'low'
+    if (remainingHours < target * 0.5) return 'watch'
     return 'healthy'
   }
 
-  function getCreditStatusColor(remainingHours: number, _quotedHoursUsed?: number) {
-    switch (getCreditBalanceTone(remainingHours)) {
+  function getCreditStatusColor(remainingHours: number, avgCreditPurchase?: number | null) {
+    switch (getCreditBalanceTone(remainingHours, avgCreditPurchase)) {
       case 'critical':
         return 'text-destructive'
       case 'low':
@@ -362,8 +371,8 @@ function FlexiDesignPageContent() {
     }
   }
 
-  function getCreditBalanceBarClass(remainingHours: number) {
-    switch (getCreditBalanceTone(remainingHours)) {
+  function getCreditBalanceBarClass(remainingHours: number, avgCreditPurchase?: number | null) {
+    switch (getCreditBalanceTone(remainingHours, avgCreditPurchase)) {
       case 'critical':
         return 'bg-destructive'
       case 'low':
@@ -375,8 +384,8 @@ function FlexiDesignPageContent() {
     }
   }
 
-  function getCreditBalanceLabel(remainingHours: number) {
-    switch (getCreditBalanceTone(remainingHours)) {
+  function getCreditBalanceLabel(remainingHours: number, avgCreditPurchase?: number | null) {
+    switch (getCreditBalanceTone(remainingHours, avgCreditPurchase)) {
       case 'critical':
         return 'Overdrawn'
       case 'low':
@@ -388,9 +397,15 @@ function FlexiDesignPageContent() {
     }
   }
 
-  function getCreditBalancePercent(remainingHours: number) {
+  function getCreditBalancePercent(remainingHours: number, avgCreditPurchase?: number | null) {
     if (remainingHours <= 0) return 0
-    return Math.min(100, (remainingHours / CREDIT_BALANCE_TARGET) * 100)
+    const target = getCreditBalanceTarget(avgCreditPurchase)
+    return Math.min(100, (remainingHours / target) * 100)
+  }
+
+  function formatBalanceTarget(avgCreditPurchase?: number | null) {
+    const target = getCreditBalanceTarget(avgCreditPurchase)
+    return target >= 10 ? target.toFixed(0) : target.toFixed(1)
   }
 
   // Group completed projects by completion month (falling back to created_at)
@@ -477,6 +492,15 @@ function FlexiDesignPageContent() {
     return totalQuoted / months
   }
 
+  // Average size of credit purchases — same basis as the client list balance target
+  const detailAvgCreditPurchase = (() => {
+    if (!clientDetail) return null
+    const txs = clientDetail.credit_transactions || []
+    if (txs.length === 0) return null
+    const totalDeposited = txs.reduce((sum, tx) => sum + (Number(tx.hours) || 0), 0)
+    return totalDeposited / txs.length
+  })()
+
   if (clientDetail) {
     // Show client detail view
     return (
@@ -548,7 +572,7 @@ function FlexiDesignPageContent() {
                       "text-3xl font-bold",
                       getCreditStatusColor(
                         clientDetail.remaining_hours,
-                        clientDetail.quoted_hours_used || 0
+                        detailAvgCreditPurchase
                       )
                     )}>
                       {clientDetail.remaining_hours.toFixed(1)}
@@ -1043,8 +1067,10 @@ function FlexiDesignPageContent() {
                   const totalCredits =
                     client.total_credits ?? client.remaining_hours + quotedHoursUsed
                   const activeProjects = client.active_projects ?? 0
-                  const balancePercent = getCreditBalancePercent(client.remaining_hours)
-                  const balanceLabel = getCreditBalanceLabel(client.remaining_hours)
+                  const avgPurchase = client.avg_credit_purchase
+                  const balancePercent = getCreditBalancePercent(client.remaining_hours, avgPurchase)
+                  const balanceLabel = getCreditBalanceLabel(client.remaining_hours, avgPurchase)
+                  const balanceTargetLabel = formatBalanceTarget(avgPurchase)
 
                   const lastCreditLabel = (() => {
                     if (!client.last_credit_date) return '—'
@@ -1106,7 +1132,7 @@ function FlexiDesignPageContent() {
                             <div
                               className={cn(
                                 'mt-0.5 text-lg font-semibold tabular-nums',
-                                getCreditStatusColor(client.remaining_hours)
+                                getCreditStatusColor(client.remaining_hours, avgPurchase)
                               )}
                             >
                               {client.remaining_hours.toFixed(1)}
@@ -1133,7 +1159,7 @@ function FlexiDesignPageContent() {
                             <span>
                               {balanceLabel}
                               {client.remaining_hours > 0
-                                ? ` · ${client.remaining_hours.toFixed(1)} / ${CREDIT_BALANCE_TARGET}`
+                                ? ` · ${client.remaining_hours.toFixed(1)} / ${balanceTargetLabel} avg`
                                 : ''}
                             </span>
                           </div>
@@ -1141,7 +1167,7 @@ function FlexiDesignPageContent() {
                             <div
                               className={cn(
                                 'h-full transition-all',
-                                getCreditBalanceBarClass(client.remaining_hours)
+                                getCreditBalanceBarClass(client.remaining_hours, avgPurchase)
                               )}
                               style={{
                                 width:

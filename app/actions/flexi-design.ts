@@ -18,6 +18,8 @@ interface FlexiDesignClient {
   is_hidden?: boolean
   last_credit_hours?: number | null
   last_credit_date?: string | null
+  /** Average hours per credit purchase transaction */
+  avg_credit_purchase?: number | null
 }
 
 interface FlexiDesignProject {
@@ -200,6 +202,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
 
     // Get credit transactions to calculate total deposited and last credit added
     const creditTotalsByClientId: Record<string, number> = {}
+    const creditPurchaseCountsByClientId: Record<string, number> = {}
     const lastCreditByClientId: Record<
       string,
       { hours: number; transaction_date: string; created_at: string }
@@ -245,12 +248,16 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
         const clientId = String(tx.client_id)
         const hours = Number(tx.hours) || 0
         creditTotalsByClientId[clientId] = (creditTotalsByClientId[clientId] || 0) + hours
+        creditPurchaseCountsByClientId[clientId] =
+          (creditPurchaseCountsByClientId[clientId] || 0) + 1
+
+        const txDate = String(tx.transaction_date || '').slice(0, 10)
 
         // Rows are ordered newest-first, so the first time we see a client is their latest credit
         if (!lastCreditByClientId[clientId]) {
           lastCreditByClientId[clientId] = {
             hours,
-            transaction_date: String(tx.transaction_date || '').slice(0, 10),
+            transaction_date: txDate,
             created_at: String(tx.created_at || ''),
           }
         }
@@ -269,6 +276,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       const totalProjects = clientProjects?.totalCount || 0
       const activeProjects = clientProjects?.activeCount || 0
       const totalDeposited = creditTotalsByClientId[clientId] || 0
+      const purchaseCount = creditPurchaseCountsByClientId[clientId] || 0
       const lastCredit = lastCreditByClientId[clientId]
       
       // Calculate remaining hours: Total Hours Credited - Total Hours Estimated (quoted)
@@ -287,6 +295,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
         is_hidden: Boolean(client.is_hidden),
         last_credit_hours: lastCredit ? lastCredit.hours : null,
         last_credit_date: lastCredit?.transaction_date || null,
+        avg_credit_purchase: purchaseCount > 0 ? totalDeposited / purchaseCount : null,
       })
     })
 
@@ -306,6 +315,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
           is_hidden: false,
           last_credit_hours: null,
           last_credit_date: null,
+          avg_credit_purchase: null,
         })
       }
     })
