@@ -534,10 +534,23 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
             <FadeInSection delayMs={60}>
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                  <p className="text-lg font-medium text-foreground">Coming soon</p>
-                  <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                    Inspiration boards and curated references will live here.
+                  <p className="text-lg font-medium text-foreground">Want more ideas?</p>
+                  <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                    We are building out this area to surface inspiration, concepts, and strategic
+                    directions tailored to your brand. For now, the best next step is a quick call
+                    so we can build more context around your goals, audience, and market strategy.
                   </p>
+                  <div className="mt-6">
+                    <Button variant="outline" asChild>
+                      <a
+                        href="https://cal.com/carlcahill/flexi-design"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Book a Call
+                      </a>
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </FadeInSection>
