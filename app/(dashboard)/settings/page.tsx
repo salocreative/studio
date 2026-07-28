@@ -34,6 +34,7 @@ import { Switch } from '@/components/ui/switch'
 import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
 import { FlexiDesignBoardsForm } from './flexi-design-boards-form'
+import { FlexiDesignHiddenClientsForm } from './flexi-design-hidden-clients-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
@@ -673,6 +674,8 @@ export default function SettingsPage() {
                     <FlexiDesignBoardsForm />
                   </CardContent>
                 </Card>
+
+                <FlexiDesignHiddenClientsForm />
 
                 <Card>
                   <CardHeader>

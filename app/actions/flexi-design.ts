@@ -13,6 +13,7 @@ interface FlexiDesignClient {
   total_projects: number
   hours_used: number // logged hours for internal tracking
   quoted_hours_used?: number // quoted hours for credit deduction
+  is_hidden?: boolean
 }
 
 interface FlexiDesignProject {
@@ -47,13 +48,15 @@ interface ClientDetail {
 /**
  * Get all Flexi-Design clients with their credit and stats
  */
-export async function getFlexiDesignClients() {
+export async function getFlexiDesignClients(options?: { includeHidden?: boolean }) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return { error: 'Not authenticated' }
   }
+
+  const includeHidden = options?.includeHidden === true
 
   try {
     // Get Flexi-Design board IDs
@@ -221,6 +224,7 @@ export async function getFlexiDesignClients() {
         total_projects: totalProjects,
         hours_used: hoursUsed, // logged hours for internal tracking
         quoted_hours_used: quotedHoursUsed, // quoted hours for credit deduction
+        is_hidden: Boolean(client.is_hidden),
       })
     })
 
@@ -235,6 +239,7 @@ export async function getFlexiDesignClients() {
           total_projects: data.projects.length,
           hours_used: data.hoursUsed, // logged hours for internal tracking
           quoted_hours_used: data.quotedHoursUsed, // quoted hours for credit deduction
+          is_hidden: false,
         })
       }
     })
@@ -242,7 +247,11 @@ export async function getFlexiDesignClients() {
     // Sort by client name
     clients.sort((a, b) => a.client_name.localeCompare(b.client_name))
 
-    return { success: true, clients }
+    const visibleClients = includeHidden
+      ? clients
+      : clients.filter((client) => !client.is_hidden)
+
+    return { success: true, clients: visibleClients }
   } catch (error) {
     console.error('Error fetching Flexi-Design clients:', error)
     const errorMessage = error instanceof Error ? error.message : 'Failed to fetch clients'
@@ -499,6 +508,81 @@ export async function getFlexiDesignClientDetail(clientName: string) {
   } catch (error) {
     console.error('Error fetching Flexi-Design client detail:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch client detail' }
+  }
+}
+
+/**
+ * Hide or unhide a Flexi-Design client from the default Clients list.
+ * Creates a flexi_design_clients row if the client only exists via Monday projects.
+ */
+export async function setFlexiDesignClientHidden(clientName: string, isHidden: boolean) {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .is('deleted_at', null)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const trimmedName = clientName.trim()
+  if (!trimmedName) {
+    return { error: 'Client name is required' }
+  }
+
+  try {
+    const { data: existingClient, error: checkError } = await supabase
+      .from('flexi_design_clients')
+      .select('id, is_hidden')
+      .eq('client_name', trimmedName)
+      .maybeSingle()
+
+    if (checkError) {
+      const errorMsg = checkError.message || ''
+      if (errorMsg.includes('does not exist') || errorMsg.includes('relation')) {
+        return {
+          error:
+            'Database column/table not found. Please run migration 069_flexi_design_clients_hidden.sql in Supabase.',
+        }
+      }
+      throw checkError
+    }
+
+    if (existingClient) {
+      const { error: updateError } = await supabase
+        .from('flexi_design_clients')
+        .update({ is_hidden: isHidden })
+        .eq('id', existingClient.id)
+
+      if (updateError) throw updateError
+    } else {
+      const { error: createError } = await supabase.from('flexi_design_clients').insert({
+        client_name: trimmedName,
+        remaining_hours: 0,
+        is_hidden: isHidden,
+      })
+
+      if (createError) throw createError
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating Flexi-Design client hidden status:', error)
+    return {
+      error:
+        error instanceof Error ? error.message : 'Failed to update client visibility',
+    }
   }
 }
 

@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
   const { data, error } = await admin
     .from('flexi_design_clients')
     .select('id, client_name')
+    .eq('is_hidden', false)
     .order('client_name', { ascending: true })
 
   if (error) {

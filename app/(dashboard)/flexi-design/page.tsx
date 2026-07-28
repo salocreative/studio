@@ -122,7 +122,7 @@ function FlexiDesignPageContent() {
         // Show toast for migration errors
         if (result.error.includes('table not found') || result.error.includes('migration')) {
           toast.error('Database Setup Required', { 
-            description: 'Please run migration 004_add_flexi_design_clients.sql in Supabase Dashboard → SQL Editor.',
+            description: 'Please run the Flexi-Design clients migrations in Supabase Dashboard → SQL Editor.',
             duration: 10000
           })
         } else {
@@ -975,7 +975,10 @@ function FlexiDesignPageContent() {
                 <CardContent className="py-12">
                   <div className="text-center text-muted-foreground">
                     <p>No Flexi-Design clients found</p>
-                    <p className="text-sm mt-2">Clients will appear here once they have projects or credits</p>
+                    <p className="text-sm mt-2">
+                      Clients will appear here once they have projects or credits. Hide inactive
+                      clients in Settings.
+                    </p>
                   </div>
                 </CardContent>
               </Card>
