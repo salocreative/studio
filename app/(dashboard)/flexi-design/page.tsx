@@ -32,9 +32,13 @@ interface FlexiDesignClient {
   id: string
   client_name: string
   remaining_hours: number
+  total_credits?: number
   total_projects: number
+  active_projects?: number
   hours_used: number // logged hours for internal tracking
   quoted_hours_used?: number // quoted hours for credit deduction
+  last_credit_hours?: number | null
+  last_credit_date?: string | null
 }
 
 interface FlexiDesignProject {
@@ -330,13 +334,63 @@ function FlexiDesignPageContent() {
     }
   }
 
-  const getCreditStatusColor = (remainingHours: number, quotedHoursUsed: number) => {
-    const totalDeposited = remainingHours + quotedHoursUsed
-    if (totalDeposited === 0) return 'text-muted-foreground'
-    const percentage = (quotedHoursUsed / totalDeposited) * 100
-    if (percentage >= 90) return 'text-destructive'
-    if (percentage >= 75) return 'text-orange-500'
-    return 'text-foreground'
+  // Colour and balance health are based on absolute remaining credits,
+  // not lifetime % used (which always looks bad for long-running clients).
+  const CREDIT_BALANCE_TARGET = 40
+  const CREDIT_LOW_THRESHOLD = 10
+  const CREDIT_WATCH_THRESHOLD = 20
+
+  type CreditBalanceTone = 'healthy' | 'watch' | 'low' | 'critical'
+
+  function getCreditBalanceTone(remainingHours: number): CreditBalanceTone {
+    if (remainingHours < 0) return 'critical'
+    if (remainingHours < CREDIT_LOW_THRESHOLD) return 'low'
+    if (remainingHours < CREDIT_WATCH_THRESHOLD) return 'watch'
+    return 'healthy'
+  }
+
+  function getCreditStatusColor(remainingHours: number, _quotedHoursUsed?: number) {
+    switch (getCreditBalanceTone(remainingHours)) {
+      case 'critical':
+        return 'text-destructive'
+      case 'low':
+        return 'text-orange-500'
+      case 'watch':
+        return 'text-amber-600 dark:text-amber-500'
+      case 'healthy':
+        return 'text-emerald-600 dark:text-emerald-500'
+    }
+  }
+
+  function getCreditBalanceBarClass(remainingHours: number) {
+    switch (getCreditBalanceTone(remainingHours)) {
+      case 'critical':
+        return 'bg-destructive'
+      case 'low':
+        return 'bg-orange-500'
+      case 'watch':
+        return 'bg-amber-500'
+      case 'healthy':
+        return 'bg-emerald-500'
+    }
+  }
+
+  function getCreditBalanceLabel(remainingHours: number) {
+    switch (getCreditBalanceTone(remainingHours)) {
+      case 'critical':
+        return 'Overdrawn'
+      case 'low':
+        return 'Low'
+      case 'watch':
+        return 'Watch'
+      case 'healthy':
+        return 'Healthy'
+    }
+  }
+
+  function getCreditBalancePercent(remainingHours: number) {
+    if (remainingHours <= 0) return 0
+    return Math.min(100, (remainingHours / CREDIT_BALANCE_TARGET) * 100)
   }
 
   // Group completed projects by completion month (falling back to created_at)
@@ -985,27 +1039,42 @@ function FlexiDesignPageContent() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {clients.map((client) => {
-                  // Calculate credit usage based on quoted hours (not logged hours)
                   const quotedHoursUsed = client.quoted_hours_used || 0
-                  const totalDeposited = client.remaining_hours + quotedHoursUsed
-                  const creditPercentage = totalDeposited > 0 
-                    ? (quotedHoursUsed / totalDeposited) * 100 
-                    : 0
+                  const totalCredits =
+                    client.total_credits ?? client.remaining_hours + quotedHoursUsed
+                  const activeProjects = client.active_projects ?? 0
+                  const balancePercent = getCreditBalancePercent(client.remaining_hours)
+                  const balanceLabel = getCreditBalanceLabel(client.remaining_hours)
+
+                  const lastCreditLabel = (() => {
+                    if (!client.last_credit_date) return '—'
+                    const hours =
+                      client.last_credit_hours == null
+                        ? null
+                        : Number(client.last_credit_hours)
+                    const dateLabel = (() => {
+                      try {
+                        return format(
+                          parseISO(String(client.last_credit_date).slice(0, 10)),
+                          'd MMM yyyy'
+                        )
+                      } catch {
+                        return String(client.last_credit_date)
+                      }
+                    })()
+                    if (hours == null || Number.isNaN(hours)) return dateLabel
+                    return `${hours.toFixed(1)}h · ${dateLabel}`
+                  })()
 
                   return (
-                    <Card 
+                    <Card
                       key={client.client_name}
-                      className="cursor-pointer hover:shadow-md transition-shadow"
+                      className="cursor-pointer gap-2 py-5 hover:shadow-md transition-shadow"
                       onClick={() => handleClientClick(client.client_name)}
                     >
-                      <CardHeader>
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <CardTitle className="text-lg">{client.client_name}</CardTitle>
-                            <CardDescription className="mt-1">
-                              {client.total_projects} project{client.total_projects !== 1 ? 's' : ''}
-                            </CardDescription>
-                          </div>
+                      <CardHeader className="pb-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <CardTitle className="text-lg">{client.client_name}</CardTitle>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -1018,46 +1087,70 @@ function FlexiDesignPageContent() {
                           </Button>
                         </div>
                       </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Remaining</span>
-                            <span className={cn(
-                              "font-semibold",
-                              getCreditStatusColor(client.remaining_hours, quotedHoursUsed)
-                            )}>
-                              {client.remaining_hours.toFixed(1)}h
+                      <CardContent className="space-y-4 pt-0">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="text-xs text-muted-foreground">Active projects</div>
+                            <div className="mt-0.5 text-lg font-semibold tabular-nums">
+                              {activeProjects}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Total projects</div>
+                            <div className="mt-0.5 text-lg font-semibold tabular-nums">
+                              {client.total_projects}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Remaining credits</div>
+                            <div
+                              className={cn(
+                                'mt-0.5 text-lg font-semibold tabular-nums',
+                                getCreditStatusColor(client.remaining_hours)
+                              )}
+                            >
+                              {client.remaining_hours.toFixed(1)}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Total credits</div>
+                            <div className="mt-0.5 text-lg font-semibold tabular-nums">
+                              {totalCredits.toFixed(1)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 border-t pt-3 text-xs">
+                          <span className="text-muted-foreground">Last credit added</span>
+                          <span className="text-right font-medium tabular-nums text-foreground">
+                            {lastCreditLabel}
+                          </span>
+                        </div>
+
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                            <span>Credit balance</span>
+                            <span>
+                              {balanceLabel}
+                              {client.remaining_hours > 0
+                                ? ` · ${client.remaining_hours.toFixed(1)} / ${CREDIT_BALANCE_TARGET}`
+                                : ''}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="font-medium">Quoted (From Monday)</span>
-                            <span className="font-bold text-primary text-base">{(client.quoted_hours_used || 0).toFixed(1)}h</span>
+                          <div className="h-2 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className={cn(
+                                'h-full transition-all',
+                                getCreditBalanceBarClass(client.remaining_hours)
+                              )}
+                              style={{
+                                width:
+                                  client.remaining_hours < 0
+                                    ? '100%'
+                                    : `${balancePercent}%`,
+                              }}
+                            />
                           </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Logged (Performance)</span>
-                            <span className="text-muted-foreground">{client.hours_used.toFixed(1)}h</span>
-                          </div>
-                          {totalDeposited > 0 && (
-                            <div className="pt-2">
-                              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                                <span>Credit Usage</span>
-                                <span>{creditPercentage.toFixed(0)}%</span>
-                              </div>
-                              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                <div
-                                  className={cn(
-                                    "h-full transition-all",
-                                    creditPercentage >= 90 
-                                      ? "bg-destructive" 
-                                      : creditPercentage >= 75 
-                                      ? "bg-orange-500" 
-                                      : "bg-primary"
-                                  )}
-                                  style={{ width: `${Math.min(creditPercentage, 100)}%` }}
-                                />
-                              </div>
-                            </div>
-                          )}
                         </div>
                       </CardContent>
                     </Card>

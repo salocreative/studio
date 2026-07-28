@@ -10,10 +10,14 @@ interface FlexiDesignClient {
   id: string
   client_name: string
   remaining_hours: number
+  total_credits: number
   total_projects: number
+  active_projects: number
   hours_used: number // logged hours for internal tracking
   quoted_hours_used?: number // quoted hours for credit deduction
   is_hidden?: boolean
+  last_credit_hours?: number | null
+  last_credit_date?: string | null
 }
 
 interface FlexiDesignProject {
@@ -157,48 +161,99 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
 
     // Group projects by client and calculate stats
     const clientsMap = new Map<string, {
-      projects: typeof allProjects
+      activeCount: number
+      totalCount: number
       hoursUsed: number // logged hours for tracking
       quotedHoursUsed: number // quoted hours for credit deduction
     }>()
 
-    // Process all projects (active + completed) to calculate quoted hours for credit
-    allProjectsIncludingCompleted.forEach((project: any) => {
-      if (!project.client_name) return
-      
-      if (!clientsMap.has(project.client_name)) {
-        clientsMap.set(project.client_name, {
-          projects: [],
+    function ensureClientStats(clientName: string) {
+      if (!clientsMap.has(clientName)) {
+        clientsMap.set(clientName, {
+          activeCount: 0,
+          totalCount: 0,
           hoursUsed: 0,
           quotedHoursUsed: 0,
         })
       }
+      return clientsMap.get(clientName)!
+    }
 
-      const client = clientsMap.get(project.client_name)!
-      client.projects.push(project)
+    // Active Flexi board projects
+    ;(allProjects || []).forEach((project: any) => {
+      if (!project.client_name) return
+      const client = ensureClientStats(project.client_name)
+      client.activeCount += 1
+      client.totalCount += 1
       client.hoursUsed += timeEntriesByProject[project.id] || 0
-      // Use quoted_hours (estimated hours) for credit deduction
-      const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
-      client.quotedHoursUsed += quotedHours
+      client.quotedHoursUsed += project.quoted_hours ? Number(project.quoted_hours) : 0
     })
 
-    // Get credit transactions to calculate total deposited
-    let creditTransactions: Record<string, number> = {}
+    // Completed board projects count toward totals / credits used, not active
+    completedProjects.forEach((project: any) => {
+      if (!project.client_name) return
+      const client = ensureClientStats(project.client_name)
+      client.totalCount += 1
+      client.hoursUsed += timeEntriesByProject[project.id] || 0
+      client.quotedHoursUsed += project.quoted_hours ? Number(project.quoted_hours) : 0
+    })
+
+    // Get credit transactions to calculate total deposited and last credit added
+    const creditTotalsByClientId: Record<string, number> = {}
+    const lastCreditByClientId: Record<
+      string,
+      { hours: number; transaction_date: string; created_at: string }
+    > = {}
+
     if (clientsData && clientsData.length > 0) {
-      const clientIds = clientsData.map((c: any) => c.id)
-      const { data: transactions } = await supabase
-        .from('flexi_design_credit_transactions')
-        .select('client_id, hours')
-        .in('client_id', clientIds)
-      
-      if (transactions) {
-        transactions.forEach((tx: any) => {
-          const client = clientsData.find((c: any) => c.id === tx.client_id)
-          if (client) {
-            creditTransactions[client.client_name] = 
-              (creditTransactions[client.client_name] || 0) + Number(tx.hours)
+      const clientIds = clientsData.map((c: any) => String(c.id))
+      const pageSize = 1000
+      const allTransactions: Array<{
+        client_id: string
+        hours: number | string
+        transaction_date: string
+        created_at: string
+      }> = []
+
+      // Chunk `.in()` filters to avoid request URL limits with many client IDs
+      for (let i = 0; i < clientIds.length; i += 100) {
+        const idChunk = clientIds.slice(i, i + 100)
+        let from = 0
+
+        while (true) {
+          const { data: transactions, error: transactionsError } = await supabase
+            .from('flexi_design_credit_transactions')
+            .select('client_id, hours, transaction_date, created_at')
+            .in('client_id', idChunk)
+            .order('transaction_date', { ascending: false })
+            .order('created_at', { ascending: false })
+            .range(from, from + pageSize - 1)
+
+          if (transactionsError) {
+            console.error('Error loading Flexi credit transactions for client list:', transactionsError)
+            break
           }
-        })
+
+          if (!transactions?.length) break
+          allTransactions.push(...transactions)
+          if (transactions.length < pageSize) break
+          from += pageSize
+        }
+      }
+
+      for (const tx of allTransactions) {
+        const clientId = String(tx.client_id)
+        const hours = Number(tx.hours) || 0
+        creditTotalsByClientId[clientId] = (creditTotalsByClientId[clientId] || 0) + hours
+
+        // Rows are ordered newest-first, so the first time we see a client is their latest credit
+        if (!lastCreditByClientId[clientId]) {
+          lastCreditByClientId[clientId] = {
+            hours,
+            transaction_date: String(tx.transaction_date || '').slice(0, 10),
+            created_at: String(tx.created_at || ''),
+          }
+        }
       }
     }
 
@@ -207,11 +262,14 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
 
     // Add clients from database (they might not have projects yet)
     clientsData?.forEach((client: any) => {
+      const clientId = String(client.id)
       const clientProjects = clientsMap.get(client.client_name)
       const hoursUsed = clientProjects?.hoursUsed || 0
       const quotedHoursUsed = clientProjects?.quotedHoursUsed || 0
-      const totalProjects = clientProjects?.projects.length || 0
-      const totalDeposited = creditTransactions[client.client_name] || 0
+      const totalProjects = clientProjects?.totalCount || 0
+      const activeProjects = clientProjects?.activeCount || 0
+      const totalDeposited = creditTotalsByClientId[clientId] || 0
+      const lastCredit = lastCreditByClientId[clientId]
       
       // Calculate remaining hours: Total Hours Credited - Total Hours Estimated (quoted)
       // This includes both active and completed projects' quoted hours
@@ -221,10 +279,14 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
         id: client.id,
         client_name: client.client_name,
         remaining_hours: remainingHours,
+        total_credits: totalDeposited,
         total_projects: totalProjects,
+        active_projects: activeProjects,
         hours_used: hoursUsed, // logged hours for internal tracking
         quoted_hours_used: quotedHoursUsed, // quoted hours for credit deduction
         is_hidden: Boolean(client.is_hidden),
+        last_credit_hours: lastCredit ? lastCredit.hours : null,
+        last_credit_date: lastCredit?.transaction_date || null,
       })
     })
 
@@ -236,10 +298,14 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
           id: '', // Will be created when they get their first credit
           client_name: clientName,
           remaining_hours: 0 - data.quotedHoursUsed, // Negative if they have quoted hours but no credit
-          total_projects: data.projects.length,
+          total_credits: 0,
+          total_projects: data.totalCount,
+          active_projects: data.activeCount,
           hours_used: data.hoursUsed, // logged hours for internal tracking
           quoted_hours_used: data.quotedHoursUsed, // quoted hours for credit deduction
           is_hidden: false,
+          last_credit_hours: null,
+          last_credit_date: null,
         })
       }
     })
