@@ -58,7 +58,11 @@ export const navigation: NavItem[] = [
     title: 'Flexi-Design',
     href: '/flexi-design',
     icon: Palette,
-    roles: ['admin', 'designer', 'manager'], // Admins, designers, and managers can see Flexi-Design
+    roles: ['admin', 'designer', 'manager'],
+    children: [
+      { title: 'Clients', href: '/flexi-design' },
+      { title: 'Services', href: '/flexi-design/services' },
+    ],
   },
   {
     title: 'Quote',
@@ -165,8 +169,8 @@ function NavLinks({
               <div className="ml-8 mt-1 space-y-1">
                 {item.children!.map((child) => {
                   const childActive =
-                    child.href === '/projects'
-                      ? pathname === '/projects'
+                    child.href === '/projects' || child.href === '/flexi-design'
+                      ? pathname === child.href
                       : pathname === child.href
 
                   return (

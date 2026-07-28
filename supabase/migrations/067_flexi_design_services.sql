@@ -1,0 +1,152 @@
+-- Flexi-Design services catalog (offerable deliverables)
+
+create table if not exists public.flexi_design_services (
+  id uuid default uuid_generate_v4() primary key,
+  category text not null,
+  title text not null,
+  description text not null default '',
+  credit_estimate numeric(10, 2) not null check (credit_estimate >= 0),
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null,
+  unique (category, title)
+);
+
+create index if not exists idx_flexi_design_services_category
+  on public.flexi_design_services(category);
+
+create index if not exists idx_flexi_design_services_active_sort
+  on public.flexi_design_services(is_active, category, sort_order);
+
+comment on table public.flexi_design_services is
+  'Catalog of Flexi-Design deliverables/services with credit estimates.';
+comment on column public.flexi_design_services.credit_estimate is
+  'Typical credit cost estimate for this deliverable.';
+comment on column public.flexi_design_services.is_active is
+  'Soft-hide flag; inactive services stay in the catalog but are hidden from default views.';
+
+alter table public.flexi_design_services enable row level security;
+
+drop policy if exists "Admins can manage flexi design services" on public.flexi_design_services;
+drop policy if exists "Team can read flexi design services" on public.flexi_design_services;
+
+create policy "Admins can manage flexi design services"
+  on public.flexi_design_services for all
+  using (
+    exists (
+      select 1 from public.users
+      where id = auth.uid()
+        and role = 'admin'
+        and deleted_at is null
+    )
+  );
+
+create policy "Team can read flexi design services"
+  on public.flexi_design_services for select
+  using (
+    exists (
+      select 1 from public.users
+      where id = auth.uid()
+        and role in ('admin', 'designer', 'manager')
+        and deleted_at is null
+    )
+  );
+
+drop trigger if exists update_flexi_design_services_updated_at on public.flexi_design_services;
+
+create trigger update_flexi_design_services_updated_at
+  before update on public.flexi_design_services
+  for each row execute function update_updated_at_column();
+
+-- Seed from commercial deliverables CSV
+insert into public.flexi_design_services (category, title, description, credit_estimate, sort_order)
+values
+  ('Social', 'LinkedIn graphic', 'Single static image for a LinkedIn post', 1, 1),
+  ('Social', 'LinkedIn carousel', 'Multi-slide carousel post for LinkedIn', 2, 2),
+  ('Social', 'Instagram post', 'Single static image for an Instagram feed post', 1, 3),
+  ('Social', 'Instagram carousel', 'Multi-slide carousel post for Instagram', 2, 4),
+  ('Social', 'Instagram story', 'Vertical graphic sized for Instagram Stories', 1, 5),
+  ('Social', 'Facebook graphic', 'Single static image for a Facebook post', 1, 6),
+  ('Social', 'X/Twitter graphic', 'Single static image for an X post', 1, 7),
+  ('Social', 'TikTok cover', 'Cover image for a TikTok video', 1, 8),
+  ('Social', 'YouTube thumbnail', 'Custom thumbnail for a YouTube video', 1, 9),
+  ('Social', 'Social profile banner/header', 'Branded banner or header image for a social profile', 1, 10),
+  ('Social', 'Reusable carousel template', 'Editable carousel template for the client to reuse', 3, 11),
+  ('Social', 'Social ad creative', 'Paid social ad creative, single concept across required sizes', 2, 12),
+  ('Email', 'Newsletter template', 'Reusable branded newsletter template', 3, 1),
+  ('Email', 'Promotional email', 'One-off campaign email design', 2, 2),
+  ('Email', 'Product launch email', 'Single email tied to a product or feature launch', 2, 3),
+  ('Email', 'Automated sequence email', 'Email graphic for an onboarding or nurture sequence', 2, 4),
+  ('Email', 'HTML email build', 'Design plus coded HTML build, tested across major email clients', 5, 5),
+  ('Email', 'Email signature', 'Branded HTML signature for an individual or team', 1, 6),
+  ('Presentations', 'Pitch deck', 'Full branded pitch deck', 6, 1),
+  ('Presentations', 'Sales deck', 'Branded deck for sales conversations', 5, 2),
+  ('Presentations', 'Internal template deck', 'Reusable branded template for internal use', 4, 3),
+  ('Presentations', 'Webinar slide deck', 'Deck built for webinar delivery', 4, 4),
+  ('Presentations', 'One-pager', 'Single-page branded summary document', 2, 5),
+  ('Web & landing pages', 'Campaign landing page', 'Single-purpose landing page for a campaign', 5, 1),
+  ('Web & landing pages', 'Product launch microsite', 'Small multi-page site supporting a launch', 10, 2),
+  ('Web & landing pages', 'Event registration page', 'Page designed for event sign-up', 4, 3),
+  ('Web & landing pages', 'Website graphics/banners', 'Supporting visual assets for an existing website', 2, 4),
+  ('Web & landing pages', 'WordPress incremental page update', 'Small design update to an existing WordPress page', 2, 5),
+  ('Web & landing pages', 'Conversion-focused page variant (A/B)', 'Alternate page design for A/B testing', 3, 6),
+  ('Digital product micro-assets', 'Favicon', 'Small browser tab icon', 1, 1),
+  ('Digital product micro-assets', 'App icon', 'Icon for app store listings and device home screens', 1, 2),
+  ('Digital product micro-assets', 'OG/social share card', 'Link preview image for social sharing', 1, 3),
+  ('Digital product micro-assets', 'App Store screenshots', 'Set of listing screenshots for Apple App Store', 3, 4),
+  ('Digital product micro-assets', 'Play Store screenshots', 'Set of listing screenshots for Google Play', 3, 5),
+  ('Digital product micro-assets', 'App preview graphics', 'Supporting visuals for an app store listing', 2, 6),
+  ('Paid & campaign', 'Display ad set', 'Single concept delivered across standard IAB banner sizes', 3, 1),
+  ('Paid & campaign', 'Paid social ad creative', 'Ad creative sized for paid social placements', 2, 2),
+  ('Paid & campaign', 'Retargeting ad set', 'Set of retargeting banners for a campaign', 3, 3),
+  ('Paid & campaign', 'Print ad', 'Single print advertisement', 2, 4),
+  ('Paid & campaign', 'Campaign key visual', 'Hero visual anchoring a campaign across channels', 3, 5),
+  ('Sales enablement', 'Sales one-pager', 'Branded one-pager for sales conversations', 2, 1),
+  ('Sales enablement', 'Proposal template', 'Reusable branded proposal document template', 3, 2),
+  ('Sales enablement', 'RFP response deck', 'Deck built to respond to a tender or RFP', 5, 3),
+  ('Sales enablement', 'Sales battlecard', 'Reference card covering positioning or competitors', 2, 4),
+  ('Brand assets', 'Icon set', 'Custom icon set for a product or brand', 4, 1),
+  ('Brand assets', 'Custom illustration', 'Bespoke illustration, single piece or small set', 3, 2),
+  ('Brand assets', 'Brand guidelines one-pager', 'Condensed single-page brand summary', 2, 3),
+  ('Brand assets', 'Digital brand guidelines (HTML)', 'Full brand guidelines published as a custom HTML site', 10, 4),
+  ('Brand assets', 'Brand toolkit refresh', 'Update to an existing brand toolkit', 6, 5),
+  ('Print & collateral', 'Brochure', 'Printed marketing brochure', 4, 1),
+  ('Print & collateral', 'Flyer', 'Single printed flyer', 1, 2),
+  ('Print & collateral', 'Poster', 'Single poster for print or digital display', 1, 3),
+  ('Print & collateral', 'Pull-up/roller banner', 'Large-format banner for events or venues', 2, 4),
+  ('Print & collateral', 'Exhibition booth panel', 'Large-format panel graphic for an exhibition stand', 3, 5),
+  ('Print & collateral', 'Business card', 'Business card design', 1, 6),
+  ('Print & collateral', 'Letterhead', 'Branded letterhead template', 1, 7),
+  ('Print & collateral', 'Compliment slip', 'Branded compliment slip', 1, 8),
+  ('Print & collateral', 'Menu', 'Branded menu for a venue', 2, 9),
+  ('Print & collateral', 'Table card', 'Small printed table signage', 1, 10),
+  ('Events & trade show', 'Badge/lanyard design', 'Artwork for event badges and lanyards', 1, 1),
+  ('Events & trade show', 'Event digital signage', 'Screen content for event or reception displays', 2, 2),
+  ('Events & trade show', 'QR-linked campaign asset', 'Print or digital asset built around a QR code tie-in', 1, 3),
+  ('Employer branding & recruitment', 'Job ad graphic', 'Graphic for a job ad on social or job boards', 1, 1),
+  ('Employer branding & recruitment', 'Careers page asset', 'Supporting visuals for a careers page', 2, 2),
+  ('Employer branding & recruitment', 'Culture deck', 'Deck showcasing culture and employee value proposition', 5, 3),
+  ('Employer branding & recruitment', 'Employee handbook design', 'Branded design for an employee handbook', 6, 4),
+  ('Long-form content', 'eBook', 'Long-form branded document for marketing or thought leadership', 8, 1),
+  ('Long-form content', 'Case study', 'Single designed case study', 3, 2),
+  ('Long-form content', 'Whitepaper/report design', 'Long-form branded report design', 6, 3),
+  ('Long-form content', 'Infographic', 'Single data or process visualisation', 2, 4),
+  ('Data storytelling', 'Report/chart template', 'Reusable branded chart or report template', 3, 1),
+  ('Data storytelling', 'KPI social graphic', 'Social graphic summarising key metrics', 1, 2),
+  ('Data storytelling', 'Board deck data visual', 'Data visual built for board or leadership reporting', 2, 3),
+  ('Video & motion', 'Video thumbnail', 'Custom thumbnail for video content', 1, 1),
+  ('Video & motion', 'Webinar background', 'Branded backdrop for webinar delivery', 1, 2),
+  ('Video & motion', 'Animated logo sting', 'Short animated logo reveal', 4, 3),
+  ('Video & motion', 'Video/podcast intro-outro graphic', 'Motion graphic for a video or podcast intro/outro', 3, 4),
+  ('Video & motion', 'AI-generated marketing visual', 'AI-generated image, directed and curated by a designer', 2, 5),
+  ('Audits & UX', 'UX audit report', 'Structured review of up to 3 pages or flows', 2, 1),
+  ('Audits & UX', 'Accessibility (WCAG) audit report', 'Accessibility review against WCAG criteria', 2, 2),
+  ('Audits & UX', 'Shopify store audit', 'Review of an existing Shopify store with recommendations', 2, 3),
+  ('Audits & UX', 'WordPress site audit', 'Review of an existing WordPress site with recommendations', 2, 4),
+  ('Audits & UX', 'CRO variant design', 'Conversion-focused design variant for testing', 3, 5)
+on conflict (category, title) do update set
+  description = excluded.description,
+  credit_estimate = excluded.credit_estimate,
+  sort_order = excluded.sort_order,
+  updated_at = now();

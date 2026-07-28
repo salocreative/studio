@@ -12,14 +12,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Loader2, CheckCircle2, Clock, History, Mail } from 'lucide-react'
+import { Loader2, CheckCircle2, Clock, History, Mail, ArrowLeft } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { getFlexiDesignClientByToken } from '@/app/actions/flexi-design'
 import {
   getFlexiDesignClientDataPublic,
   getFlexiDesignGalleryByShareToken,
+  getFlexiDesignServicesByShareToken,
   type FlexiDesignPublicGalleryItem,
+  type FlexiDesignPublicService,
 } from '@/app/actions/flexi-design-public'
+import { getFlexiServiceCategoryIcon } from '@/lib/flexi-design/service-categories'
 import { SaloLogo } from '@/components/brand/salo-logo'
 import { cn } from '@/lib/utils'
 
@@ -109,6 +112,9 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
   const [completedProjects, setCompletedProjects] = useState<Project[]>([])
   const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([])
   const [galleryItems, setGalleryItems] = useState<FlexiDesignPublicGalleryItem[]>([])
+  const [services, setServices] = useState<FlexiDesignPublicService[]>([])
+  const [servicesError, setServicesError] = useState<string | null>(null)
+  const [selectedServiceCategory, setSelectedServiceCategory] = useState<string | null>(null)
   const [viewingGalleryItem, setViewingGalleryItem] = useState<FlexiDesignPublicGalleryItem | null>(
     null
   )
@@ -135,9 +141,10 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         return
       }
 
-      const [dataResult, galleryResult] = await Promise.all([
+      const [dataResult, galleryResult, servicesResult] = await Promise.all([
         getFlexiDesignClientDataPublic(shareResult.client.client_name),
         getFlexiDesignGalleryByShareToken(shareToken),
+        getFlexiDesignServicesByShareToken(shareToken),
       ])
 
       if (dataResult.error) {
@@ -154,6 +161,19 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
       } else {
         setGalleryItems([])
       }
+
+      if (servicesResult.error) {
+        console.error('Flexi services catalog error:', servicesResult.error)
+        setServices([])
+        setServicesError(servicesResult.error)
+      } else if (servicesResult.success) {
+        setServices(servicesResult.services || [])
+        setServicesError(null)
+      } else {
+        setServices([])
+        setServicesError('Unable to load services catalog')
+      }
+      setSelectedServiceCategory(null)
     } catch (err) {
       console.error('Error loading share data:', err)
       setError('Failed to load data')
@@ -211,6 +231,24 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
       .map(([monthKey, value]) => ({ monthKey, ...value }))
       .sort((a, b) => b.monthDate.getTime() - a.monthDate.getTime())
   })()
+
+  const serviceCategories = (() => {
+    const counts = new Map<string, number>()
+    for (const service of services) {
+      counts.set(service.category, (counts.get(service.category) || 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => a.category.localeCompare(b.category))
+  })()
+
+  const selectedCategoryServices = selectedServiceCategory
+    ? services.filter((service) => service.category === selectedServiceCategory)
+    : []
+
+  const SelectedCategoryIcon = selectedServiceCategory
+    ? getFlexiServiceCategoryIcon(selectedServiceCategory)
+    : null
 
   const bannerRows = [0, 1, 2].map((rowIndex) => {
     const baseRow = galleryItems.filter((_, itemIndex) => itemIndex % 3 === rowIndex)
@@ -530,7 +568,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
             )}
           </TabsContent>
 
-          <TabsContent value="inspo" className="mt-0">
+          <TabsContent value="inspo" className="mt-0 space-y-6">
             <FadeInSection delayMs={60}>
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-16 text-center">
@@ -551,6 +589,104 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                       </a>
                     </Button>
                   </div>
+                </CardContent>
+              </Card>
+            </FadeInSection>
+
+            <FadeInSection delayMs={100}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>All the ways Salo can help</CardTitle>
+                  <CardDescription>
+                    Browse our Flexi-Design deliverables by category. Credit figures are estimates
+                    and may vary with scope and complexity.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {servicesError ? (
+                    <p className="py-10 text-center text-sm text-muted-foreground">
+                      Couldn’t load the services catalog ({servicesError}). If you just ran the
+                      migration, reload the Supabase API schema and confirm{' '}
+                      <code className="rounded bg-muted px-1">flexi_design_services</code> has rows.
+                    </p>
+                  ) : services.length === 0 ? (
+                    <p className="py-10 text-center text-sm text-muted-foreground">
+                      Service catalog is empty. Run migration{' '}
+                      <code className="rounded bg-muted px-1">068_flexi_design_services_reseed.sql</code>{' '}
+                      (or the seed section of 067) in Supabase, then refresh.
+                    </p>
+                  ) : selectedServiceCategory && SelectedCategoryIcon ? (
+                    <div className="space-y-5">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-2 w-fit"
+                          onClick={() => setSelectedServiceCategory(null)}
+                        >
+                          <ArrowLeft className="mr-2 h-4 w-4" />
+                          All categories
+                        </Button>
+                        <div className="flex items-center gap-2">
+                          <SelectedCategoryIcon className="h-5 w-5 text-muted-foreground" />
+                          <h3 className="text-lg font-semibold">{selectedServiceCategory}</h3>
+                          <span className="text-sm text-muted-foreground">
+                            {selectedCategoryServices.length} service
+                            {selectedCategoryServices.length !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {selectedCategoryServices.map((service) => (
+                          <div
+                            key={service.id}
+                            className="flex flex-col gap-2 rounded-lg border border-border p-4 sm:flex-row sm:items-start sm:justify-between"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-medium text-foreground">{service.title}</h4>
+                              {service.description && (
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {service.description}
+                                </p>
+                              )}
+                            </div>
+                            <div className="shrink-0 text-right sm:pt-0.5">
+                              <div className="text-sm font-semibold tabular-nums text-primary">
+                                ~{formatCredits(service.credit_estimate)} credit
+                                {Number(service.credit_estimate) === 1 ? '' : 's'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">estimate</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {serviceCategories.map(({ category, count }) => {
+                        const Icon = getFlexiServiceCategoryIcon(category)
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => setSelectedServiceCategory(category)}
+                            className="group flex items-start gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 text-foreground transition-colors group-hover:border-foreground/20">
+                              <Icon className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0 pt-0.5">
+                              <div className="font-medium text-foreground">{category}</div>
+                              <div className="mt-0.5 text-xs text-muted-foreground">
+                                {count} deliverable{count !== 1 ? 's' : ''}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </FadeInSection>

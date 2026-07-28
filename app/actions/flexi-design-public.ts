@@ -325,3 +325,72 @@ export async function getFlexiDesignGalleryByShareToken(shareToken: string) {
     return { error: error instanceof Error ? error.message : 'Failed to fetch gallery' }
   }
 }
+
+export interface FlexiDesignPublicService {
+  id: string
+  category: string
+  title: string
+  description: string
+  credit_estimate: number
+  sort_order: number
+}
+
+/**
+ * Public services catalog for a Flexi-Design share link.
+ * Validates the token, then returns active deliverables (no auth session required).
+ */
+export async function getFlexiDesignServicesByShareToken(shareToken: string) {
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin client not available' }
+  }
+
+  try {
+    const { data: link, error: linkError } = await adminClient
+      .from('flexi_design_share_links')
+      .select('id, expires_at, is_active')
+      .eq('share_token', shareToken)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (linkError) throw linkError
+    if (!link) return { error: 'Share link not found or inactive' }
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      return { error: 'Share link has expired' }
+    }
+
+    const { data, error } = await adminClient
+      .from('flexi_design_services')
+      .select('id, category, title, description, credit_estimate, sort_order')
+      .eq('is_active', true)
+
+    if (error) throw error
+
+    const services = ((data || []) as FlexiDesignPublicService[])
+      .map((service) => ({
+        ...service,
+        credit_estimate: Number(service.credit_estimate),
+        sort_order: Number(service.sort_order),
+      }))
+      .sort((a, b) => {
+        const categoryCompare = a.category.localeCompare(b.category)
+        if (categoryCompare !== 0) return categoryCompare
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+        return a.title.localeCompare(b.title)
+      })
+
+    return {
+      success: true,
+      services,
+    }
+  } catch (error) {
+    console.error('Error fetching public Flexi-Design services:', error)
+    const message =
+      error && typeof error === 'object' && 'message' in error
+        ? String((error as { message: unknown }).message)
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch services'
+    return { error: message }
+  }
+}
