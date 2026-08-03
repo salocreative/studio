@@ -10,6 +10,37 @@ const MONDAY_API_URL = 'https://api.monday.com/v2'
 const SOW_APPROVED_STATUS_LABEL = 'Client approved'
 const SOW_DECLINED_STATUS_LABEL = 'Client declined'
 
+/** Leads board link column for the client SoW share URL */
+const SOW_SHARE_LINK_COLUMN_ID = 'sowlink'
+
+function getSiteUrl() {
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+  ).replace(/\/$/, '')
+}
+
+async function getLatestSowShareUrl(
+  adminClient: NonNullable<Awaited<ReturnType<typeof createAdminClient>>>,
+  sowId: string
+): Promise<string | null> {
+  const { data } = await adminClient
+    .from('sow_share_links')
+    .select('share_token')
+    .eq('sow_id', sowId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!data?.share_token) return null
+  return `${getSiteUrl()}/sow/share/${data.share_token}`
+}
+
+function sowShareLinkColumnValue(url: string) {
+  return { url, text: 'View SoW' }
+}
+
 async function mondayRequest<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const mondayApiToken = process.env.MONDAY_API_TOKEN
   if (!mondayApiToken) {
@@ -338,6 +369,7 @@ export async function pushSowToMonday(sowId: string) {
     const agencyColumnId = await getLeadsColumnMapping(supabase, 'agency', leadsBoardId)
     const dueDateColumnId = await getLeadsColumnMapping(supabase, 'due_date', leadsBoardId)
     const timelineColumnId = await getLeadsColumnMapping(supabase, 'timeline', leadsBoardId)
+    const shareUrl = await getLatestSowShareUrl(adminClient, sowId)
 
     const mainItemColumnValues: Record<string, unknown> = {}
 
@@ -346,6 +378,9 @@ export async function pushSowToMonday(sowId: string) {
     }
     if (dueDateColumnId && document.end_date) {
       mainItemColumnValues[dueDateColumnId] = { date: document.end_date }
+    }
+    if (shareUrl) {
+      mainItemColumnValues[SOW_SHARE_LINK_COLUMN_ID] = sowShareLinkColumnValue(shareUrl)
     }
 
     const createItemData = await mondayRequest<{
@@ -472,6 +507,7 @@ export async function updateSowOnMonday(sowId: string) {
     const agencyColumnId = await getLeadsColumnMapping(supabase, 'agency', boardId)
     const dueDateColumnId = await getLeadsColumnMapping(supabase, 'due_date', boardId)
     const timelineColumnId = await getLeadsColumnMapping(supabase, 'timeline', boardId)
+    const shareUrl = await getLatestSowShareUrl(adminClient, sowId)
 
     const columnValues: Record<string, unknown> = {
       name: document.title,
@@ -483,6 +519,9 @@ export async function updateSowOnMonday(sowId: string) {
       columnValues[dueDateColumnId] = document.end_date
         ? { date: document.end_date }
         : null
+    }
+    if (shareUrl) {
+      columnValues[SOW_SHARE_LINK_COLUMN_ID] = sowShareLinkColumnValue(shareUrl)
     }
 
     await mondayRequest(
@@ -531,7 +570,9 @@ export async function updateSowOnMonday(sowId: string) {
     return {
       success: true,
       itemId,
-      message: `Monday item updated for "${document.title}"`,
+      message: shareUrl
+        ? `Monday item updated for "${document.title}" (SoW link set)`
+        : `Monday item updated for "${document.title}" (no active share link to set)`,
     }
   } catch (error) {
     console.error('Error updating SoW on Monday:', error)

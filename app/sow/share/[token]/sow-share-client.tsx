@@ -215,7 +215,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                   <TableRow>
                     <TableHead>Deliverable</TableHead>
                     {showQuotedHours && <TableHead className="text-right">Time</TableHead>}
-                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead className="hidden sm:table-cell text-right">Cost</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -239,6 +239,9 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                               : '—'}
                           </p>
                         )}
+                        <p className="mt-1.5 text-sm font-medium sm:hidden">
+                          {money(Number(item.line_total_gbp))}
+                        </p>
                       </TableCell>
                       {showQuotedHours && (
                         <TableCell className="text-right text-muted-foreground">
@@ -251,7 +254,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                             : `${scaleForQuote(Number(item.hours), rateMultiplier).toFixed(1)}h`}
                         </TableCell>
                       )}
-                      <TableCell className="text-right">
+                      <TableCell className="hidden sm:table-cell text-right">
                         {money(Number(item.line_total_gbp))}
                       </TableCell>
                     </TableRow>
