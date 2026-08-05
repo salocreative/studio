@@ -51,6 +51,8 @@ interface FlexiDesignProject {
   quoted_hours?: number | null
   created_at: string
   completed_date?: string | null
+  monday_status?: string | null
+  is_speculative?: boolean
 }
 
 interface ClientDetail {
@@ -444,14 +446,14 @@ function FlexiDesignPageContent() {
       const existing = groups.get(monthKey)
       if (existing) {
         existing.projects.push(project)
-        existing.totalQuoted += project.quoted_hours || 0
+        existing.totalQuoted += project.is_speculative ? 0 : project.quoted_hours || 0
         existing.totalLogged += project.total_logged_hours || 0
       } else {
         groups.set(monthKey, {
           monthLabel,
           monthDate: new Date(date.getFullYear(), date.getMonth(), 1),
           projects: [project],
-          totalQuoted: project.quoted_hours || 0,
+          totalQuoted: project.is_speculative ? 0 : project.quoted_hours || 0,
           totalLogged: project.total_logged_hours || 0,
         })
       }
@@ -461,6 +463,11 @@ function FlexiDesignPageContent() {
       .map(([monthKey, value]) => ({ monthKey, ...value }))
       .sort((a, b) => b.monthDate.getTime() - a.monthDate.getTime())
   })()
+
+  const activeBillableProjects =
+    clientDetail?.projects.filter((p) => !p.is_speculative) || []
+  const speculativeProjects =
+    clientDetail?.projects.filter((p) => p.is_speculative) || []
 
   // Calculate average hours per month
   const calculateAvgHoursPerMonth = () => {
@@ -645,13 +652,13 @@ function FlexiDesignPageContent() {
                     <CardDescription>Current projects for this client</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {clientDetail.projects.length === 0 ? (
+                    {activeBillableProjects.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
                         No active projects found
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {clientDetail.projects.map((project) => (
+                        {activeBillableProjects.map((project) => (
                           <div
                             key={project.id}
                             className="flex items-center justify-between p-3 border rounded-lg hover:bg-accent/50 transition-colors"
@@ -665,7 +672,7 @@ function FlexiDesignPageContent() {
                                 )}
                               </div>
                             </div>
-                            {project.quoted_hours && (
+                            {project.quoted_hours != null && (
                               <div className="ml-4 text-right">
                                 <div className="text-lg font-bold text-primary">
                                   {project.quoted_hours.toFixed(1)}
@@ -719,7 +726,14 @@ function FlexiDesignPageContent() {
                                   className="flex items-center justify-between p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
                                 >
                                   <div className="flex-1 min-w-0">
-                                    <div className="font-medium truncate">{project.name}</div>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="font-medium truncate">{project.name}</div>
+                                      {project.is_speculative && (
+                                        <Badge variant="outline" className="shrink-0 text-xs">
+                                          Speculative
+                                        </Badge>
+                                      )}
+                                    </div>
                                     <div className="text-xs text-muted-foreground mt-0.5">
                                       {project.completed_date
                                         ? format(new Date(project.completed_date), 'MMM d, yyyy')
@@ -729,11 +743,21 @@ function FlexiDesignPageContent() {
                                       )}
                                     </div>
                                   </div>
-                                  {project.quoted_hours && (
+                                  {project.quoted_hours != null && (
                                     <div className="ml-4 text-right">
-                                      <div className="text-lg font-bold text-primary">
+                                      <div
+                                        className={cn(
+                                          'text-lg font-bold',
+                                          project.is_speculative
+                                            ? 'text-muted-foreground'
+                                            : 'text-primary'
+                                        )}
+                                      >
                                         {project.quoted_hours.toFixed(1)}
                                       </div>
+                                      {project.is_speculative && (
+                                        <div className="text-[10px] text-muted-foreground">not billed</div>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -746,6 +770,50 @@ function FlexiDesignPageContent() {
                   </CardContent>
                 </Card>
               </div>
+
+              {speculativeProjects.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Speculative Projects</CardTitle>
+                    <CardDescription>
+                      Proposed work that is not agreed yet and does not count toward credit spend
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {speculativeProjects.map((project) => (
+                        <div
+                          key={project.id}
+                          className="flex items-center justify-between p-3 border rounded-lg bg-muted/20"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="font-medium truncate">{project.name}</div>
+                              <Badge variant="outline" className="shrink-0 text-xs">
+                                Speculative
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              {format(new Date(project.created_at), 'MMM d, yyyy')}
+                              {project.total_logged_hours > 0 && (
+                                <span className="ml-2">• {project.total_logged_hours.toFixed(1)} logged</span>
+                              )}
+                            </div>
+                          </div>
+                          {project.quoted_hours != null && (
+                            <div className="ml-4 text-right">
+                              <div className="text-lg font-bold text-muted-foreground">
+                                {project.quoted_hours.toFixed(1)}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">not billed</div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
               </TabsContent>
 
               <TabsContent value="files" className="mt-0">

@@ -38,6 +38,8 @@ interface Project {
   quoted_hours: number | null
   created_at: string
   completed_date?: string | null
+  monday_status?: string | null
+  is_speculative?: boolean
 }
 
 interface ClientData {
@@ -226,13 +228,13 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         const existing = groups.get(monthKey)
         if (existing) {
           existing.projects.push(project)
-          existing.totalQuoted += project.quoted_hours || 0
+          existing.totalQuoted += project.is_speculative ? 0 : project.quoted_hours || 0
         } else {
           groups.set(monthKey, {
             monthLabel,
             monthDate: new Date(date.getFullYear(), date.getMonth(), 1),
             projects: [project],
-            totalQuoted: project.quoted_hours || 0,
+            totalQuoted: project.is_speculative ? 0 : project.quoted_hours || 0,
           })
         }
       } catch {
@@ -244,6 +246,9 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
       .map(([monthKey, value]) => ({ monthKey, ...value }))
       .sort((a, b) => b.monthDate.getTime() - a.monthDate.getTime())
   })()
+
+  const activeBillableProjects = activeProjects.filter((p) => !p.is_speculative)
+  const speculativeProjects = activeProjects.filter((p) => p.is_speculative)
 
   const serviceCategories = (() => {
     const counts = new Map<string, number>()
@@ -505,16 +510,16 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Clock className="h-5 w-5" />
-                  Active Projects ({activeProjects.length})
+                  Active Projects ({activeBillableProjects.length})
                 </CardTitle>
                 <CardDescription>Projects currently in progress</CardDescription>
               </CardHeader>
               <CardContent>
-                {activeProjects.length === 0 ? (
+                {activeBillableProjects.length === 0 ? (
                   <p className="text-muted-foreground text-center py-8">No active projects</p>
                 ) : (
                   <div className="space-y-3">
-                    {activeProjects.map((project, index) => (
+                    {activeBillableProjects.map((project, index) => (
                       <div
                         key={project.id}
                         className="flex items-center justify-between rounded-lg border p-4 transition-all duration-500 hover:bg-muted/50 motion-reduce:transition-none"
@@ -541,6 +546,45 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
               </CardContent>
             </Card>
             </FadeInSection>
+
+            {speculativeProjects.length > 0 && (
+              <FadeInSection delayMs={140}>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Speculative Projects ({speculativeProjects.length})</CardTitle>
+                    <CardDescription>
+                      Proposed work that has not been agreed and does not use credits
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {speculativeProjects.map((project, index) => (
+                        <div
+                          key={project.id}
+                          className="flex items-center justify-between rounded-lg border border-dashed p-4 transition-all duration-500 hover:bg-muted/50 motion-reduce:transition-none"
+                          style={{
+                            transitionDelay: `${Math.min(index * 45, 180)}ms`,
+                          }}
+                        >
+                          <div className="flex-1">
+                            <h3 className="font-medium">{project.name}</h3>
+                            <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
+                              <span>Created {formatDate(project.created_at)}</span>
+                              {project.quoted_hours !== null && (
+                                <span>
+                                  {formatCredits(project.quoted_hours)} credits (not billed)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <Badge variant="outline">Speculative</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </FadeInSection>
+            )}
 
             {/* Gallery — same content width as sections above */}
             {galleryItems.length > 0 && (
@@ -883,11 +927,17 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                                       {project.quoted_hours !== null && (
                                         <span>
                                           {formatCredits(project.quoted_hours)} credits
+                                          {project.is_speculative ? ' (not billed)' : ''}
                                         </span>
                                       )}
                                     </div>
                                   </div>
-                                  <Badge variant="default">Completed</Badge>
+                                  <div className="flex items-center gap-2">
+                                    {project.is_speculative && (
+                                      <Badge variant="outline">Speculative</Badge>
+                                    )}
+                                    <Badge variant="default">Completed</Badge>
+                                  </div>
                                 </div>
                               ))}
                             </div>

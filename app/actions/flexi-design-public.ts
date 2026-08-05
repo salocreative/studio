@@ -1,6 +1,7 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { billableQuotedHours, isSpeculativeProject } from '@/lib/flexi-design/speculative'
 
 const FLEXI_BUCKET = 'flexi-design'
 
@@ -103,7 +104,7 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
     // Get all active projects for this client, scoped to Flexi-Design boards only.
     let projectsQuery = adminClient
       .from('monday_projects')
-      .select('id, name, status, created_at, quoted_hours')
+      .select('id, name, status, created_at, quoted_hours, monday_status')
       .eq('client_name', clientName)
       .in('status', ['active', 'archived', 'locked'])
       .order('created_at', { ascending: false })
@@ -119,12 +120,11 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
 
     if (projectsError) throw projectsError
 
-    // Calculate total quoted hours for active projects
+    // Calculate billable quoted hours for active projects (exclude speculative)
     let totalQuotedHours = 0
     if (projects) {
       projects.forEach((project: any) => {
-        const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
-        totalQuotedHours += quotedHours
+        totalQuotedHours += billableQuotedHours(project)
       })
     }
 
@@ -135,7 +135,7 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
     if (completedBoardId) {
       const { data: completed, error: completedError } = await adminClient
         .from('monday_projects')
-        .select('id, name, status, created_at, quoted_hours, completed_date')
+        .select('id, name, status, created_at, quoted_hours, completed_date, monday_status')
         .eq('monday_board_id', completedBoardId)
         .eq('client_name', clientName)
         .in('status', ['active', 'archived', 'locked'])
@@ -145,8 +145,7 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
       if (!completedError && completed) {
         completedProjects = completed
         completed.forEach((project: any) => {
-          const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
-          totalCompletedQuotedHours += quotedHours
+          totalCompletedQuotedHours += billableQuotedHours(project)
         })
       }
     }
@@ -227,6 +226,8 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
         status: p.status,
         quoted_hours: p.quoted_hours ? Number(p.quoted_hours) : null,
         created_at: p.created_at,
+        monday_status: p.monday_status || null,
+        is_speculative: isSpeculativeProject(p),
       })),
       completedProjects: completedProjects.map((p: any) => ({
         id: p.id,
@@ -235,6 +236,8 @@ export async function getFlexiDesignClientDataPublic(clientName: string) {
         quoted_hours: p.quoted_hours ? Number(p.quoted_hours) : null,
         created_at: p.created_at,
         completed_date: p.completed_date,
+        monday_status: p.monday_status || null,
+        is_speculative: isSpeculativeProject(p),
       })),
       creditTransactions,
     }

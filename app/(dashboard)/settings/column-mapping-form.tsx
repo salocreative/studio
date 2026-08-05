@@ -49,6 +49,8 @@ interface BoardTypeConfig {
   title: string
   description: string
   requiredParentColumns: string[]
+  /** Shown in the editor but not required for "Configured" */
+  optionalParentColumns?: string[]
   requiredSubitemColumns: string[]
   config: BoardConfig
 }
@@ -411,6 +413,7 @@ export function ColumnMappingForm() {
       title: 'Flexi-Design Projects',
       description: 'Active Flexi-Design project boards',
       requiredParentColumns: ['client', 'due_date'],
+      optionalParentColumns: ['status'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs['flexi-design'],
     },
@@ -419,6 +422,7 @@ export function ColumnMappingForm() {
       title: 'Flexi-Design Completed Projects',
       description: 'Board where completed Flexi-Design projects are archived',
       requiredParentColumns: ['client', 'completed_date'],
+      optionalParentColumns: ['status'],
       requiredSubitemColumns: ['quoted_hours', 'timeline'],
       config: boardConfigs['flexi-design-completed'],
     },
@@ -466,6 +470,7 @@ export function ColumnMappingForm() {
           onMappingChange={setEditingMappings}
           saving={saving}
           requiredParentColumns={boardTypeConfig?.requiredParentColumns || []}
+          optionalParentColumns={boardTypeConfig?.optionalParentColumns || []}
           requiredSubitemColumns={boardTypeConfig?.requiredSubitemColumns || []}
         />
       </div>
@@ -653,6 +658,7 @@ function BoardMappingEditor({
   onMappingChange,
   saving,
   requiredParentColumns,
+  optionalParentColumns = [],
   requiredSubitemColumns,
 }: {
   boardName: string
@@ -663,8 +669,12 @@ function BoardMappingEditor({
   onMappingChange: (mappings: Record<string, string>) => void
   saving: boolean
   requiredParentColumns: string[]
+  optionalParentColumns?: string[]
   requiredSubitemColumns: string[]
 }) {
+  const parentColumnsToShow = Array.from(
+    new Set([...requiredParentColumns, ...optionalParentColumns])
+  )
   
   const renderColumnMapping = (
     columnType: 'client' | 'agency' | 'quoted_hours' | 'timeline' | 'quote_value' | 'due_date' | 'completed_date' | 'status' | 'likelihood',
@@ -734,25 +744,25 @@ function BoardMappingEditor({
           </p>
         </div>
 
-        {requiredParentColumns.includes('client') && renderColumnMapping(
+        {parentColumnsToShow.includes('client') && renderColumnMapping(
           'client',
           'Client Column',
           'Select the column that contains the client name',
           parentColumns,
           (col) => ['text', 'text_with_label', 'dropdown', 'status'].includes(col.type),
-          true
+          requiredParentColumns.includes('client')
         )}
 
-        {requiredParentColumns.includes('agency') && renderColumnMapping(
+        {parentColumnsToShow.includes('agency') && renderColumnMapping(
           'agency',
           'Agency Column',
           'Select the parent column that contains the agency name (for projects worked on behalf of an agency)',
           parentColumns,
           (col) => ['text', 'text_with_label', 'dropdown', 'status'].includes(col.type),
-          true
+          requiredParentColumns.includes('agency')
         )}
 
-        {requiredParentColumns.includes('quote_value') && renderColumnMapping(
+        {parentColumnsToShow.includes('quote_value') && renderColumnMapping(
           'quote_value',
           'Quote Value Column',
           'Select the number/currency column that stores project values',
@@ -766,10 +776,10 @@ function BoardMappingEditor({
             col.type === 'rating' ||
             col.id?.toLowerCase().includes('value') ||
             col.title?.toLowerCase().includes('value'),
-          true
+          requiredParentColumns.includes('quote_value')
         )}
 
-        {requiredParentColumns.includes('due_date') && renderColumnMapping(
+        {parentColumnsToShow.includes('due_date') && renderColumnMapping(
           'due_date',
           'Due Date Column',
           'Select the date column that stores project due dates',
@@ -780,19 +790,21 @@ function BoardMappingEditor({
             col.type === 'datetime' ||
             col.title?.toLowerCase().includes('due') ||
             col.title?.toLowerCase().includes('deadline'),
-          true
+          requiredParentColumns.includes('due_date')
         )}
 
-        {requiredParentColumns.includes('status') && renderColumnMapping(
+        {parentColumnsToShow.includes('status') && renderColumnMapping(
           'status',
           'Status Column',
-          'Monday workflow status (e.g. Scoping, Needs quoting). Synced for forecast and lead filters.',
+          requiredParentColumns.includes('status')
+            ? 'Monday workflow status (e.g. Scoping, Needs quoting). Synced for forecast and lead filters.'
+            : 'Optional. Maps Monday status so Speculative Flexi projects can be excluded from credit spend.',
           parentColumns,
           (col) => col.type === 'status' || col.type === 'dropdown',
-          true
+          requiredParentColumns.includes('status')
         )}
 
-        {requiredParentColumns.includes('likelihood') && renderColumnMapping(
+        {parentColumnsToShow.includes('likelihood') && renderColumnMapping(
           'likelihood',
           'Likelihood Column',
           'Win probability percentage for leads (0–100)',
@@ -803,10 +815,10 @@ function BoardMappingEditor({
             col.type === 'numeric_rating' ||
             col.type === 'rating' ||
             col.title?.toLowerCase().includes('likelihood'),
-          true
+          requiredParentColumns.includes('likelihood')
         )}
 
-        {requiredParentColumns.includes('completed_date') && renderColumnMapping(
+        {parentColumnsToShow.includes('completed_date') && renderColumnMapping(
           'completed_date',
           'Completed Date Column',
           'Select the date column that stores when projects were completed',
@@ -818,7 +830,7 @@ function BoardMappingEditor({
             col.title?.toLowerCase().includes('completed') ||
             col.title?.toLowerCase().includes('done') ||
             col.title?.toLowerCase().includes('finished'),
-          true
+          requiredParentColumns.includes('completed_date')
         )}
       </div>
 

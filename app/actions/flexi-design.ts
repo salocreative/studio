@@ -6,6 +6,7 @@ import { getFlexiDesignBoardIds } from '@/lib/monday/board-helpers'
 import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
 import crypto from 'crypto'
 import { endOfWeek, format, startOfWeek } from 'date-fns'
+import { billableQuotedHours, isSpeculativeProject } from '@/lib/flexi-design/speculative'
 
 interface FlexiDesignClient {
   id: string
@@ -38,6 +39,9 @@ interface FlexiDesignProject {
   total_logged_hours: number
   quoted_hours?: number | null
   created_at: string
+  completed_date?: string | null
+  monday_status?: string | null
+  is_speculative?: boolean
 }
 
 interface ClientDetail {
@@ -105,7 +109,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
     // Get all Flexi-Design projects with quoted_hours (from active boards, excluding completed board)
     const { data: allProjects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, client_name, status, created_at, quoted_hours')
+      .select('id, name, client_name, status, created_at, quoted_hours, monday_status')
       .in('monday_board_id', activeBoardIds)
       .in('status', ['active', 'archived', 'locked'])
       .order('created_at', { ascending: false })
@@ -117,7 +121,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
     if (completedBoardId) {
       const { data: completed, error: completedError } = await supabase
         .from('monday_projects')
-        .select('id, name, client_name, status, created_at, quoted_hours')
+        .select('id, name, client_name, status, created_at, quoted_hours, monday_status')
         .eq('monday_board_id', completedBoardId)
         .in('status', ['active', 'archived', 'locked'])
 
@@ -227,7 +231,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       client.activeCount += 1
       client.totalCount += 1
       client.hoursUsed += timeEntriesByProject[project.id] || 0
-      client.quotedHoursUsed += project.quoted_hours ? Number(project.quoted_hours) : 0
+      client.quotedHoursUsed += billableQuotedHours(project)
     })
 
     // Completed board projects count toward totals / credits used, not active
@@ -236,7 +240,7 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       const client = ensureClientStats(project.client_name)
       client.totalCount += 1
       client.hoursUsed += timeEntriesByProject[project.id] || 0
-      client.quotedHoursUsed += project.quoted_hours ? Number(project.quoted_hours) : 0
+      client.quotedHoursUsed += billableQuotedHours(project)
     })
 
     // Get credit transactions to calculate total deposited and last credit added
@@ -460,7 +464,7 @@ export async function getFlexiDesignClientDetail(clientName: string) {
     // Get all projects for this client from active Flexi-Design boards (excluding completed board)
     const { data: projects, error: projectsError } = await supabase
       .from('monday_projects')
-      .select('id, name, status, created_at, quoted_hours')
+      .select('id, name, status, created_at, quoted_hours, monday_status')
       .in('monday_board_id', activeBoardIds)
       .eq('client_name', clientName)
       .in('status', ['active', 'archived', 'locked'])
@@ -492,11 +496,10 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       }
     }
 
-    // Calculate total quoted hours for credit deduction
+    // Calculate total billable quoted hours for credit deduction (exclude speculative)
     if (projects) {
       projects.forEach((project: any) => {
-        const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
-        totalQuotedHours += quotedHours
+        totalQuotedHours += billableQuotedHours(project)
       })
     }
 
@@ -521,6 +524,8 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       total_logged_hours: timeEntriesByProject[project.id] || 0,
       quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
       created_at: project.created_at,
+      monday_status: project.monday_status || null,
+      is_speculative: isSpeculativeProject(project),
     }))
 
     // Get credit transactions for this client (needed before calculating remaining hours)
@@ -566,7 +571,7 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       // Get completed projects for this client from the completed board
       const { data: completedProjects, error: completedProjectsError } = await supabase
         .from('monday_projects')
-        .select('id, name, status, created_at, quoted_hours, completed_date')
+        .select('id, name, status, created_at, quoted_hours, completed_date, monday_status')
         .eq('monday_board_id', completedBoardId)
         .eq('client_name', clientName)
         .in('status', ['active', 'archived', 'locked'])
@@ -594,10 +599,9 @@ export async function getFlexiDesignClientDetail(clientName: string) {
           }
         }
 
-        // Calculate total quoted hours for completed projects
+        // Billable quoted hours for completed projects (exclude speculative)
         completedProjects.forEach((project: any) => {
-          const quotedHours = project.quoted_hours ? Number(project.quoted_hours) : 0
-          totalCompletedQuotedHours += quotedHours
+          totalCompletedQuotedHours += billableQuotedHours(project)
         })
 
         // Build completed projects with hours
@@ -609,6 +613,8 @@ export async function getFlexiDesignClientDetail(clientName: string) {
           quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
           created_at: project.created_at,
           completed_date: project.completed_date,
+          monday_status: project.monday_status || null,
+          is_speculative: isSpeculativeProject(project),
         }))
       }
     }
