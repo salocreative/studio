@@ -24,6 +24,7 @@ import {
 import { FlexiClientFilesTab } from './flexi-client-files-tab'
 import { FlexiClientGalleryTab } from './flexi-client-gallery-tab'
 import { FlexiClientContactsTab } from './flexi-client-contacts-tab'
+import { FlexiClientIdeasTab } from './flexi-client-ideas-tab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { format, differenceInMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
@@ -570,6 +571,7 @@ function FlexiDesignPageContent() {
             <Tabs defaultValue="projects" className="space-y-6">
               <TabsList>
                 <TabsTrigger value="projects">Projects</TabsTrigger>
+                <TabsTrigger value="ideas">Ideas</TabsTrigger>
                 <TabsTrigger value="files">Files</TabsTrigger>
                 <TabsTrigger value="gallery">Gallery</TabsTrigger>
                 <TabsTrigger value="contacts">Contacts</TabsTrigger>
@@ -814,6 +816,10 @@ function FlexiDesignPageContent() {
                   </CardContent>
                 </Card>
               )}
+              </TabsContent>
+
+              <TabsContent value="ideas" className="mt-0">
+                <FlexiClientIdeasTab clientId={clientDetail.id} />
               </TabsContent>
 
               <TabsContent value="files" className="mt-0">

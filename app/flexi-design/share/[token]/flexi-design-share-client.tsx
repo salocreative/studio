@@ -4,6 +4,9 @@ import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Dialog,
   DialogContent,
@@ -12,18 +15,20 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Loader2, CheckCircle2, Clock, History, Mail, ArrowLeft } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle, Clock, History, Mail, Lightbulb } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { getFlexiDesignClientByToken } from '@/app/actions/flexi-design'
 import {
   getFlexiDesignClientDataPublic,
   getFlexiDesignGalleryByShareToken,
-  getFlexiDesignInspoGalleryByShareToken,
-  getFlexiDesignServicesByShareToken,
   type FlexiDesignPublicGalleryItem,
-  type FlexiDesignPublicService,
 } from '@/app/actions/flexi-design-public'
-import { getFlexiServiceCategoryIcon } from '@/lib/flexi-design/service-categories'
+import {
+  getFlexiDesignIdeasByShareToken,
+  confirmFlexiDesignIdeaByToken,
+  declineFlexiDesignIdeaByToken,
+} from '@/app/actions/flexi-design-ideas-public'
+import type { FlexiDesignIdea } from '@/app/actions/flexi-design-ideas'
 import { SaloLogo } from '@/components/brand/salo-logo'
 import { cn } from '@/lib/utils'
 
@@ -115,16 +120,16 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
   const [completedProjects, setCompletedProjects] = useState<Project[]>([])
   const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([])
   const [galleryItems, setGalleryItems] = useState<FlexiDesignPublicGalleryItem[]>([])
-  const [inspoGalleryItems, setInspoGalleryItems] = useState<FlexiDesignPublicGalleryItem[]>([])
-  const [inspoLandscapeIds, setInspoLandscapeIds] = useState<Record<string, boolean>>({})
-  const [inspoMarqueeSpeed, setInspoMarqueeSpeed] = useState<'slow' | 'medium' | 'fast'>('slow')
-  const [services, setServices] = useState<FlexiDesignPublicService[]>([])
-  const [servicesError, setServicesError] = useState<string | null>(null)
-  const [selectedServiceCategory, setSelectedServiceCategory] = useState<string | null>(null)
   const [viewingGalleryItem, setViewingGalleryItem] = useState<FlexiDesignPublicGalleryItem | null>(
     null
   )
   const [activeTab, setActiveTab] = useState('overview')
+  const [ideas, setIdeas] = useState<FlexiDesignIdea[]>([])
+  const [ideasError, setIdeasError] = useState<string | null>(null)
+  const [responderName, setResponderName] = useState('')
+  const [submittingIdeaId, setSubmittingIdeaId] = useState<string | null>(null)
+  const [decliningIdeaId, setDecliningIdeaId] = useState<string | null>(null)
+  const [declineNotes, setDeclineNotes] = useState('')
 
   useEffect(() => {
     loadData()
@@ -147,11 +152,10 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         return
       }
 
-      const [dataResult, galleryResult, servicesResult, inspoGalleryResult] = await Promise.all([
+      const [dataResult, galleryResult, ideasResult] = await Promise.all([
         getFlexiDesignClientDataPublic(shareResult.client.client_name),
         getFlexiDesignGalleryByShareToken(shareToken),
-        getFlexiDesignServicesByShareToken(shareToken),
-        getFlexiDesignInspoGalleryByShareToken(shareToken, 16),
+        getFlexiDesignIdeasByShareToken(shareToken),
       ])
 
       if (dataResult.error) {
@@ -169,25 +173,12 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         setGalleryItems([])
       }
 
-      if (servicesResult.error) {
-        console.error('Flexi services catalog error:', servicesResult.error)
-        setServices([])
-        setServicesError(servicesResult.error)
-      } else if (servicesResult.success) {
-        setServices(servicesResult.services || [])
-        setServicesError(null)
-      } else {
-        setServices([])
-        setServicesError('Unable to load services catalog')
-      }
-      setSelectedServiceCategory(null)
-
-      if (inspoGalleryResult.success && inspoGalleryResult.items) {
-        setInspoGalleryItems(inspoGalleryResult.items)
-        setInspoLandscapeIds({})
-      } else {
-        setInspoGalleryItems([])
-        setInspoLandscapeIds({})
+      if (ideasResult.error) {
+        setIdeas([])
+        setIdeasError(ideasResult.error)
+      } else if (ideasResult.success) {
+        setIdeas(ideasResult.ideas || [])
+        setIdeasError(null)
       }
     } catch (err) {
       console.error('Error loading share data:', err)
@@ -195,6 +186,34 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleConfirmIdea(ideaId: string) {
+    setSubmittingIdeaId(ideaId)
+    const result = await confirmFlexiDesignIdeaByToken(shareToken, ideaId, responderName)
+    setSubmittingIdeaId(null)
+    if (result.error) {
+      setIdeasError(result.error)
+      return
+    }
+    setIdeasError(null)
+    const refreshed = await getFlexiDesignIdeasByShareToken(shareToken)
+    if (refreshed.success) setIdeas(refreshed.ideas || [])
+  }
+
+  async function handleDeclineIdea(ideaId: string) {
+    setSubmittingIdeaId(ideaId)
+    const result = await declineFlexiDesignIdeaByToken(shareToken, ideaId, responderName, declineNotes)
+    setSubmittingIdeaId(null)
+    if (result.error) {
+      setIdeasError(result.error)
+      return
+    }
+    setIdeasError(null)
+    setDecliningIdeaId(null)
+    setDeclineNotes('')
+    const refreshed = await getFlexiDesignIdeasByShareToken(shareToken)
+    if (refreshed.success) setIdeas(refreshed.ideas || [])
   }
 
   function formatDate(dateString: string): string {
@@ -249,36 +268,6 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
 
   const activeBillableProjects = activeProjects.filter((p) => !p.is_speculative)
   const speculativeProjects = activeProjects.filter((p) => p.is_speculative)
-
-  const serviceCategories = (() => {
-    const counts = new Map<string, number>()
-    for (const service of services) {
-      counts.set(service.category, (counts.get(service.category) || 0) + 1)
-    }
-    return Array.from(counts.entries())
-      .map(([category, count]) => ({ category, count }))
-      .sort((a, b) => a.category.localeCompare(b.category))
-  })()
-
-  const selectedCategoryServices = selectedServiceCategory
-    ? services.filter((service) => service.category === selectedServiceCategory)
-    : []
-
-  const SelectedCategoryIcon = selectedServiceCategory
-    ? getFlexiServiceCategoryIcon(selectedServiceCategory)
-    : null
-
-  const inspoMarqueeItems = (() => {
-    if (inspoGalleryItems.length === 0) return []
-    const minItems = 10
-    const repeats = Math.max(2, Math.ceil(minItems / inspoGalleryItems.length))
-    return Array.from({ length: repeats }, (_, repeatIndex) =>
-      inspoGalleryItems.map((item) => ({
-        ...item,
-        loopKey: `${item.id}-${repeatIndex}`,
-      }))
-    ).flat()
-  })()
 
   const bannerRows = [0, 1, 2].map((rowIndex) => {
     const baseRow = galleryItems.filter((_, itemIndex) => itemIndex % 3 === rowIndex)
@@ -439,7 +428,12 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="inspo">Inspo</TabsTrigger>
+            <TabsTrigger value="ideas">
+              Ideas
+              {ideas.filter((i) => i.status === 'pushed').length > 0
+                ? ` (${ideas.filter((i) => i.status === 'pushed').length})`
+                : ''}
+            </TabsTrigger>
             <TabsTrigger value="history">
               History
               {completedProjects.length > 0 ? ` (${completedProjects.length})` : ''}
@@ -637,234 +631,177 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
             )}
           </TabsContent>
 
-          <TabsContent value="inspo" className="mt-0 space-y-6">
-            <FadeInSection delayMs={60}>
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                  <p className="text-lg font-medium text-foreground">Want more ideas?</p>
-                  <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    We are building out this area to surface inspiration, concepts, and strategic
-                    directions tailored to your brand. For now, the best next step is a quick call
-                    so we can build more context around your goals, audience, and market strategy.
-                  </p>
-                  <div className="mt-6">
-                    <Button variant="outline" asChild>
-                      <a
-                        href="https://cal.com/carlcahill/flexi-design"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Book a Call
-                      </a>
-                    </Button>
+          <TabsContent value="ideas" className="mt-0 space-y-6">
+            {ideasError && (
+              <FadeInSection delayMs={40}>
+                <p className="text-sm text-destructive">{ideasError}</p>
+              </FadeInSection>
+            )}
+
+            {ideas.length === 0 ? (
+              <FadeInSection delayMs={60}>
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                    <Lightbulb className="h-8 w-8 text-muted-foreground" />
+                    <p className="mt-4 text-lg font-medium text-foreground">
+                      Nothing here yet
+                    </p>
+                    <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                      When we have a new creative idea worth pitching for{' '}
+                      {clientData.client_name}, it&apos;ll show up here for you to confirm or decline.
+                    </p>
+                  </CardContent>
+                </Card>
+              </FadeInSection>
+            ) : (
+              <>
+                <FadeInSection delayMs={40}>
+                  <div className="space-y-2">
+                    <Label htmlFor="responder-name">Your name</Label>
+                    <Input
+                      id="responder-name"
+                      value={responderName}
+                      onChange={(e) => setResponderName(e.target.value)}
+                      placeholder="Full name"
+                      className="max-w-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Confirming just flags your interest — nothing is booked or costed against
+                      your credits until the team follows up.
+                    </p>
                   </div>
-                </CardContent>
-              </Card>
-            </FadeInSection>
+                </FadeInSection>
 
-            <FadeInSection delayMs={100}>
-              <Card>
-                <CardHeader>
-                  <CardTitle>All the ways Salo can help</CardTitle>
-                  <CardDescription>
-                    Browse our Flexi-Design deliverables by category. Credit figures are estimates
-                    and may vary with scope and complexity.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {servicesError ? (
-                    <p className="py-10 text-center text-sm text-muted-foreground">
-                      Couldn’t load the services catalog ({servicesError}). If you just ran the
-                      migration, reload the Supabase API schema and confirm{' '}
-                      <code className="rounded bg-muted px-1">flexi_design_services</code> has rows.
-                    </p>
-                  ) : services.length === 0 ? (
-                    <p className="py-10 text-center text-sm text-muted-foreground">
-                      Service catalog is empty. Run migration{' '}
-                      <code className="rounded bg-muted px-1">068_flexi_design_services_reseed.sql</code>{' '}
-                      (or the seed section of 067) in Supabase, then refresh.
-                    </p>
-                  ) : selectedServiceCategory && SelectedCategoryIcon ? (
-                    <div className="space-y-5">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="-ml-2 w-fit"
-                          onClick={() => setSelectedServiceCategory(null)}
-                        >
-                          <ArrowLeft className="mr-2 h-4 w-4" />
-                          All categories
-                        </Button>
-                        <div className="flex items-center gap-2">
-                          <SelectedCategoryIcon className="h-5 w-5 text-muted-foreground" />
-                          <h3 className="text-lg font-semibold">{selectedServiceCategory}</h3>
-                          <span className="text-sm text-muted-foreground">
-                            {selectedCategoryServices.length} service
-                            {selectedCategoryServices.length !== 1 ? 's' : ''}
-                          </span>
-                        </div>
-                      </div>
+                <div className="space-y-4">
+                  {ideas.map((idea, index) => {
+                    const isPending = idea.status === 'pushed'
+                    const isConfirmed = idea.status === 'confirmed'
+                    const isDeclining = decliningIdeaId === idea.id
+                    const isSubmitting = submittingIdeaId === idea.id
 
-                      <div className="space-y-3">
-                        {selectedCategoryServices.map((service) => (
-                          <div
-                            key={service.id}
-                            className="flex flex-col gap-2 rounded-lg border border-border p-4 sm:flex-row sm:items-start sm:justify-between"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <h4 className="font-medium text-foreground">{service.title}</h4>
-                              {service.description && (
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                  {service.description}
-                                </p>
+                    return (
+                      <FadeInSection key={idea.id} delayMs={Math.min(60 + index * 40, 220)}>
+                        <Card>
+                          <CardHeader>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <CardTitle className="text-lg">{idea.title}</CardTitle>
+                              {isPending && <Badge variant="secondary">New</Badge>}
+                              {isConfirmed && (
+                                <Badge className="bg-green-600 text-white hover:bg-green-600">
+                                  Confirmed
+                                </Badge>
+                              )}
+                              {idea.status === 'declined' && (
+                                <Badge variant="outline">Declined</Badge>
                               )}
                             </div>
-                            <div className="shrink-0 text-right sm:pt-0.5">
-                              <div className="text-sm font-semibold tabular-nums text-primary">
-                                ~{formatCredits(service.credit_estimate)} credit
-                                {Number(service.credit_estimate) === 1 ? '' : 's'}
+                            <CardDescription>{idea.summary}</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {idea.deliverable && (
+                              <div>
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  What we&apos;d make
+                                </p>
+                                <p className="mt-1 text-sm">{idea.deliverable}</p>
                               </div>
-                              <div className="text-xs text-muted-foreground">estimate</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {serviceCategories.map(({ category, count }) => {
-                        const Icon = getFlexiServiceCategoryIcon(category)
-                        return (
-                          <button
-                            key={category}
-                            type="button"
-                            onClick={() => setSelectedServiceCategory(category)}
-                            className="group flex items-start gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 text-foreground transition-colors group-hover:border-foreground/20">
-                              <Icon className="h-5 w-5" />
-                            </div>
-                            <div className="min-w-0 pt-0.5">
-                              <div className="font-medium text-foreground">{category}</div>
-                              <div className="mt-0.5 text-xs text-muted-foreground">
-                                {count} deliverable{count !== 1 ? 's' : ''}
+                            )}
+                            {idea.goal && (
+                              <div>
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Why it&apos;s worth doing
+                                </p>
+                                <p className="mt-1 text-sm">{idea.goal}</p>
                               </div>
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </FadeInSection>
+                            )}
+                            {idea.credit_estimate != null && (
+                              <p className="text-sm font-semibold text-primary">
+                                ~{formatCredits(Number(idea.credit_estimate))} credit
+                                {Number(idea.credit_estimate) === 1 ? '' : 's'} (estimate)
+                              </p>
+                            )}
 
-            {inspoMarqueeItems.length > 0 && (
-              <FadeInSection delayMs={140} className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2">
-                <section className="bg-black py-10 md:py-12">
-                  <div className="mx-auto mb-6 flex max-w-7xl items-end justify-between gap-4 px-4 md:px-6 lg:px-8">
-                    <div>
-                      <h2 className="text-2xl font-semibold tracking-tight text-zinc-50">
-                        Studio inspiration
-                      </h2>
-                      <p className="mt-1 text-sm text-zinc-400">
-                        A random selection of Flexi-Design work from across the studio.
-                      </p>
-                    </div>
-                    <div
-                      className="flex shrink-0 items-center rounded-md border border-zinc-800 bg-zinc-950 p-0.5"
-                      role="group"
-                      aria-label="Marquee speed"
-                    >
-                      {(
-                        [
-                          { id: 'slow', label: 'Slow' },
-                          { id: 'medium', label: 'Medium' },
-                          { id: 'fast', label: 'Fast' },
-                        ] as const
-                      ).map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          onClick={() => setInspoMarqueeSpeed(option.id)}
-                          className={cn(
-                            'rounded px-2.5 py-1 text-xs font-medium transition-colors',
-                            inspoMarqueeSpeed === option.id
-                              ? 'bg-zinc-100 text-zinc-950'
-                              : 'text-zinc-400 hover:text-zinc-200'
-                          )}
-                          aria-pressed={inspoMarqueeSpeed === option.id}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                            {!isPending && idea.decided_by_name && (
+                              <p className="text-xs text-muted-foreground">
+                                {isConfirmed ? 'Confirmed' : 'Declined'} by {idea.decided_by_name}
+                                {idea.decided_at ? ` on ${formatDate(idea.decided_at)}` : ''}
+                                {idea.decision_notes ? ` — "${idea.decision_notes}"` : ''}
+                              </p>
+                            )}
 
-                  <div className="relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-black via-black/80 to-transparent sm:w-24 md:w-32" />
-                    <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-black via-black/80 to-transparent sm:w-24 md:w-32" />
-
-                    <div className="overflow-hidden py-2">
-                      <div
-                        className={cn(
-                          'flex min-w-max items-center gap-4 will-change-transform px-4 motion-reduce:animate-none sm:gap-5',
-                          inspoMarqueeSpeed === 'slow' &&
-                            'animate-[marquee-left_180s_linear_infinite]',
-                          inspoMarqueeSpeed === 'medium' &&
-                            'animate-[marquee-left_100s_linear_infinite]',
-                          inspoMarqueeSpeed === 'fast' &&
-                            'animate-[marquee-left_55s_linear_infinite]'
-                        )}
-                      >
-                        {[...inspoMarqueeItems, ...inspoMarqueeItems].map((item, itemIndex) => {
-                          const isLandscape = inspoLandscapeIds[item.id] === true
-                          return (
-                            <button
-                              key={`${item.loopKey}-${itemIndex}`}
-                              type="button"
-                              className="shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              onClick={() =>
-                                setViewingGalleryItem({
-                                  id: item.id,
-                                  title: item.title,
-                                  caption: item.caption,
-                                  storage_path: item.storage_path,
-                                  mime_type: item.mime_type,
-                                  url: item.url,
-                                })
-                              }
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={item.url}
-                                alt={item.title || 'Studio inspiration'}
-                                className={cn(
-                                  'h-auto rounded-md',
-                                  isLandscape
-                                    ? 'w-[22rem] sm:w-[26rem] lg:w-[30rem]'
-                                    : 'w-44 sm:w-52 lg:w-60'
+                            {isPending && (
+                              <div className="space-y-3 border-t border-border pt-4">
+                                {isDeclining && (
+                                  <div className="space-y-2">
+                                    <Label htmlFor={`decline-notes-${idea.id}`}>
+                                      Feedback (optional)
+                                    </Label>
+                                    <Textarea
+                                      id={`decline-notes-${idea.id}`}
+                                      value={declineNotes}
+                                      onChange={(e) => setDeclineNotes(e.target.value)}
+                                      placeholder="Let us know why, if you'd like..."
+                                      rows={2}
+                                    />
+                                  </div>
                                 )}
-                                loading="lazy"
-                                decoding="async"
-                                onLoad={(event) => {
-                                  const image = event.currentTarget
-                                  const landscape = image.naturalWidth > image.naturalHeight
-                                  setInspoLandscapeIds((current) => {
-                                    if (current[item.id] === landscape) return current
-                                    return { ...current, [item.id]: landscape }
-                                  })
-                                }}
-                              />
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              </FadeInSection>
+                                <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                                  {!isDeclining ? (
+                                    <>
+                                      <Button
+                                        variant="outline"
+                                        onClick={() => setDecliningIdeaId(idea.id)}
+                                        disabled={isSubmitting}
+                                      >
+                                        <XCircle className="mr-2 h-4 w-4" />
+                                        Decline
+                                      </Button>
+                                      <Button
+                                        className="flex-1 bg-green-600 hover:bg-green-700"
+                                        onClick={() => handleConfirmIdea(idea.id)}
+                                        disabled={isSubmitting || !responderName.trim()}
+                                      >
+                                        {isSubmitting ? (
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                                        )}
+                                        I&apos;m interested
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Button
+                                        variant="outline"
+                                        className="flex-1"
+                                        onClick={() => {
+                                          setDecliningIdeaId(null)
+                                          setDeclineNotes('')
+                                        }}
+                                        disabled={isSubmitting}
+                                      >
+                                        Cancel
+                                      </Button>
+                                      <Button
+                                        variant="destructive"
+                                        className="flex-1"
+                                        onClick={() => handleDeclineIdea(idea.id)}
+                                        disabled={isSubmitting || !responderName.trim()}
+                                      >
+                                        Confirm decline
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </FadeInSection>
+                    )
+                  })}
+                </div>
+              </>
             )}
           </TabsContent>
 
