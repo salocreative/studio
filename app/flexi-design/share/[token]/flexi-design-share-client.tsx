@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -127,13 +128,39 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
   const [ideas, setIdeas] = useState<FlexiDesignIdea[]>([])
   const [ideasError, setIdeasError] = useState<string | null>(null)
   const [responderName, setResponderName] = useState('')
+  const [nameDraft, setNameDraft] = useState('')
   const [submittingIdeaId, setSubmittingIdeaId] = useState<string | null>(null)
   const [decliningIdeaId, setDecliningIdeaId] = useState<string | null>(null)
   const [declineNotes, setDeclineNotes] = useState('')
+  const [pendingIdeaAction, setPendingIdeaAction] = useState<{
+    type: 'confirm' | 'decline'
+    ideaId: string
+  } | null>(null)
+
+  const responderNameStorageKey = `flexi-idea-responder-name:${shareToken}`
 
   useEffect(() => {
     loadData()
   }, [shareToken])
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(responderNameStorageKey)
+      if (saved?.trim()) setResponderName(saved.trim())
+    } catch {
+      // ignore storage errors
+    }
+  }, [responderNameStorageKey])
+
+  function rememberResponderName(name: string) {
+    const trimmed = name.trim()
+    setResponderName(trimmed)
+    try {
+      sessionStorage.setItem(responderNameStorageKey, trimmed)
+    } catch {
+      // ignore storage errors
+    }
+  }
 
   async function loadData() {
     setLoading(true)
@@ -188,9 +215,9 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
     }
   }
 
-  async function handleConfirmIdea(ideaId: string) {
+  async function submitConfirmIdea(ideaId: string, name: string) {
     setSubmittingIdeaId(ideaId)
-    const result = await confirmFlexiDesignIdeaByToken(shareToken, ideaId, responderName)
+    const result = await confirmFlexiDesignIdeaByToken(shareToken, ideaId, name)
     setSubmittingIdeaId(null)
     if (result.error) {
       setIdeasError(result.error)
@@ -201,9 +228,9 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
     if (refreshed.success) setIdeas(refreshed.ideas || [])
   }
 
-  async function handleDeclineIdea(ideaId: string) {
+  async function submitDeclineIdea(ideaId: string, name: string) {
     setSubmittingIdeaId(ideaId)
-    const result = await declineFlexiDesignIdeaByToken(shareToken, ideaId, responderName, declineNotes)
+    const result = await declineFlexiDesignIdeaByToken(shareToken, ideaId, name, declineNotes)
     setSubmittingIdeaId(null)
     if (result.error) {
       setIdeasError(result.error)
@@ -214,6 +241,26 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
     setDeclineNotes('')
     const refreshed = await getFlexiDesignIdeasByShareToken(shareToken)
     if (refreshed.success) setIdeas(refreshed.ideas || [])
+  }
+
+  function requestIdeaAction(type: 'confirm' | 'decline', ideaId: string) {
+    if (responderName.trim()) {
+      if (type === 'confirm') void submitConfirmIdea(ideaId, responderName)
+      else void submitDeclineIdea(ideaId, responderName)
+      return
+    }
+    setNameDraft('')
+    setPendingIdeaAction({ type, ideaId })
+  }
+
+  async function handleNameModalSubmit() {
+    if (!pendingIdeaAction || !nameDraft.trim()) return
+    const name = nameDraft.trim()
+    rememberResponderName(name)
+    const action = pendingIdeaAction
+    setPendingIdeaAction(null)
+    if (action.type === 'confirm') await submitConfirmIdea(action.ideaId, name)
+    else await submitDeclineIdea(action.ideaId, name)
   }
 
   function formatDate(dateString: string): string {
@@ -268,6 +315,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
 
   const activeBillableProjects = activeProjects.filter((p) => !p.is_speculative)
   const speculativeProjects = activeProjects.filter((p) => p.is_speculative)
+  const newIdeasCount = ideas.filter((i) => i.status === 'pushed').length
 
   const bannerRows = [0, 1, 2].map((rowIndex) => {
     const baseRow = galleryItems.filter((_, itemIndex) => itemIndex % 3 === rowIndex)
@@ -430,9 +478,7 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="ideas">
               Ideas
-              {ideas.filter((i) => i.status === 'pushed').length > 0
-                ? ` (${ideas.filter((i) => i.status === 'pushed').length})`
-                : ''}
+              {newIdeasCount > 0 ? ` (${newIdeasCount})` : ''}
             </TabsTrigger>
             <TabsTrigger value="history">
               History
@@ -442,7 +488,13 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
 
           <TabsContent value="overview" className="mt-0 space-y-6">
             {/* Stats Grid */}
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div
+              className={
+                newIdeasCount > 0
+                  ? 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5'
+                  : 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4'
+              }
+            >
               <FadeInSection delayMs={40}>
               <Card>
                 <CardHeader className="pb-3">
@@ -456,6 +508,31 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                 </CardContent>
               </Card>
               </FadeInSection>
+
+              {newIdeasCount > 0 && (
+                <FadeInSection delayMs={65}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('ideas')}
+                    className="w-full text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Card className="transition-colors hover:bg-muted/40">
+                      <CardHeader className="pb-3">
+                        <CardDescription className="flex items-center gap-1.5">
+                          <Lightbulb className="h-3.5 w-3.5" />
+                          New ideas
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-3xl font-bold">{newIdeasCount}</div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          View ideas
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </button>
+                </FadeInSection>
+              )}
 
               <FadeInSection delayMs={90}>
               <Card>
@@ -654,154 +731,151 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
                 </Card>
               </FadeInSection>
             ) : (
-              <>
+              <div className="space-y-4">
                 <FadeInSection delayMs={40}>
-                  <div className="space-y-2">
-                    <Label htmlFor="responder-name">Your name</Label>
-                    <Input
-                      id="responder-name"
-                      value={responderName}
-                      onChange={(e) => setResponderName(e.target.value)}
-                      placeholder="Full name"
-                      className="max-w-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Confirming just flags your interest — nothing is booked or costed against
-                      your credits until the team follows up.
-                    </p>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Confirming just flags your interest — nothing is booked or costed against
+                    your credits until the team follows up.
+                  </p>
                 </FadeInSection>
 
-                <div className="space-y-4">
-                  {ideas.map((idea, index) => {
-                    const isPending = idea.status === 'pushed'
-                    const isConfirmed = idea.status === 'confirmed'
-                    const isDeclining = decliningIdeaId === idea.id
-                    const isSubmitting = submittingIdeaId === idea.id
+                {ideas.map((idea, index) => {
+                  const isPending = idea.status === 'pushed'
+                  const isConfirmed = idea.status === 'confirmed'
+                  const isDeclining = decliningIdeaId === idea.id
+                  const isSubmitting = submittingIdeaId === idea.id
 
-                    return (
-                      <FadeInSection key={idea.id} delayMs={Math.min(60 + index * 40, 220)}>
-                        <Card>
-                          <CardHeader>
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <CardTitle className="text-lg">{idea.title}</CardTitle>
-                              {isPending && <Badge variant="secondary">New</Badge>}
-                              {isConfirmed && (
-                                <Badge className="bg-green-600 text-white hover:bg-green-600">
-                                  Confirmed
-                                </Badge>
-                              )}
-                              {idea.status === 'declined' && (
-                                <Badge variant="outline">Declined</Badge>
-                              )}
+                  return (
+                    <FadeInSection key={idea.id} delayMs={Math.min(60 + index * 40, 220)}>
+                      <Card>
+                        <CardHeader>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <CardTitle className="text-lg">{idea.title}</CardTitle>
+                            {isPending && <Badge variant="secondary">New</Badge>}
+                            {isConfirmed && (
+                              <Badge className="bg-green-600 text-white hover:bg-green-600">
+                                Confirmed
+                              </Badge>
+                            )}
+                            {idea.status === 'declined' && (
+                              <Badge variant="outline">Declined</Badge>
+                            )}
+                          </div>
+                          <CardDescription>{idea.summary}</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {idea.deliverable && (
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                What we&apos;d make
+                              </p>
+                              <p className="mt-1 text-sm">{idea.deliverable}</p>
                             </div>
-                            <CardDescription>{idea.summary}</CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            {idea.deliverable && (
-                              <div>
-                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  What we&apos;d make
-                                </p>
-                                <p className="mt-1 text-sm">{idea.deliverable}</p>
-                              </div>
-                            )}
-                            {idea.goal && (
-                              <div>
-                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  Why it&apos;s worth doing
-                                </p>
-                                <p className="mt-1 text-sm">{idea.goal}</p>
-                              </div>
-                            )}
-                            {idea.credit_estimate != null && (
-                              <p className="text-sm font-semibold text-primary">
-                                ~{formatCredits(Number(idea.credit_estimate))} credit
-                                {Number(idea.credit_estimate) === 1 ? '' : 's'} (estimate)
+                          )}
+                          {idea.goal && (
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Why it&apos;s worth doing
                               </p>
-                            )}
+                              <p className="mt-1 text-sm">{idea.goal}</p>
+                            </div>
+                          )}
+                          {idea.credit_estimate != null && (
+                            <p className="text-sm font-semibold text-primary">
+                              ~{formatCredits(Number(idea.credit_estimate))} credit
+                              {Number(idea.credit_estimate) === 1 ? '' : 's'} (estimate)
+                            </p>
+                          )}
 
-                            {!isPending && idea.decided_by_name && (
-                              <p className="text-xs text-muted-foreground">
-                                {isConfirmed ? 'Confirmed' : 'Declined'} by {idea.decided_by_name}
-                                {idea.decided_at ? ` on ${formatDate(idea.decided_at)}` : ''}
-                                {idea.decision_notes ? ` — "${idea.decision_notes}"` : ''}
-                              </p>
-                            )}
+                          {!isPending && idea.decided_by_name && (
+                            <p className="text-xs text-muted-foreground">
+                              {isConfirmed ? 'Confirmed' : 'Declined'} by {idea.decided_by_name}
+                              {idea.decided_at ? ` on ${formatDate(idea.decided_at)}` : ''}
+                              {idea.decision_notes ? ` — "${idea.decision_notes}"` : ''}
+                            </p>
+                          )}
 
-                            {isPending && (
-                              <div className="space-y-3 border-t border-border pt-4">
-                                {isDeclining && (
-                                  <div className="space-y-2">
-                                    <Label htmlFor={`decline-notes-${idea.id}`}>
-                                      Feedback (optional)
-                                    </Label>
-                                    <Textarea
-                                      id={`decline-notes-${idea.id}`}
-                                      value={declineNotes}
-                                      onChange={(e) => setDeclineNotes(e.target.value)}
-                                      placeholder="Let us know why, if you'd like..."
-                                      rows={2}
-                                    />
-                                  </div>
-                                )}
-                                <div className="flex flex-col-reverse gap-3 sm:flex-row">
-                                  {!isDeclining ? (
-                                    <>
-                                      <Button
-                                        variant="outline"
-                                        onClick={() => setDecliningIdeaId(idea.id)}
-                                        disabled={isSubmitting}
-                                      >
-                                        <XCircle className="mr-2 h-4 w-4" />
-                                        Decline
-                                      </Button>
-                                      <Button
-                                        className="flex-1 bg-green-600 hover:bg-green-700"
-                                        onClick={() => handleConfirmIdea(idea.id)}
-                                        disabled={isSubmitting || !responderName.trim()}
-                                      >
-                                        {isSubmitting ? (
-                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        ) : (
-                                          <CheckCircle2 className="mr-2 h-4 w-4" />
-                                        )}
-                                        I&apos;m interested
-                                      </Button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Button
-                                        variant="outline"
-                                        className="flex-1"
-                                        onClick={() => {
-                                          setDecliningIdeaId(null)
-                                          setDeclineNotes('')
-                                        }}
-                                        disabled={isSubmitting}
-                                      >
-                                        Cancel
-                                      </Button>
-                                      <Button
-                                        variant="destructive"
-                                        className="flex-1"
-                                        onClick={() => handleDeclineIdea(idea.id)}
-                                        disabled={isSubmitting || !responderName.trim()}
-                                      >
-                                        Confirm decline
-                                      </Button>
-                                    </>
-                                  )}
+                          {isPending && (
+                            <div className="space-y-3 border-t border-border pt-4">
+                              {isDeclining && (
+                                <div className="space-y-2">
+                                  <Label htmlFor={`decline-notes-${idea.id}`}>
+                                    Feedback (optional)
+                                  </Label>
+                                  <Textarea
+                                    id={`decline-notes-${idea.id}`}
+                                    value={declineNotes}
+                                    onChange={(e) => setDeclineNotes(e.target.value)}
+                                    placeholder="Let us know why, if you'd like..."
+                                    rows={2}
+                                  />
                                 </div>
+                              )}
+                              <div className="flex flex-wrap gap-3">
+                                {!isDeclining ? (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      className="w-auto bg-green-600 text-white hover:bg-green-700 hover:text-white"
+                                      onClick={() => requestIdeaAction('confirm', idea.id)}
+                                      disabled={isSubmitting}
+                                    >
+                                      {isSubmitting ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                                      )}
+                                      I&apos;m interested
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() => setDecliningIdeaId(idea.id)}
+                                      disabled={isSubmitting}
+                                    >
+                                      <XCircle className="mr-2 h-4 w-4" />
+                                      Decline
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setDecliningIdeaId(null)
+                                        setDeclineNotes('')
+                                      }}
+                                      disabled={isSubmitting}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      onClick={() => requestIdeaAction('decline', idea.id)}
+                                      disabled={isSubmitting}
+                                    >
+                                      {isSubmitting ? (
+                                        <>
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                          Declining...
+                                        </>
+                                      ) : (
+                                        'Confirm decline'
+                                      )}
+                                    </Button>
+                                  </>
+                                )}
                               </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      </FadeInSection>
-                    )
-                  })}
-                </div>
-              </>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </FadeInSection>
+                  )
+                })}
+              </div>
             )}
           </TabsContent>
 
@@ -927,6 +1001,57 @@ export default function FlexiDesignShareClient({ shareToken }: FlexiDesignShareC
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Name prompt before confirming / declining an idea */}
+      <Dialog
+        open={!!pendingIdeaAction}
+        onOpenChange={(open) => {
+          if (!open) setPendingIdeaAction(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Your name</DialogTitle>
+            <DialogDescription>
+              {pendingIdeaAction?.type === 'decline'
+                ? 'We’ll record who declined this idea so the team can follow up.'
+                : 'We’ll record who confirmed interest so the team can follow up.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="idea-responder-name">Full name</Label>
+            <Input
+              id="idea-responder-name"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              placeholder="Full name"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && nameDraft.trim()) {
+                  e.preventDefault()
+                  void handleNameModalSubmit()
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingIdeaAction(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleNameModalSubmit()}
+              disabled={!nameDraft.trim()}
+            >
+              Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Gallery lightbox */}
       <Dialog
