@@ -1029,6 +1029,82 @@ async function selectAllRows<T>(
   return rows
 }
 
+type ProjectUpsertRow = Record<string, unknown> & { monday_item_id: string; name: string }
+type TaskUpsertRow = Record<string, unknown> & { monday_item_id: string; name: string }
+
+/**
+ * Upsert project rows in one request, falling back to row by row if the batch is rejected, so a
+ * single bad row cannot cost the whole chunk. Returns the written id for each `monday_item_id`;
+ * an item missing from the map failed to write and its tasks must be skipped.
+ *
+ * Every row must carry the same keys: PostgREST rejects a batch whose objects differ ("all object
+ * keys must match"), so write `null` rather than leaving a field off one row.
+ */
+async function upsertProjectRows(
+  supabase: SupabaseClient,
+  rows: ProjectUpsertRow[]
+): Promise<Map<string, string>> {
+  const idByItemId = new Map<string, string>()
+  if (rows.length === 0) return idByItemId
+
+  const collect = (written: Array<{ id: string; monday_item_id: string }> | null) => {
+    for (const row of written || []) idByItemId.set(String(row.monday_item_id), String(row.id))
+  }
+
+  const { data, error } = await supabase
+    .from('monday_projects')
+    .upsert(rows, { onConflict: 'monday_item_id' })
+    .select('id, monday_item_id')
+
+  if (!error) {
+    collect(data as Array<{ id: string; monday_item_id: string }> | null)
+    return idByItemId
+  }
+
+  console.error(
+    `Bulk upsert of ${rows.length} Monday projects failed (${error.message}); retrying row by row`
+  )
+  for (const row of rows) {
+    const { data: single, error: rowError } = await supabase
+      .from('monday_projects')
+      .upsert(row, { onConflict: 'monday_item_id' })
+      .select('id, monday_item_id')
+      .single()
+    if (rowError || !single) {
+      console.error(
+        `Error upserting Monday project "${row.name}":`,
+        rowError?.message ?? 'no row returned'
+      )
+      continue
+    }
+    collect([single as { id: string; monday_item_id: string }])
+  }
+  return idByItemId
+}
+
+/**
+ * Upsert task rows in one request, falling back to row by row if the batch is rejected.
+ * Rows must carry a uniform key set, for the same reason as `upsertProjectRows`.
+ */
+async function upsertTaskRows(supabase: SupabaseClient, rows: TaskUpsertRow[]): Promise<void> {
+  if (rows.length === 0) return
+
+  const { error } = await supabase.from('monday_tasks').upsert(rows, { onConflict: 'monday_item_id' })
+  if (!error) return
+
+  console.error(
+    `Bulk upsert of ${rows.length} Monday tasks failed (${error.message}); retrying row by row`
+  )
+  for (const row of rows) {
+    const { error: rowError } = await supabase
+      .from('monday_tasks')
+      .upsert(row, { onConflict: 'monday_item_id' })
+    if (rowError) {
+      console.error(`Error upserting Monday task "${row.name}":`, rowError.message)
+    }
+  }
+}
+
 export type SyncProgressEvent =
   | { phase: 'fetching'; message: string; progress: number }
   | { phase: 'checking'; message: string; progress: number }
@@ -1209,6 +1285,19 @@ export async function syncMondayData(
       else existingTasksByProjectId.set(row.project_id, [row])
     }
 
+    // Task ids that time entries reference, loaded once. An orphaned task with time logged on it
+    // must be kept (the FK is `on delete restrict`), so the sync loop tests this set rather than
+    // querying `time_entries` once per project.
+    const referencedTaskRows = await selectAllRows<{ task_id: string | null }>(
+      supabase,
+      'time_entries',
+      'task_id'
+    )
+    const taskIdsWithTimeEntries = new Set<string>()
+    for (const row of referencedTaskRows) {
+      if (row.task_id) taskIdsWithTimeEntries.add(row.task_id)
+    }
+
     // Helper function to extract quote_value from monday_data/column_values
     const extractQuoteValue = (data: Record<string, any> | undefined, columnId: string | null | undefined): number | null => {
       if (!data || !columnId || !data[columnId]) return null
@@ -1244,13 +1333,39 @@ export async function syncMondayData(
       return null
     }
 
-    // 3. Sync projects to Supabase, in chunks so subitems can be fetched in one Monday request per chunk.
+    /** A task row before its project's database id is known. */
+    type PreparedTaskRow = {
+      monday_item_id: string
+      name: string
+      is_subtask: true
+      parent_task_id: null
+      assigned_user_ids: string[] | null
+      quoted_hours: number | null
+      timeline_start: string | null
+      timeline_end: string | null
+      monday_data: Record<string, unknown> | undefined
+      /** null when the task has no status column, so readers fall back to hours-based completion. */
+      is_completed: boolean | null
+      updated_at: string
+    }
+
+    /** What a chunk still needs after its tasks are resolved but before anything is written. */
+    type PendingProject = {
+      project: MondayProject
+      /** Subitems Monday returned; undefined when this project's task sync is skipped. */
+      mondayTasks: MondayTask[] | undefined
+      existingTasks: ExistingTaskRow[]
+      taskRows: PreparedTaskRow[]
+    }
+
+    // 3. Sync projects to Supabase, in chunks so subitems are fetched in one Monday request per
+    // chunk and each chunk's projects and tasks are written in one request each.
     for (let chunkStart = 0; chunkStart < mondayProjects.length; chunkStart += SUBITEM_FETCH_BATCH_SIZE) {
       const chunk = mondayProjects.slice(chunkStart, chunkStart + SUBITEM_FETCH_BATCH_SIZE)
+      const chunkEnd = chunkStart + chunk.length
 
       // Phase 1: decide what to write for each project in the chunk (no I/O).
-      const prepared = chunk.map((project, offset) => {
-        const i = chunkStart + offset
+      const prepared = chunk.map((project) => {
       // Determine status based on board
       const isActive = activeBoardIds.has(project.board_id)
       const isCompleted = completedBoardIds.has(project.board_id)
@@ -1386,7 +1501,7 @@ export async function syncMondayData(
       const wasAlreadyLocked = existing?.status === 'locked'
       const skipTaskSync = wasAlreadyLocked && finalStatus === 'locked' && !syncAllBoards
 
-      return { i, project, existing, projectData, skipTaskSync }
+      return { project, existing, projectData, skipTaskSync, isLocked: finalStatus === 'locked' }
     })
 
       // Phase 2: one Monday request (per 25) for the subitems we actually need.
@@ -1398,119 +1513,130 @@ export async function syncMondayData(
         columnMappings
       )
 
-      // Phase 3: write each project and its tasks.
-      for (const { i, project, existing, projectData, skipTaskSync } of prepared) {
-        const progress = 0.1 + 0.85 * (i / Math.max(1, totalProjects))
-        report({
-          phase: 'syncing',
-          message: `Syncing ${project.name}`,
-          projectIndex: i + 1,
-          totalProjects,
-          projectName: project.name,
-          progress,
-        })
+      report({
+        phase: 'syncing',
+        message: `Syncing projects ${chunkStart + 1}-${chunkEnd} of ${totalProjects}`,
+        projectIndex: chunkEnd,
+        totalProjects,
+        projectName: chunk[chunk.length - 1]?.name ?? '',
+        progress: 0.1 + 0.85 * (chunkStart / Math.max(1, totalProjects)),
+      })
 
-        // Write and fetch the project record in one round trip
-        const { data: projectRecord, error: projectUpsertError } = await supabase
-          .from('monday_projects')
-          .upsert(projectData, { onConflict: 'monday_item_id' })
-          .select('id, status')
-          .single()
+      // Phase 3: resolve each project's tasks and its quoted-hours total (no I/O), so the total is
+      // written by the same upsert as the rest of the project row instead of a second update.
+      const projectRowByItemId = new Map<string, ProjectUpsertRow>()
+      const pending: PendingProject[] = []
 
-        if (projectUpsertError) {
-          console.error(`Error upserting Monday project "${project.name}":`, projectUpsertError.message)
-        }
-
-        if (!projectRecord || skipTaskSync) continue
-
+      for (const { project, existing, projectData, skipTaskSync, isLocked } of prepared) {
         // If Monday omitted this item from the subitems response, don't treat it as "no
         // subitems" - skip task sync for this project rather than deleting its tasks as orphans.
-        const mondayTasks = tasksByItemId.get(project.id)
-        if (mondayTasks === undefined) continue
+        const mondayTasks = skipTaskSync ? undefined : tasksByItemId.get(project.id)
+        const existingTasks = existing ? existingTasksByProjectId.get(existing.id) ?? [] : []
 
-        const isProjectLocked = projectRecord.status === 'locked'
+        let quotedHours = projectData.quoted_hours
+        const taskRows: PreparedTaskRow[] = []
 
-        // Get existing tasks to preserve quoted_hours for locked projects
-        const existingTasks = existingTasksByProjectId.get(projectRecord.id) ?? []
+        if (mondayTasks) {
+          // Total quoted hours across this project's tasks
+          let totalTaskQuotedHours = 0
+          const nowIso = new Date().toISOString()
 
-        // Track total quoted hours from tasks
-        let totalTaskQuotedHours = 0
+          for (const task of mondayTasks) {
+            // For locked projects, preserve existing quoted_hours if Monday doesn't provide it
+            const existingTask = existingTasks.find((t) => t.monday_item_id === task.id)
+            const preserveTaskQuotedHours = isLocked && existingTask && (!task.quoted_hours || task.quoted_hours === 0)
+            const finalTaskQuotedHours = preserveTaskQuotedHours
+              ? (existingTask.quoted_hours || task.quoted_hours || null)
+              : (task.quoted_hours || null)
 
-        const nowIso = new Date().toISOString()
-        const taskRows = mondayTasks.map((task) => {
-          // For locked projects, preserve existing quoted_hours if Monday doesn't provide it
-          const existingTask = existingTasks.find((t) => t.monday_item_id === task.id)
-          const preserveTaskQuotedHours = isProjectLocked && existingTask && (!task.quoted_hours || task.quoted_hours === 0)
-          const finalTaskQuotedHours = preserveTaskQuotedHours
-            ? (existingTask.quoted_hours || task.quoted_hours || null)
-            : (task.quoted_hours || null)
+            if (finalTaskQuotedHours) {
+              totalTaskQuotedHours += finalTaskQuotedHours
+            }
 
-          if (finalTaskQuotedHours) {
-            totalTaskQuotedHours += finalTaskQuotedHours
-          }
-
-          return {
-            monday_item_id: task.id,
-            project_id: projectRecord.id,
-            name: task.name,
-            is_subtask: true,
-            parent_task_id: null,
-            assigned_user_ids: task.assigned_user_ids || null,
-            quoted_hours: finalTaskQuotedHours,
-            timeline_start: task.timeline_start || null,
-            timeline_end: task.timeline_end || null,
-            monday_data: task.column_values,
-            // Derived here so the timesheet never has to select the raw payload to read it.
-            is_completed: getTaskCompletionFromStatus(task.column_values),
-            updated_at: nowIso,
-          }
-        })
-
-        if (taskRows.length > 0) {
-          const { error: taskUpsertError } = await supabase
-            .from('monday_tasks')
-            .upsert(taskRows, { onConflict: 'monday_item_id' })
-          if (taskUpsertError) {
-            console.error(`Error upserting Monday tasks for project "${project.name}":`, taskUpsertError.message)
-          }
-        }
-
-        // Update project's quoted_hours as sum of all task quoted_hours
-        // For locked projects: only update if new total is greater than 0, or if existing is 0/null
-        // This preserves historical budget data while still allowing updates when tasks are synced
-        const shouldUpdateQuotedHours = !isProjectLocked ||
-          totalTaskQuotedHours > 0 ||
-          !existing?.quoted_hours ||
-          existing.quoted_hours === 0
-
-        if (shouldUpdateQuotedHours) {
-          const updatedQuotedHours = totalTaskQuotedHours > 0 ? totalTaskQuotedHours : (existing?.quoted_hours || null)
-          await supabase
-            .from('monday_projects')
-            .update({
-              quoted_hours: updatedQuotedHours,
-              updated_at: new Date().toISOString()
+            taskRows.push({
+              monday_item_id: task.id,
+              name: task.name,
+              is_subtask: true,
+              parent_task_id: null,
+              assigned_user_ids: task.assigned_user_ids || null,
+              quoted_hours: finalTaskQuotedHours,
+              timeline_start: task.timeline_start || null,
+              timeline_end: task.timeline_end || null,
+              monday_data: task.column_values,
+              // Derived here so the timesheet never has to select the raw payload to read it.
+              is_completed: getTaskCompletionFromStatus(task.column_values),
+              updated_at: nowIso,
             })
-            .eq('id', projectRecord.id)
+          }
+
+          // The project's quoted_hours is the sum of its tasks'.
+          // For locked projects: only update if the new total is greater than 0, or if the existing
+          // value is 0/null. This preserves historical budget data while still allowing updates
+          // when tasks are synced.
+          const shouldUpdateQuotedHours = !isLocked ||
+            totalTaskQuotedHours > 0 ||
+            !existing?.quoted_hours ||
+            existing.quoted_hours === 0
+
+          if (shouldUpdateQuotedHours) {
+            quotedHours = totalTaskQuotedHours > 0 ? totalTaskQuotedHours : (existing?.quoted_hours || null)
+          }
         }
 
-        // Clean up orphaned tasks (in DB but no longer in Monday), keeping any that have time entries.
-        const syncedMondayTaskIds = new Set(mondayTasks.map((t) => t.id))
-        const orphanTaskIds = existingTasks
-          .filter((t) => !syncedMondayTaskIds.has(t.monday_item_id))
-          .map((t) => t.id)
+        // Keyed by item id: a duplicate item in one chunk would otherwise make Postgres reject the
+        // whole batch ("cannot affect row a second time").
+        projectRowByItemId.set(project.id, { ...projectData, quoted_hours: quotedHours })
+        pending.push({ project, mondayTasks, existingTasks, taskRows })
+      }
 
-        if (orphanTaskIds.length > 0) {
-          const { data: referenced } = await supabase
-            .from('time_entries')
-            .select('task_id')
-            .in('task_id', orphanTaskIds)
-          const referencedIds = new Set((referenced || []).map((r: { task_id: string }) => r.task_id))
-          const deletableIds = orphanTaskIds.filter((id) => !referencedIds.has(id))
-          if (deletableIds.length > 0) {
-            const { error: deleteError } = await supabase.from('monday_tasks').delete().in('id', deletableIds)
-            if (deleteError) {
-              console.error(`Error deleting orphaned Monday tasks for project "${project.name}":`, deleteError.message)
+      // Phase 4: write the chunk - one upsert for its projects, one for their tasks, one delete for
+      // the tasks that have gone from Monday.
+      const projectIdByItemId = await upsertProjectRows(
+        supabase,
+        Array.from(projectRowByItemId.values())
+      )
+
+      const taskRowByItemId = new Map<string, TaskUpsertRow>()
+      const orphanTaskIds: string[] = []
+
+      for (const { project, mondayTasks, existingTasks, taskRows } of pending) {
+        // No id means the project row failed to write; skip its tasks rather than orphan them.
+        const projectId = projectIdByItemId.get(project.id)
+        if (!projectId || mondayTasks === undefined) continue
+
+        for (const row of taskRows) {
+          taskRowByItemId.set(row.monday_item_id, { ...row, project_id: projectId })
+        }
+
+        // Tasks in the DB but no longer in Monday, minus any that have time logged against them.
+        const syncedMondayTaskIds = new Set(mondayTasks.map((t) => t.id))
+        for (const existingTask of existingTasks) {
+          if (
+            !syncedMondayTaskIds.has(existingTask.monday_item_id) &&
+            !taskIdsWithTimeEntries.has(existingTask.id)
+          ) {
+            orphanTaskIds.push(existingTask.id)
+          }
+        }
+      }
+
+      await upsertTaskRows(supabase, Array.from(taskRowByItemId.values()))
+
+      if (orphanTaskIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('monday_tasks')
+          .delete()
+          .in('id', orphanTaskIds)
+        if (deleteError) {
+          // A time entry logged during this sync can still restrict one of these deletes, which
+          // would take the whole batch down with it; retry one at a time so the rest go through.
+          console.error(
+            `Bulk delete of ${orphanTaskIds.length} orphaned Monday tasks failed (${deleteError.message}); retrying one by one`
+          )
+          for (const id of orphanTaskIds) {
+            const { error: rowError } = await supabase.from('monday_tasks').delete().eq('id', id)
+            if (rowError) {
+              console.error(`Error deleting orphaned Monday task ${id}:`, rowError.message)
             }
           }
         }
