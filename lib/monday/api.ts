@@ -957,11 +957,15 @@ function parseSubitemsForItem(
   return tasks
 }
 
+// items(ids:) lookups are not capped by the 25-item default page size (the completed-items fetch in
+// getMondayProjects already uses 100 ids per request); 25 keeps subitem payload and query complexity modest.
 const SUBITEM_FETCH_BATCH_SIZE = 25
 
 /**
  * Fetch subitems for many parent items in batches. Returns tasks keyed by parent item id;
- * every requested id is present in the map (empty array when the item has no subitems).
+ * only items Monday actually returned get an entry (empty array when that item has no
+ * subitems). An id missing from the map means Monday omitted it from the response, which
+ * callers must not treat as "no subitems".
  */
 export async function getMondayTasksForItems(
   accessToken: string,
@@ -970,7 +974,6 @@ export async function getMondayTasksForItems(
 ): Promise<Map<string, MondayTask[]>> {
   const result = new Map<string, MondayTask[]>()
   if (items.length === 0) return result
-  for (const it of items) result.set(it.id, [])
   const byId = new Map(items.map((it) => [it.id, it]))
 
   const query = `
@@ -1000,6 +1003,29 @@ export async function getMondayTasksForItems(
   }
 
   return result
+}
+
+const SNAPSHOT_PAGE_SIZE = 1000
+
+/** Read every row of a table in pages, so PostgREST's max-rows cap cannot silently truncate the snapshot. */
+async function selectAllRows<T>(
+  supabase: SupabaseClient,
+  table: string,
+  columns: string
+): Promise<T[]> {
+  const rows: T[] = []
+  for (let from = 0; ; from += SNAPSHOT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .order('id', { ascending: true })
+      .range(from, from + SNAPSHOT_PAGE_SIZE - 1)
+    if (error) throw new Error(`Failed to load ${table}: ${error.message}`)
+    const page = (data || []) as T[]
+    rows.push(...page)
+    if (page.length < SNAPSHOT_PAGE_SIZE) break
+  }
+  return rows
 }
 
 export type SyncProgressEvent =
@@ -1097,11 +1123,13 @@ export async function syncMondayData(
       likelihood: number | null
       monday_data: Record<string, { text?: string; value?: unknown }> | null
     }
-    const { data: existingProjects } = await supabase
-      .from('monday_projects')
-      .select('id, monday_item_id, status, monday_board_id, quoted_hours, quote_value, monday_status, likelihood, monday_data')
+    const existingProjects = await selectAllRows<ExistingProjectRow>(
+      supabase,
+      'monday_projects',
+      'id, monday_item_id, status, monday_board_id, quoted_hours, quote_value, monday_status, likelihood, monday_data'
+    )
     const existingByItemId = new Map<string, ExistingProjectRow>(
-      ((existingProjects || []) as ExistingProjectRow[]).map((p) => [p.monday_item_id, p])
+      existingProjects.map((p) => [p.monday_item_id, p])
     )
 
     let archived = 0
@@ -1168,11 +1196,13 @@ export async function syncMondayData(
 
     // All existing tasks, loaded once and grouped by project.
     type ExistingTaskRow = { id: string; monday_item_id: string; project_id: string; quoted_hours: number | null }
-    const { data: allExistingTasks } = await supabase
-      .from('monday_tasks')
-      .select('id, monday_item_id, project_id, quoted_hours')
+    const allExistingTasks = await selectAllRows<ExistingTaskRow>(
+      supabase,
+      'monday_tasks',
+      'id, monday_item_id, project_id, quoted_hours'
+    )
     const existingTasksByProjectId = new Map<string, ExistingTaskRow[]>()
-    for (const row of (allExistingTasks || []) as ExistingTaskRow[]) {
+    for (const row of allExistingTasks) {
       const list = existingTasksByProjectId.get(row.project_id)
       if (list) list.push(row)
       else existingTasksByProjectId.set(row.project_id, [row])
@@ -1380,16 +1410,24 @@ export async function syncMondayData(
         })
 
         // Write and fetch the project record in one round trip
-        const { data: projectRecord } = await supabase
+        const { data: projectRecord, error: projectUpsertError } = await supabase
           .from('monday_projects')
           .upsert(projectData, { onConflict: 'monday_item_id' })
           .select('id, status')
           .single()
 
+        if (projectUpsertError) {
+          console.error(`Error upserting Monday project "${project.name}":`, projectUpsertError.message)
+        }
+
         if (!projectRecord || skipTaskSync) continue
 
+        // If Monday omitted this item from the subitems response, don't treat it as "no
+        // subitems" - skip task sync for this project rather than deleting its tasks as orphans.
+        const mondayTasks = tasksByItemId.get(project.id)
+        if (mondayTasks === undefined) continue
+
         const isProjectLocked = projectRecord.status === 'locked'
-        const mondayTasks = tasksByItemId.get(project.id) ?? []
 
         // Get existing tasks to preserve quoted_hours for locked projects
         const existingTasks = existingTasksByProjectId.get(projectRecord.id) ?? []
@@ -1426,9 +1464,12 @@ export async function syncMondayData(
         })
 
         if (taskRows.length > 0) {
-          await supabase
+          const { error: taskUpsertError } = await supabase
             .from('monday_tasks')
             .upsert(taskRows, { onConflict: 'monday_item_id' })
+          if (taskUpsertError) {
+            console.error(`Error upserting Monday tasks for project "${project.name}":`, taskUpsertError.message)
+          }
         }
 
         // Update project's quoted_hours as sum of all task quoted_hours
@@ -1464,7 +1505,10 @@ export async function syncMondayData(
           const referencedIds = new Set((referenced || []).map((r: { task_id: string }) => r.task_id))
           const deletableIds = orphanTaskIds.filter((id) => !referencedIds.has(id))
           if (deletableIds.length > 0) {
-            await supabase.from('monday_tasks').delete().in('id', deletableIds)
+            const { error: deleteError } = await supabase.from('monday_tasks').delete().in('id', deletableIds)
+            if (deleteError) {
+              console.error(`Error deleting orphaned Monday tasks for project "${project.name}":`, deleteError.message)
+            }
           }
         }
       }
