@@ -1382,25 +1382,11 @@ export async function syncMondayData(
       }
 
       // 3. Write and fetch the project record in one round trip
-      let projectRecord: { id: string; status: string } | null = null
-      if (existing) {
-        // Update existing project
-        const { data } = await supabase
-          .from('monday_projects')
-          .update(projectData)
-          .eq('monday_item_id', project.id)
-          .select('id, status')
-          .single()
-        projectRecord = data
-      } else {
-        // Insert new project
-        const { data } = await supabase
-          .from('monday_projects')
-          .insert(projectData)
-          .select('id, status')
-          .single()
-        projectRecord = data
-      }
+      const { data: projectRecord } = await supabase
+        .from('monday_projects')
+        .upsert(projectData, { onConflict: 'monday_item_id' })
+        .select('id, status')
+        .single()
 
       // Locked (completed) projects rarely change. Skip the per-project subitem fetch and task
       // writes unless this is a full resync, or the project has only just become locked this run.
@@ -1424,48 +1410,38 @@ export async function syncMondayData(
         // Track total quoted hours from tasks
         let totalTaskQuotedHours = 0
 
-        for (const task of mondayTasks) {
+        const nowIso = new Date().toISOString()
+        const taskRows = mondayTasks.map((task) => {
           // For locked projects, preserve existing quoted_hours if Monday doesn't provide it
-          const existingTask = existingTasks.find(t => t.monday_item_id === task.id)
+          const existingTask = existingTasks.find((t) => t.monday_item_id === task.id)
           const preserveTaskQuotedHours = isProjectLocked && existingTask && (!task.quoted_hours || task.quoted_hours === 0)
           const finalTaskQuotedHours = preserveTaskQuotedHours
             ? (existingTask.quoted_hours || task.quoted_hours || null)
             : (task.quoted_hours || null)
 
-          // Add to total (use 0 if null)
           if (finalTaskQuotedHours) {
             totalTaskQuotedHours += finalTaskQuotedHours
           }
 
-          const taskData = {
+          return {
             monday_item_id: task.id,
             project_id: projectRecord.id,
             name: task.name,
             is_subtask: true,
-            parent_task_id: null, // Can be set if there are nested subtasks
+            parent_task_id: null,
             assigned_user_ids: task.assigned_user_ids || null,
             quoted_hours: finalTaskQuotedHours,
             timeline_start: task.timeline_start || null,
             timeline_end: task.timeline_end || null,
             monday_data: task.column_values,
-            updated_at: new Date().toISOString(),
+            updated_at: nowIso,
           }
+        })
 
-          // Check if task exists
-          const { data: existingTaskRecord } = await supabase
+        if (taskRows.length > 0) {
+          await supabase
             .from('monday_tasks')
-            .select('id')
-            .eq('monday_item_id', task.id)
-            .single()
-
-          if (existingTaskRecord) {
-            await supabase
-              .from('monday_tasks')
-              .update(taskData)
-              .eq('monday_item_id', task.id)
-          } else {
-            await supabase.from('monday_tasks').insert(taskData)
-          }
+            .upsert(taskRows, { onConflict: 'monday_item_id' })
         }
 
         // Update project's quoted_hours as sum of all task quoted_hours
@@ -1487,36 +1463,22 @@ export async function syncMondayData(
             .eq('id', projectRecord.id)
         }
 
-        // Clean up orphaned tasks (tasks that exist in DB but not in Monday.com)
-        // Track which Monday task IDs we just synced
-        const syncedMondayTaskIds = new Set(mondayTasks.map(t => t.id))
-        
-        // Find tasks in DB that weren't in the sync (orphaned tasks)
-        for (const dbTask of existingTasks) {
-          // Skip if this task was just synced
-          if (syncedMondayTaskIds.has(dbTask.monday_item_id)) {
-            continue
-          }
+        // Clean up orphaned tasks (in DB but no longer in Monday), keeping any that have time entries.
+        const syncedMondayTaskIds = new Set(mondayTasks.map((t) => t.id))
+        const orphanTaskIds = existingTasks
+          .filter((t) => !syncedMondayTaskIds.has(t.monday_item_id))
+          .map((t) => t.id)
 
-          // Task exists in DB but not in Monday.com - check if it can be deleted
-          // Check if task has any time entries (on delete restrict prevents deletion if it does)
-          const { data: taskTimeEntries } = await supabase
+        if (orphanTaskIds.length > 0) {
+          const { data: referenced } = await supabase
             .from('time_entries')
-            .select('id')
-            .eq('task_id', dbTask.id)
-            .limit(1)
-
-          const hasTimeEntries = taskTimeEntries && taskTimeEntries.length > 0
-
-          if (!hasTimeEntries) {
-            // Safe to delete - no time entries referencing it
-            await supabase
-              .from('monday_tasks')
-              .delete()
-              .eq('id', dbTask.id)
+            .select('task_id')
+            .in('task_id', orphanTaskIds)
+          const referencedIds = new Set((referenced || []).map((r: { task_id: string }) => r.task_id))
+          const deletableIds = orphanTaskIds.filter((id) => !referencedIds.has(id))
+          if (deletableIds.length > 0) {
+            await supabase.from('monday_tasks').delete().in('id', deletableIds)
           }
-          // If has time entries, we keep it (can't delete due to foreign key constraint)
-          // This preserves historical time tracking data
         }
       }
     }
