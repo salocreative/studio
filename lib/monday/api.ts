@@ -1376,7 +1376,12 @@ export async function syncMondayData(
         .eq('monday_item_id', project.id)
         .single()
 
-      if (projectRecord) {
+      // Locked (completed) projects rarely change. Skip the per-project subitem fetch and task
+      // writes unless this is a full resync, or the project has only just become locked this run.
+      const wasAlreadyLocked = existing?.status === 'locked'
+      const skipTaskSync = wasAlreadyLocked && finalStatus === 'locked' && !syncAllBoards
+
+      if (projectRecord && !skipTaskSync) {
         const isProjectLocked = projectRecord.status === 'locked'
         const mondayTasks = await getMondayTasks(
           accessToken,
