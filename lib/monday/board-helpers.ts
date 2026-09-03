@@ -1,6 +1,32 @@
-'use server'
-
+import { cache } from 'react'
+import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+
+/**
+ * Cache tag for the Monday board-name lookup. Bust with `revalidateTag` if a board is
+ * renamed in Monday and the change needs to land before the TTL expires.
+ */
+export const MONDAY_BOARDS_CACHE_TAG = 'monday-boards'
+
+/** Board names change rarely; this lookup used to run on every timesheet page load. */
+const MONDAY_BOARD_NAMES_TTL_SECONDS = 3600
+
+/** Never let a slow Monday response hold up a page render. */
+const MONDAY_BOARD_NAMES_TIMEOUT_MS = 8000
+
+/** Postgres/PostgREST codes and messages that mean "this table hasn't been migrated yet". */
+function isMissingTableError(error: { code?: string | null; message?: string | null } | null): boolean {
+  if (!error) return false
+  const code = error.code ?? ''
+  const msg = error.message ?? ''
+  return (
+    code === '42P01' ||
+    code === 'PGRST116' ||
+    msg.includes('does not exist') ||
+    msg.includes('relation') ||
+    msg.includes('schema cache')
+  )
+}
 
 type FlexiBoardDbResult =
   | { ok: true; ids: string[] }
@@ -12,15 +38,7 @@ async function loadFlexiDesignBoardIdsFromDb(): Promise<FlexiBoardDbResult> {
   const { data, error } = await supabase.from('flexi_design_boards').select('monday_board_id')
 
   if (error) {
-    const code = error.code ?? ''
-    const msg = error.message ?? ''
-    if (
-      code === '42P01' ||
-      code === 'PGRST116' ||
-      msg.includes('does not exist') ||
-      msg.includes('relation') ||
-      msg.includes('schema cache')
-    ) {
+    if (isMissingTableError(error)) {
       return { ok: false, reason: 'missing_table' }
     }
     console.error('flexi_design_boards:', error)
@@ -32,30 +50,41 @@ async function loadFlexiDesignBoardIdsFromDb(): Promise<FlexiBoardDbResult> {
 }
 
 /**
- * Legacy: infer Flexi boards by fetching Monday board names (contains "flexi").
- * Merged with `flexi_design_boards` for Main vs Flexi filtering.
+ * Board IDs that have column mappings configured. Deduped per request — both
+ * `getFlexiDesignBoardIds` and `getMainTimesheetBoardIds` need it.
  */
-async function loadFlexiDesignBoardIdsLegacy(): Promise<Set<string>> {
+const loadMappedBoardIds = cache(async (): Promise<string[]> => {
   const supabase = await createClient()
 
-  try {
-    const { data: mappings } = await supabase
-      .from('monday_column_mappings')
-      .select('board_id')
-      .not('board_id', 'is', null)
+  const { data, error } = await supabase
+    .from('monday_column_mappings')
+    .select('board_id')
+    .not('board_id', 'is', null)
 
-    if (!mappings || mappings.length === 0) {
-      return new Set()
-    }
+  if (error) {
+    console.error('monday_column_mappings:', error)
+    return []
+  }
 
+  return Array.from(
+    new Set((data ?? []).map((m: { board_id: string | null }) => m.board_id).filter(Boolean))
+  ) as string[]
+})
+
+/**
+ * Legacy: infer Flexi boards by asking Monday for board names and matching "flexi".
+ *
+ * This is an external network call, so it is cached across requests. The cache key includes
+ * the board IDs, so configuring a mapping for a new board takes effect immediately; only a
+ * board *rename* inside Monday waits for the TTL.
+ */
+const fetchFlexiBoardIdsFromMonday = unstable_cache(
+  async (boardIds: string[]): Promise<string[]> => {
     const mondayApiToken = process.env.MONDAY_API_TOKEN
-    if (!mondayApiToken) {
-      return new Set()
+    if (!mondayApiToken || boardIds.length === 0) {
+      return []
     }
 
-    const boardIds = Array.from(new Set(mappings.map((m: { board_id: string | null }) => m.board_id).filter(Boolean)))
-
-    const MONDAY_API_URL = 'https://api.monday.com/v2'
     const query = `
       query($boardIds: [ID!]) {
         boards(ids: $boardIds) {
@@ -65,36 +94,59 @@ async function loadFlexiDesignBoardIdsLegacy(): Promise<Set<string>> {
       }
     `
 
-    const response = await fetch(MONDAY_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: mondayApiToken,
-      },
-      body: JSON.stringify({ query, variables: { boardIds } }),
-    })
+    try {
+      const response = await fetch('https://api.monday.com/v2', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: mondayApiToken,
+        },
+        body: JSON.stringify({ query, variables: { boardIds } }),
+        signal: AbortSignal.timeout(MONDAY_BOARD_NAMES_TIMEOUT_MS),
+      })
 
-    if (!response.ok) {
-      return new Set()
-    }
-
-    const result = await response.json()
-    if (result.errors) {
-      return new Set()
-    }
-
-    const flexiDesignBoardIds = new Set<string>()
-    result.data?.boards?.forEach((board: { id: string; name: string }) => {
-      if (board.name.toLowerCase().includes('flexi')) {
-        flexiDesignBoardIds.add(board.id)
+      if (!response.ok) {
+        return []
       }
-    })
 
-    return flexiDesignBoardIds
-  } catch (error) {
-    console.error('Error identifying Flexi-Design boards (legacy):', error)
-    return new Set()
+      const result = await response.json()
+      if (result.errors) {
+        return []
+      }
+
+      return (result.data?.boards ?? [])
+        .filter((board: { name: string }) => board.name.toLowerCase().includes('flexi'))
+        .map((board: { id: string }) => board.id)
+    } catch (error) {
+      console.error('Error identifying Flexi-Design boards (legacy):', error)
+      return []
+    }
+  },
+  ['monday-flexi-board-ids'],
+  { revalidate: MONDAY_BOARD_NAMES_TTL_SECONDS, tags: [MONDAY_BOARDS_CACHE_TAG] }
+)
+
+/** Shared by both public helpers so the mapped-board query isn't run twice. */
+async function resolveFlexiDesignBoardIds(mappedBoardIds: string[]): Promise<Set<string>> {
+  // Sorted so the cache key is stable regardless of row order.
+  const sortedBoardIds = [...mappedBoardIds].sort()
+
+  const [fromDb, legacyIds] = await Promise.all([
+    loadFlexiDesignBoardIdsFromDb(),
+    fetchFlexiBoardIdsFromMonday(sortedBoardIds),
+  ])
+
+  const merged = new Set<string>()
+  if (fromDb.ok) {
+    for (const id of fromDb.ids) {
+      merged.add(id)
+    }
   }
+  for (const id of legacyIds) {
+    merged.add(id)
+  }
+
+  return merged
 }
 
 /**
@@ -107,65 +159,61 @@ async function loadFlexiDesignBoardIdsLegacy(): Promise<Set<string>> {
  * Merging avoids Flexi projects leaking into the Main timesheet when the DB list is partial, and keeps
  * behavior stable when the table is empty (legacy-only) or Monday token is unavailable (DB-only).
  */
-export async function getFlexiDesignBoardIds(): Promise<Set<string>> {
-  const fromDb = await loadFlexiDesignBoardIdsFromDb()
-  const legacy = await loadFlexiDesignBoardIdsLegacy()
+export const getFlexiDesignBoardIds = cache(async (): Promise<Set<string>> => {
+  const mappedBoardIds = await loadMappedBoardIds()
+  return resolveFlexiDesignBoardIds(mappedBoardIds)
+})
 
-  const merged = new Set<string>()
-  if (fromDb.ok) {
-    for (const id of fromDb.ids) {
-      merged.add(id)
+/**
+ * Monday board ID of the configured Flexi-Design completed board, or null.
+ *
+ * Reads the table directly rather than going through `getFlexiDesignCompletedBoard`, which
+ * re-authenticates on every call. Tolerates the table not existing yet (migration 014).
+ */
+export const getFlexiDesignCompletedBoardId = cache(async (): Promise<string | null> => {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from('flexi_design_completed_board')
+    .select('monday_board_id')
+    .maybeSingle()
+
+  if (error) {
+    if (!isMissingTableError(error)) {
+      console.error('flexi_design_completed_board:', error)
     }
-  }
-  for (const id of legacy) {
-    merged.add(id)
+    return null
   }
 
-  return merged
-}
+  return data?.monday_board_id ?? null
+})
 
 /**
  * Monday board IDs used for the Main projects surface (timesheet, projects list):
  * boards that have column mappings, excluding Flexi boards, completed archives, Flexi completed, and leads.
  * Aligns with Settings → Column Mappings classification for Main vs other board types.
  */
-export async function getMainTimesheetBoardIds(): Promise<Set<string>> {
+export const getMainTimesheetBoardIds = cache(async (): Promise<Set<string>> => {
   const supabase = await createClient()
 
-  const { data: mappings, error: mapErr } = await supabase
-    .from('monday_column_mappings')
-    .select('board_id')
-    .not('board_id', 'is', null)
-
-  if (mapErr) {
-    console.error('getMainTimesheetBoardIds mappings:', mapErr)
-    return new Set()
-  }
-
-  const mappedBoardIds = Array.from(
-    new Set((mappings ?? []).map((m: { board_id: string | null }) => m.board_id).filter(Boolean))
-  ) as string[]
+  const mappedBoardIds = await loadMappedBoardIds()
 
   if (mappedBoardIds.length === 0) {
     return new Set()
   }
 
-  const flexiIds = await getFlexiDesignBoardIds()
+  // Everything below depends only on the mapped board list, so resolve it concurrently.
+  const [flexiIds, completedBoardsResult, leadsResult, flexiCompletedId] = await Promise.all([
+    resolveFlexiDesignBoardIds(mappedBoardIds),
+    supabase.from('monday_completed_boards').select('monday_board_id'),
+    supabase.from('monday_leads_board').select('monday_board_id').maybeSingle(),
+    getFlexiDesignCompletedBoardId(),
+  ])
 
-  const { data: completedBoards } = await supabase.from('monday_completed_boards').select('monday_board_id')
   const completedIds = new Set(
-    (completedBoards ?? []).map((b: { monday_board_id: string }) => b.monday_board_id)
+    (completedBoardsResult.data ?? []).map((b: { monday_board_id: string }) => b.monday_board_id)
   )
-
-  const { data: leadsRow } = await supabase.from('monday_leads_board').select('monday_board_id').maybeSingle()
-  const leadsId = leadsRow?.monday_board_id ?? null
-
-  const { getFlexiDesignCompletedBoard } = await import('@/app/actions/flexi-design-completed-board')
-  const flexiCompletedResult = await getFlexiDesignCompletedBoard()
-  const flexiCompletedId =
-    flexiCompletedResult.success && flexiCompletedResult.board?.monday_board_id
-      ? flexiCompletedResult.board.monday_board_id
-      : null
+  const leadsId = leadsResult.data?.monday_board_id ?? null
 
   const main = new Set<string>()
   for (const bid of mappedBoardIds) {
@@ -177,13 +225,13 @@ export async function getMainTimesheetBoardIds(): Promise<Set<string>> {
   }
 
   return main
-}
+})
 
 /**
  * Get the leads board ID
  * Returns the board ID if configured, null otherwise
  */
-export async function getLeadsBoardId(): Promise<string | null> {
+export const getLeadsBoardId = cache(async (): Promise<string | null> => {
   const supabase = await createClient()
 
   try {
@@ -199,4 +247,4 @@ export async function getLeadsBoardId(): Promise<string | null> {
     console.error('Error fetching leads board:', error)
     return null
   }
-}
+})

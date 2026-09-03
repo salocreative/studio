@@ -1,12 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Pencil, Trash2, RefreshCw } from 'lucide-react'
 import { format, addDays, startOfDay, isSameDay, getDay, nextMonday, isWeekend, startOfMonth, endOfMonth, eachDayOfInterval, getDaysInMonth, addMonths, subMonths } from 'date-fns'
-import { getProjectsWithTasks, getTimeEntries, deleteTimeEntry } from '@/app/actions/time-tracking'
+import {
+  getProjectsWithTasks,
+  getTimeEntries,
+  getTimeTrackingBootstrap,
+  deleteTimeEntry,
+} from '@/app/actions/time-tracking'
 import { ProjectTaskSelector } from './components/project-task-selector'
 import { TimeEntryForm } from './components/time-entry-form'
 import {
@@ -26,8 +31,8 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { checkIsAdmin } from '@/app/actions/auth'
-import { getUsers } from '@/app/actions/users'
+
+type BoardType = 'main' | 'flexi-design'
 
 interface Task {
   id: string
@@ -35,7 +40,8 @@ interface Task {
   quoted_hours?: number | null
   logged_hours?: number | null
   time_left?: number | null
-  monday_data?: Record<string, any> | null
+  /** Derived server-side from the Monday status column; null when the task has no status column. */
+  is_completed?: boolean | null
   is_favorite?: boolean
 }
 
@@ -64,15 +70,20 @@ interface User {
   full_name: string | null
 }
 
+/** Identifies the time-entry fetch currently loaded, so effects don't repeat it. */
+function entriesKeyFor(date: Date, userId?: string) {
+  return `${format(date, 'yyyy-MM-dd')}|${userId ?? ''}`
+}
+
 export default function TimeTrackingPage() {
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [view, setView] = useState<'daily' | 'calendar'>('daily')
-  const [projects, setProjects] = useState<Project[]>([])
+  /** Projects cached per board, so switching back to a board is instant. */
+  const [projectsByBoard, setProjectsByBoard] = useState<Partial<Record<BoardType, Project[]>>>({})
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([])
-  const [loading, setLoading] = useState(true)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
-  const [boardType, setBoardType] = useState<'main' | 'flexi-design'>('main')
+  const [boardType, setBoardType] = useState<BoardType>('main')
   const [isAdmin, setIsAdmin] = useState(false)
   const [users, setUsers] = useState<User[]>([])
   const [selectedUserId, setSelectedUserId] = useState<string | undefined>(undefined)
@@ -87,54 +98,112 @@ export default function TimeTrackingPage() {
   /** When parent's time-entry dialog succeeds, CalendarView refreshes monthly aggregates. */
   const [calendarMonthRefreshSignal, setCalendarMonthRefreshSignal] = useState(0)
 
+  /** Boards with a fetch in flight, so the mount effects don't duplicate the bootstrap. */
+  const inFlightBoards = useRef<Set<BoardType>>(new Set())
+  /** Key of the time-entry fetch already loaded or in flight. */
+  const entriesKeyRef = useRef<string | null>(null)
+
+  const projects = projectsByBoard[boardType] ?? []
+  const projectsLoading = projectsByBoard[boardType] === undefined
+
+  // One round trip for the first paint: admin flag, users, projects and the day's entries.
   useEffect(() => {
-    checkAdminAndLoadUsers()
+    const board = boardType
+    const dateStr = format(selectedDate, 'yyyy-MM-dd')
+
+    if (inFlightBoards.current.has(board)) return
+    inFlightBoards.current.add(board)
+    entriesKeyRef.current = entriesKeyFor(selectedDate, selectedUserId)
+
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const result = await getTimeTrackingBootstrap({
+          boardType: board,
+          startDate: dateStr,
+          endDate: dateStr,
+          targetUserId: selectedUserId,
+        })
+
+        if (cancelled) return
+
+        if ('error' in result) {
+          console.error('Error loading time tracking:', result.error)
+          setProjectsByBoard((prev) => ({ ...prev, [board]: [] }))
+          return
+        }
+
+        setIsAdmin(Boolean(result.isAdmin))
+        setUsers((result.users ?? []) as User[])
+
+        if (result.projectsError) {
+          console.error('Error loading projects:', result.projectsError)
+        }
+        setProjectsByBoard((prev) => ({ ...prev, [board]: (result.projects ?? []) as Project[] }))
+
+        if (result.entriesError) {
+          console.error('Error loading time entries:', result.entriesError)
+        }
+        setTimeEntries((result.entries ?? []) as TimeEntry[])
+      } catch (error) {
+        console.error('Error loading time tracking:', error)
+        if (!cancelled) {
+          setProjectsByBoard((prev) => ({ ...prev, [board]: [] }))
+        }
+      } finally {
+        inFlightBoards.current.delete(board)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // Mount only; board and date changes are handled by the effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Fetch a board's projects the first time it is selected; cached boards render immediately.
   useEffect(() => {
-    loadData()
-  }, [boardType])
+    if (projectsByBoard[boardType] !== undefined) return
+    void loadProjects(boardType)
+  }, [boardType, projectsByBoard])
 
   useEffect(() => {
-    loadTimeEntries()
+    void loadTimeEntries()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, selectedUserId])
 
-  async function checkAdminAndLoadUsers() {
-    try {
-      const { isAdmin: admin } = await checkIsAdmin()
-      setIsAdmin(admin)
-      if (admin) {
-        const result = await getUsers()
-        if (result.success && result.users) {
-          setUsers(result.users)
-        }
-      }
-    } catch (error) {
-      console.error('Error checking admin status:', error)
-    }
-  }
+  async function loadProjects(board: BoardType) {
+    if (inFlightBoards.current.has(board)) return
+    inFlightBoards.current.add(board)
 
-  async function loadData() {
-    setLoading(true)
     try {
-      const result = await getProjectsWithTasks(boardType)
-      if (result.error) {
+      const result = await getProjectsWithTasks(board)
+      if ('error' in result) {
         console.error('Error loading projects:', result.error)
-      } else if (result.projects) {
-        setProjects(result.projects)
+        // Settle the board so it stops showing the loading state.
+        setProjectsByBoard((prev) => ({ ...prev, [board]: prev[board] ?? [] }))
+        return
       }
+      setProjectsByBoard((prev) => ({ ...prev, [board]: (result.projects ?? []) as Project[] }))
     } catch (error) {
       console.error('Error loading data:', error)
+      setProjectsByBoard((prev) => ({ ...prev, [board]: prev[board] ?? [] }))
     } finally {
-      setLoading(false)
+      inFlightBoards.current.delete(board)
     }
   }
 
-  async function loadTimeEntries() {
+  async function loadTimeEntries(options?: { force?: boolean }) {
+    const key = entriesKeyFor(selectedDate, selectedUserId)
+    if (!options?.force && entriesKeyRef.current === key) return
+    entriesKeyRef.current = key
+
     const dateStr = format(selectedDate, 'yyyy-MM-dd')
     try {
       const result = await getTimeEntries(dateStr, dateStr, selectedUserId)
-      if (result.error) {
+      if ('error' in result) {
         console.error('Error loading time entries:', result.error)
       } else if (result.entries) {
         setTimeEntries(result.entries as TimeEntry[])
@@ -214,8 +283,8 @@ export default function TimeTrackingPage() {
     setSelectedProject(null)
     setExistingTimeEntry(null)
     setCalendarMonthRefreshSignal((t) => t + 1)
-    loadTimeEntries()
-    loadData() // Refresh favorites
+    void loadTimeEntries({ force: true })
+    void loadProjects(boardType) // Refresh favourites and logged hours
   }
 
   const handleQuickSync = async () => {
@@ -274,7 +343,7 @@ export default function TimeTrackingPage() {
             if ((event.deleted ?? 0) > 0) parts.push(`${event.deleted} deleted`)
             const completeMessage = parts.join(', ') + ' from Monday.com'
             setSyncStatus(completeMessage)
-            await loadData()
+            await loadProjects(boardType)
             toast.success(completeMessage)
             setTimeout(() => setSyncing(false), 1500)
             return
@@ -307,7 +376,7 @@ export default function TimeTrackingPage() {
         toast.error('Error deleting entry', { description: result.error })
       } else {
         toast.success('Time entry deleted')
-        loadTimeEntries()
+        void loadTimeEntries({ force: true })
       }
     } catch (error) {
       console.error('Error deleting entry:', error)
@@ -391,7 +460,7 @@ export default function TimeTrackingPage() {
             onSelectTask={handleSelectTask}
             onDeleteEntry={handleDeleteEntry}
             onEditEntry={handleEditEntry}
-            loading={loading}
+            loading={projectsLoading}
             boardType={boardType}
             onBoardTypeChange={setBoardType}
           />

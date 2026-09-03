@@ -15,7 +15,8 @@ interface Task {
   quoted_hours?: number | null
   logged_hours?: number | null
   time_left?: number | null
-  monday_data?: Record<string, any> | null
+  /** Derived server-side from the Monday status column; null when the task has no status column. */
+  is_completed?: boolean | null
   is_favorite?: boolean
 }
 
@@ -119,31 +120,6 @@ export function ProjectTaskSelector({
 
   const uniqueClients = getUniqueClients()
 
-  const getCompletionFromStatus = (task: Task): boolean | null => {
-    if (!task.monday_data || typeof task.monday_data !== 'object') return null
-
-    const statusColumns = Object.values(task.monday_data).filter((column: any) => column?.type === 'status')
-    if (statusColumns.length === 0) return null
-
-    const completedPattern = /\b(done|complete|completed|closed)\b/i
-
-    for (const column of statusColumns) {
-      const textValue = typeof column?.text === 'string' ? column.text : ''
-      const parsedValue = column?.value
-      const labelFromValue =
-        typeof parsedValue?.label === 'string'
-          ? parsedValue.label
-          : typeof parsedValue?.label?.text === 'string'
-            ? parsedValue.label.text
-            : ''
-
-      if (completedPattern.test(textValue) || completedPattern.test(labelFromValue)) {
-        return true
-      }
-    }
-
-    return false
-  }
   const projectHoursById = useMemo(() => {
     return projects.reduce<Record<string, { estimatedHours: number; remainingHours: number }>>((acc, project) => {
       const taskQuotedTotal = project.tasks.reduce((sum, task) => sum + (task.quoted_hours || 0), 0)
@@ -259,7 +235,7 @@ export function ProjectTaskSelector({
                     {projectHoursById[project.id]?.estimatedHours > 0 && (
                       <div className="text-xs text-muted-foreground mt-1">
                         {projectHoursById[project.id].remainingHours === projectHoursById[project.id].estimatedHours
-                          ? 'Not started'
+                          ? `${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`
                           : `${projectHoursById[project.id].remainingHours.toFixed(1)}h remaining / ${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`}
                       </div>
                     )}
@@ -273,8 +249,7 @@ export function ProjectTaskSelector({
                   <div className="border-t bg-muted/30">
                     {project.tasks.map((task) => {
                       const remainingHours = task.time_left ?? Math.max(0, (task.quoted_hours || 0) - (task.logged_hours || 0))
-                      const completionFromStatus = getCompletionFromStatus(task)
-                      const isCompleted = completionFromStatus ?? Boolean(task.quoted_hours && (task.logged_hours || 0) > 0 && remainingHours === 0)
+                      const isCompleted = task.is_completed ?? Boolean(task.quoted_hours && (task.logged_hours || 0) > 0 && remainingHours === 0)
 
                       return (
                         <div
@@ -300,7 +275,7 @@ export function ProjectTaskSelector({
                             {task.quoted_hours && (
                               <div className={cn("text-xs text-muted-foreground", isCompleted && "text-green-700/90 dark:text-green-300")}>
                                 {remainingHours === task.quoted_hours
-                                  ? 'Not started'
+                                  ? `${task.quoted_hours.toFixed(1)}h estimated`
                                   : `${remainingHours.toFixed(1)}h remaining / ${task.quoted_hours.toFixed(1)}h estimated`}
                               </div>
                             )}

@@ -1,8 +1,14 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { getFlexiDesignBoardIds, getMainTimesheetBoardIds } from '@/lib/monday/board-helpers'
-import { getFlexiDesignCompletedBoard } from '@/app/actions/flexi-design-completed-board'
+import { getRequestClient, getRequestUser, isRequestUserAdmin } from '@/lib/supabase/session'
+import {
+  getFlexiDesignBoardIds,
+  getFlexiDesignCompletedBoardId,
+  getMainTimesheetBoardIds,
+} from '@/lib/monday/board-helpers'
+import { getTaskCompletionFromStatus } from '@/lib/monday/task-completion'
+import { getUsers } from '@/app/actions/users'
 import { checkIsAdmin } from '@/app/actions/auth'
 
 /** Postgres/Supabase errors are not always instanceof Error. */
@@ -19,167 +25,210 @@ function toErrorMessage(error: unknown): string {
   return 'An unexpected error occurred'
 }
 
+/** Columns the timesheet actually renders. `select('*')` would also drag `monday_data` —
+ *  the full raw Monday column payload — across the wire for every row. */
+const PROJECT_COLUMNS = 'id, name, client_name, quoted_hours, status'
+const TASK_COLUMNS = 'id, project_id, name, quoted_hours, monday_data'
+
+/** Shape sent to the client for each task — deliberately excludes the raw Monday payload. */
+type TimesheetTask = {
+  id: string
+  name: string
+  quoted_hours: number | null
+  is_favorite: boolean
+  logged_hours: number
+  time_left: number | null
+  is_completed: boolean | null
+}
+
+type TimeTotals = {
+  byProject: Record<string, number>
+  byTask: Record<string, number>
+}
+
+/** PostgREST/Postgres codes meaning the RPC hasn't been migrated to this database yet. */
+function isMissingFunctionError(error: { code?: string | null; message?: string | null } | null): boolean {
+  if (!error) return false
+  const code = error.code ?? ''
+  const msg = error.message ?? ''
+  return (
+    code === 'PGRST202' ||
+    code === '42883' ||
+    msg.includes('Could not find the function') ||
+    msg.includes('does not exist') ||
+    msg.includes('schema cache')
+  )
+}
+
+/**
+ * Logged-hours totals per project and per task.
+ *
+ * Aggregated in Postgres: the previous approach pulled every `time_entries` row for every
+ * listed project (the select policy is `authenticated`, so that is effectively the whole
+ * table, for all users, for all time) and summed them in Node.
+ *
+ * Falls back to the row-by-row sum if the RPC is missing, since production has sometimes
+ * lagged migrations.
+ */
+async function loadTimeTotals(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[]
+): Promise<TimeTotals> {
+  const byProject: Record<string, number> = {}
+  const byTask: Record<string, number> = {}
+
+  const { data, error } = await supabase.rpc('time_entry_totals', { p_project_ids: projectIds })
+
+  if (!error) {
+    for (const row of (data ?? []) as Array<{
+      project_id: string | null
+      task_id: string | null
+      total_hours: number | string | null
+    }>) {
+      const hours = Number(row.total_hours) || 0
+      if (row.task_id) {
+        byTask[row.task_id] = hours
+      } else if (row.project_id) {
+        byProject[row.project_id] = hours
+      }
+    }
+    return { byProject, byTask }
+  }
+
+  if (!isMissingFunctionError(error)) {
+    throw error
+  }
+
+  const { data: rows, error: rowsError } = await supabase
+    .from('time_entries')
+    .select('project_id, task_id, hours')
+    .in('project_id', projectIds)
+
+  if (rowsError) throw rowsError
+
+  for (const entry of rows ?? []) {
+    byProject[entry.project_id] = (byProject[entry.project_id] || 0) + Number(entry.hours)
+    if (entry.task_id) {
+      byTask[entry.task_id] = (byTask[entry.task_id] || 0) + Number(entry.hours)
+    }
+  }
+
+  return { byProject, byTask }
+}
+
 /**
  * Get all active projects with their tasks
  * @param boardType - 'main' = boards with column mappings that qualify as Main (not Flexi/leads/archives); 'flexi-design' = Flexi boards; 'all' = every active project
  */
 export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 'all' = 'main') {
-  const supabase = await createClient()
+  const supabase = await getRequestClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getRequestUser()
   if (!user) {
     return { error: 'Not authenticated' }
   }
 
   try {
-    const buildProjectsWithMetrics = async (projects: any[], tasks: any[], favoriteTaskIds: Set<string>) => {
-      const projectIds = projects.map((p) => p.id)
-      const { data: allTimeEntries, error: timeEntriesError } = await supabase
-        .from('time_entries')
-        .select('project_id, task_id, hours')
-        .in('project_id', projectIds)
+    // Resolve the board filter first; `null` means "every active project".
+    let boardIds: string[] | null = null
 
-      if (timeEntriesError) throw timeEntriesError
+    if (boardType === 'flexi-design') {
+      // Only show active Flexi-Design boards (exclude the completed board).
+      const [flexiDesignBoardIds, completedBoardId] = await Promise.all([
+        getFlexiDesignBoardIds(),
+        getFlexiDesignCompletedBoardId(),
+      ])
 
-      const timeEntriesByProject: Record<string, number> = {}
-      const timeEntriesByTask: Record<string, number> = {}
-      for (const entry of allTimeEntries || []) {
-        timeEntriesByProject[entry.project_id] = (timeEntriesByProject[entry.project_id] || 0) + Number(entry.hours)
-        if (entry.task_id) {
-          timeEntriesByTask[entry.task_id] = (timeEntriesByTask[entry.task_id] || 0) + Number(entry.hours)
-        }
+      boardIds = Array.from(flexiDesignBoardIds).filter(
+        (id) => !completedBoardId || id !== completedBoardId
+      )
+
+      if (boardIds.length === 0) {
+        return { success: true, projects: [] }
+      }
+    } else if (boardType === 'main') {
+      // Main timesheet: only boards that have column mappings and qualify as "Main" in Settings
+      // (not Flexi, not completed archives, not Flexi completed, not leads).
+      const mainBoardIds = await getMainTimesheetBoardIds()
+
+      if (mainBoardIds.size === 0) {
+        return { success: true, projects: [] }
       }
 
-      return projects.map((project) => {
-        const projectTasks = (tasks || [])
-          .filter((task) => task.project_id === project.id)
-          .map((task) => {
-            const loggedHours = timeEntriesByTask[task.id] || 0
-            const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : null
-
-            return {
-              ...task,
-              is_favorite: favoriteTaskIds.has(task.id),
-              logged_hours: loggedHours,
-              time_left: quotedHours !== null ? Math.max(0, quotedHours - loggedHours) : null,
-            }
-          })
-
-        return {
-          ...project,
-          total_logged_hours: timeEntriesByProject[project.id] || 0,
-          tasks: projectTasks,
-        }
-      })
+      boardIds = Array.from(mainBoardIds)
     }
 
-    // Build query for active projects
     let projectsQuery = supabase
       .from('monday_projects')
-      .select('*')
+      .select(PROJECT_COLUMNS)
       .eq('status', 'active')
       .order('name', { ascending: true })
 
-    // Filter by board type if needed
-    if (boardType !== 'all') {
-      if (boardType === 'flexi-design') {
-        const flexiDesignBoardIds = await getFlexiDesignBoardIds()
-
-        // Only show active Flexi-Design boards (exclude completed board)
-        const completedBoardResult = await getFlexiDesignCompletedBoard()
-        const completedBoardId = completedBoardResult.success && completedBoardResult.board 
-          ? completedBoardResult.board.monday_board_id 
-          : null
-        
-        // Filter out completed board from active board IDs
-        const activeBoardIds = Array.from(flexiDesignBoardIds).filter(
-          boardId => !completedBoardId || boardId !== completedBoardId
-        )
-        
-        if (activeBoardIds.length > 0) {
-          projectsQuery = projectsQuery.in('monday_board_id', activeBoardIds)
-        } else {
-          // No active Flexi-Design boards found, return empty
-          return { success: true, projects: [] }
-        }
-      } else {
-        // Main timesheet: only boards that have column mappings and qualify as "Main" in Settings
-        // (not Flexi, not completed archives, not Flexi completed, not leads).
-        const mainBoardIds = await getMainTimesheetBoardIds()
-
-        if (mainBoardIds.size === 0) {
-          return { success: true, projects: [] }
-        }
-
-        const { data: filteredProjects, error: mainProjectsError } = await supabase
-          .from('monday_projects')
-          .select('*')
-          .eq('status', 'active')
-          .in('monday_board_id', Array.from(mainBoardIds))
-          .order('name', { ascending: true })
-
-        if (mainProjectsError) throw mainProjectsError
-
-        const projectIds = (filteredProjects ?? []).map((p) => p.id)
-
-        if (projectIds.length === 0) {
-          return { success: true, projects: [] }
-        }
-
-        const { data: tasks, error: tasksError } = await supabase
-          .from('monday_tasks')
-          .select('*')
-          .in('project_id', projectIds)
-          .eq('is_subtask', true)
-          .order('created_at', { ascending: true })
-
-        if (tasksError) throw tasksError
-
-        const { data: favorites } = await supabase
-          .from('favorite_tasks')
-          .select('task_id')
-          .eq('user_id', user.id)
-
-        const favoriteTaskIds = new Set(favorites?.map((f) => f.task_id) || [])
-
-        const projectsWithTasks = await buildProjectsWithMetrics(filteredProjects ?? [], tasks || [], favoriteTaskIds)
-
-        return { success: true, projects: projectsWithTasks }
-      }
+    if (boardIds) {
+      projectsQuery = projectsQuery.in('monday_board_id', boardIds)
     }
 
     const { data: projects, error: projectsError } = await projectsQuery
 
     if (projectsError) throw projectsError
 
-    // Get tasks for all projects
-    const projectIds = projects?.map((p) => p.id) || []
-    
+    const projectIds = (projects ?? []).map((p) => p.id)
+
     if (projectIds.length === 0) {
       return { success: true, projects: [] }
     }
 
-    const { data: tasks, error: tasksError } = await supabase
-      .from('monday_tasks')
-      .select('*')
-      .in('project_id', projectIds)
-      .eq('is_subtask', true)
-      .order('created_at', { ascending: true })
+    const [tasksResult, favoritesResult, totals] = await Promise.all([
+      supabase
+        .from('monday_tasks')
+        .select(TASK_COLUMNS)
+        .in('project_id', projectIds)
+        .eq('is_subtask', true)
+        .order('created_at', { ascending: true }),
+      supabase.from('favorite_tasks').select('task_id').eq('user_id', user.id),
+      loadTimeTotals(supabase, projectIds),
+    ])
 
-    if (tasksError) throw tasksError
+    if (tasksResult.error) throw tasksResult.error
 
-    // Get user's favorite tasks
-    const { data: favorites } = await supabase
-      .from('favorite_tasks')
-      .select('task_id')
-      .eq('user_id', user.id)
+    const favoriteTaskIds = new Set(
+      (favoritesResult.data ?? []).map((f: { task_id: string }) => f.task_id)
+    )
 
-    const favoriteTaskIds = new Set(favorites?.map((f) => f.task_id) || [])
+    // Group tasks by project once rather than filtering the full list per project.
+    const tasksByProject = new Map<string, TimesheetTask[]>()
+    for (const task of tasksResult.data ?? []) {
+      const loggedHours = totals.byTask[task.id] || 0
+      const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : null
 
-    // Get assigned tasks (check if user's Monday ID is in assigned_user_ids array)
-    // For now, we'll show all tasks - can filter by assignment later
+      const list = tasksByProject.get(task.project_id)
+      const shaped = {
+        id: task.id,
+        name: task.name,
+        quoted_hours: quotedHours,
+        is_favorite: favoriteTaskIds.has(task.id),
+        logged_hours: loggedHours,
+        time_left: quotedHours !== null ? Math.max(0, quotedHours - loggedHours) : null,
+        // Derived here so the raw `monday_data` blob never reaches the browser.
+        is_completed: getTaskCompletionFromStatus(task.monday_data),
+      }
 
-    const projectsWithTasks = await buildProjectsWithMetrics(projects || [], tasks || [], favoriteTaskIds)
+      if (list) {
+        list.push(shaped)
+      } else {
+        tasksByProject.set(task.project_id, [shaped])
+      }
+    }
+
+    const projectsWithTasks = (projects ?? []).map((project) => ({
+      id: project.id,
+      name: project.name,
+      client_name: project.client_name,
+      quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
+      status: project.status,
+      total_logged_hours: totals.byProject[project.id] || 0,
+      tasks: tasksByProject.get(project.id) ?? [],
+    }))
 
     return { success: true, projects: projectsWithTasks }
   } catch (error) {
@@ -193,9 +242,9 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
  * @param targetUserId - Optional user ID to fetch entries for (admin only)
  */
 export async function getTimeEntries(startDate: string, endDate: string, targetUserId?: string) {
-  const supabase = await createClient()
+  const supabase = await getRequestClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getRequestUser()
   if (!user) {
     return { error: 'Not authenticated' }
   }
@@ -206,7 +255,7 @@ export async function getTimeEntries(startDate: string, endDate: string, targetU
 
   if (targetUserId && targetUserId !== user.id) {
     // Check if current user is admin
-    const { isAdmin } = await checkIsAdmin()
+    const isAdmin = await isRequestUserAdmin()
     if (!isAdmin) {
       return { error: 'Unauthorized: Admin access required to view other users\' entries' }
     }
@@ -224,10 +273,12 @@ export async function getTimeEntries(startDate: string, endDate: string, targetU
   try {
     const { data, error } = await clientToUse
       .from('time_entries')
+      // Only the fields the transform below keeps. Selecting `*` on the joined rows pulled
+      // both raw `monday_data` payloads back for every entry.
       .select(`
-        *,
-        task:monday_tasks(*),
-        project:monday_projects(*)
+        id, hours, notes, date,
+        task:monday_tasks(id, name, quoted_hours),
+        project:monday_projects(id, name, client_name, status)
       `)
       .eq('user_id', userIdToFetch)
       .gte('date', startDate)
@@ -284,6 +335,51 @@ export async function getTimeEntries(startDate: string, endDate: string, targetU
   } catch (error) {
     console.error('Error fetching time entries:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch time entries' }
+  }
+}
+
+/**
+ * Everything the time-tracking page needs for its first paint, in one round trip.
+ *
+ * The page previously fired four server actions from separate effects. Next queues server
+ * actions from a client, so they ran strictly one after another, each paying for its own
+ * `auth.getUser()` network call.
+ */
+export async function getTimeTrackingBootstrap(params: {
+  boardType: 'main' | 'flexi-design' | 'all'
+  startDate: string
+  endDate: string
+  targetUserId?: string
+}) {
+  const user = await getRequestUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const [adminContext, projectsResult, entriesResult] = await Promise.all([
+    // The users list is only needed by admins, but resolving it in this chain keeps it off
+    // the critical path for the projects and entries queries.
+    (async () => {
+      const isAdmin = await isRequestUserAdmin()
+      if (!isAdmin) return { isAdmin: false, users: [] as unknown[] }
+      const usersResult = await getUsers()
+      return {
+        isAdmin: true,
+        users: 'users' in usersResult ? usersResult.users : [],
+      }
+    })(),
+    getProjectsWithTasks(params.boardType),
+    getTimeEntries(params.startDate, params.endDate, params.targetUserId),
+  ])
+
+  return {
+    success: true,
+    isAdmin: adminContext.isAdmin,
+    users: adminContext.users,
+    projects: 'projects' in projectsResult ? projectsResult.projects : [],
+    projectsError: 'error' in projectsResult ? projectsResult.error : undefined,
+    entries: 'entries' in entriesResult ? entriesResult.entries : [],
+    entriesError: 'error' in entriesResult ? entriesResult.error : undefined,
   }
 }
 
