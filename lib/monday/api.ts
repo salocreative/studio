@@ -11,7 +11,7 @@ import {
   extractMondayStatusFromMondayData,
   extractMondayStatusFromRaw,
 } from '@/lib/monday/column-extract'
-import { findMappingColumnId } from '@/lib/monday/mapping-resolver'
+import { findMappingColumnId, type ColumnMappingRow } from '@/lib/monday/mapping-resolver'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
@@ -818,15 +818,23 @@ export async function getMondayTasks(
   boardId?: string,
   boardName?: string,
   /** Service-role client for sync (bypasses RLS); defaults to user-scoped client */
-  dbClient?: SupabaseClient
+  dbClient?: SupabaseClient,
+  /** Pre-loaded column mappings; when supplied, no database query is made */
+  preloadedMappings?: ColumnMappingRow[]
 ): Promise<MondayTask[]> {
   // Get column mappings for subtasks (quoted_hours, timeline)
-  const supabase = dbClient ?? (await createClient())
-  const { data: allMappings } = await supabase
-    .from('monday_column_mappings')
-    .select('monday_column_id, column_type, board_id')
-    .in('column_type', ['quoted_hours', 'timeline'])
-  
+  let allMappings: ColumnMappingRow[]
+  if (preloadedMappings) {
+    allMappings = preloadedMappings.filter((m) => m.column_type === 'quoted_hours' || m.column_type === 'timeline')
+  } else {
+    const supabase = dbClient ?? (await createClient())
+    const { data } = await supabase
+      .from('monday_column_mappings')
+      .select('monday_column_id, column_type, board_id')
+      .in('column_type', ['quoted_hours', 'timeline'])
+    allMappings = (data || []) as ColumnMappingRow[]
+  }
+
   // Build mappings map (board-specific or global)
   let quotedHoursColumnId: string | undefined
   let timelineColumnId: string | undefined
@@ -1103,10 +1111,24 @@ export async function syncMondayData(
     // Track projects found in Monday (by monday_item_id)
     const mondayProjectIds = new Set(mondayProjects.map(p => p.id))
     
-    // Get all existing projects from Supabase
+    // Get all existing projects from Supabase (one query; reused by the archive pass and the sync loop)
+    type ExistingProjectRow = {
+      id: string
+      monday_item_id: string
+      status: string
+      monday_board_id: string | null
+      quoted_hours: number | null
+      quote_value: number | null
+      monday_status: string | null
+      likelihood: number | null
+      monday_data: Record<string, { text?: string; value?: unknown }> | null
+    }
     const { data: existingProjects } = await supabase
       .from('monday_projects')
-      .select('id, monday_item_id, status, monday_board_id')
+      .select('id, monday_item_id, status, monday_board_id, quoted_hours, quote_value, monday_status, likelihood, monday_data')
+    const existingByItemId = new Map<string, ExistingProjectRow>(
+      ((existingProjects || []) as ExistingProjectRow[]).map((p) => [p.monday_item_id, p])
+    )
 
     let archived = 0
     let deleted = 0
@@ -1164,10 +1186,23 @@ export async function syncMondayData(
 
     const totalProjects = mondayProjects.length
 
-    const { data: forecastMappings } = await supabase
+    // All column mappings, loaded once. Used for status, likelihood, quote_value and subitem columns.
+    const { data: allColumnMappings } = await supabase
       .from('monday_column_mappings')
       .select('monday_column_id, board_id, column_type')
-      .in('column_type', ['status', 'likelihood'])
+    const columnMappings: ColumnMappingRow[] = (allColumnMappings || []) as ColumnMappingRow[]
+
+    // All existing tasks, loaded once and grouped by project.
+    type ExistingTaskRow = { id: string; monday_item_id: string; project_id: string; quoted_hours: number | null }
+    const { data: allExistingTasks } = await supabase
+      .from('monday_tasks')
+      .select('id, monday_item_id, project_id, quoted_hours')
+    const existingTasksByProjectId = new Map<string, ExistingTaskRow[]>()
+    for (const row of (allExistingTasks || []) as ExistingTaskRow[]) {
+      const list = existingTasksByProjectId.get(row.project_id)
+      if (list) list.push(row)
+      else existingTasksByProjectId.set(row.project_id, [row])
+    }
 
     // 3. Sync projects to Supabase
     for (let i = 0; i < mondayProjects.length; i++) {
@@ -1201,12 +1236,8 @@ export async function syncMondayData(
         projectStatus = 'archived'
       }
       
-      // Check if project exists - get full record to preserve quoted_hours and quote_value for locked projects
-      const { data: existing } = await supabase
-        .from('monday_projects')
-        .select('id, status, quoted_hours, quote_value, monday_status, likelihood, monday_data')
-        .eq('monday_item_id', project.id)
-        .single()
+      // Check if project exists - use the pre-loaded record to preserve quoted_hours and quote_value for locked projects
+      const existing = existingByItemId.get(project.id) ?? null
 
       // For locked/completed projects, preserve existing quoted_hours if Monday doesn't provide it
       // This ensures historical budget data is maintained for reflection
@@ -1254,15 +1285,7 @@ export async function syncMondayData(
       }
 
       // Get quote_value column mapping for this board
-      const { data: quoteValueMapping } = await supabase
-        .from('monday_column_mappings')
-        .select('monday_column_id')
-        .eq('column_type', 'quote_value')
-        .or(`board_id.eq.${project.board_id},board_id.is.null`)
-        .order('board_id', { ascending: true, nullsFirst: false }) // Prefer board-specific
-        .maybeSingle()
-      
-      const quoteValueColumnId = quoteValueMapping?.monday_column_id || null
+      const quoteValueColumnId = findMappingColumnId(columnMappings, 'quote_value', project.board_id)
       
       // If quote_value wasn't extracted but we have column_values, try to extract it now (auto-backfill)
       if (!finalQuoteValue && project.column_values && quoteValueColumnId) {
@@ -1281,12 +1304,12 @@ export async function syncMondayData(
       }
 
       const statusColumnId = findMappingColumnId(
-        forecastMappings,
+        columnMappings,
         'status',
         project.board_id
       )
       const likelihoodColumnId = findMappingColumnId(
-        forecastMappings,
+        columnMappings,
         'likelihood',
         project.board_id
       )
@@ -1358,23 +1381,26 @@ export async function syncMondayData(
         updated_at: new Date().toISOString(),
       }
 
+      // 3. Write and fetch the project record in one round trip
+      let projectRecord: { id: string; status: string } | null = null
       if (existing) {
         // Update existing project
-        await supabase
+        const { data } = await supabase
           .from('monday_projects')
           .update(projectData)
           .eq('monday_item_id', project.id)
+          .select('id, status')
+          .single()
+        projectRecord = data
       } else {
         // Insert new project
-        await supabase.from('monday_projects').insert(projectData)
+        const { data } = await supabase
+          .from('monday_projects')
+          .insert(projectData)
+          .select('id, status')
+          .single()
+        projectRecord = data
       }
-
-      // 3. Fetch and sync tasks for this project
-      const { data: projectRecord } = await supabase
-        .from('monday_projects')
-        .select('id, status')
-        .eq('monday_item_id', project.id)
-        .single()
 
       // Locked (completed) projects rarely change. Skip the per-project subitem fetch and task
       // writes unless this is a full resync, or the project has only just become locked this run.
@@ -1388,21 +1414,19 @@ export async function syncMondayData(
           project.id,
           project.board_id,
           project.board_name,
-          admin
+          admin,
+          columnMappings
         )
 
         // Get existing tasks to preserve quoted_hours for locked projects
-        const { data: existingTasks } = await supabase
-          .from('monday_tasks')
-          .select('id, monday_item_id, quoted_hours')
-          .eq('project_id', projectRecord.id)
+        const existingTasks = existingTasksByProjectId.get(projectRecord.id) ?? []
 
         // Track total quoted hours from tasks
         let totalTaskQuotedHours = 0
 
         for (const task of mondayTasks) {
           // For locked projects, preserve existing quoted_hours if Monday doesn't provide it
-          const existingTask = existingTasks?.find(t => t.monday_item_id === task.id)
+          const existingTask = existingTasks.find(t => t.monday_item_id === task.id)
           const preserveTaskQuotedHours = isProjectLocked && existingTask && (!task.quoted_hours || task.quoted_hours === 0)
           const finalTaskQuotedHours = preserveTaskQuotedHours
             ? (existingTask.quoted_hours || task.quoted_hours || null)
@@ -1468,33 +1492,31 @@ export async function syncMondayData(
         const syncedMondayTaskIds = new Set(mondayTasks.map(t => t.id))
         
         // Find tasks in DB that weren't in the sync (orphaned tasks)
-        if (existingTasks) {
-          for (const dbTask of existingTasks) {
-            // Skip if this task was just synced
-            if (syncedMondayTaskIds.has(dbTask.monday_item_id)) {
-              continue
-            }
-            
-            // Task exists in DB but not in Monday.com - check if it can be deleted
-            // Check if task has any time entries (on delete restrict prevents deletion if it does)
-            const { data: taskTimeEntries } = await supabase
-              .from('time_entries')
-              .select('id')
-              .eq('task_id', dbTask.id)
-              .limit(1)
-            
-            const hasTimeEntries = taskTimeEntries && taskTimeEntries.length > 0
-            
-            if (!hasTimeEntries) {
-              // Safe to delete - no time entries referencing it
-              await supabase
-                .from('monday_tasks')
-                .delete()
-                .eq('id', dbTask.id)
-            }
-            // If has time entries, we keep it (can't delete due to foreign key constraint)
-            // This preserves historical time tracking data
+        for (const dbTask of existingTasks) {
+          // Skip if this task was just synced
+          if (syncedMondayTaskIds.has(dbTask.monday_item_id)) {
+            continue
           }
+
+          // Task exists in DB but not in Monday.com - check if it can be deleted
+          // Check if task has any time entries (on delete restrict prevents deletion if it does)
+          const { data: taskTimeEntries } = await supabase
+            .from('time_entries')
+            .select('id')
+            .eq('task_id', dbTask.id)
+            .limit(1)
+
+          const hasTimeEntries = taskTimeEntries && taskTimeEntries.length > 0
+
+          if (!hasTimeEntries) {
+            // Safe to delete - no time entries referencing it
+            await supabase
+              .from('monday_tasks')
+              .delete()
+              .eq('id', dbTask.id)
+          }
+          // If has time entries, we keep it (can't delete due to foreign key constraint)
+          // This preserves historical time tracking data
         }
       }
     }
