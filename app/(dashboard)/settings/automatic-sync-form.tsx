@@ -206,7 +206,7 @@ export function AutomaticSyncForm() {
           <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950 dark:border-blue-900 p-4">
             <p className="text-sm font-medium mb-2">How automatic sync runs</p>
             <p className="text-xs text-muted-foreground mb-2">
-              On Vercel (Pro), a cron runs daily at 6:00 UTC. When it runs, sync executes only if at least {getIntervalDisplay(intervalMinutes)} have passed since the last sync.
+              On Vercel (Pro), a cron runs daily at 6:00 UTC. When it runs, sync executes only if at least {getIntervalDisplay(intervalMinutes)} have passed since the last sync, give or take a few minutes so the daily run is never skipped by clock drift. Vercel sends <code className="bg-background border rounded px-1">CRON_SECRET</code> itself as an <code className="bg-background border rounded px-1">Authorization: Bearer</code> header, so no extra setup is needed there.
             </p>
             <p className="text-xs text-muted-foreground mb-2">
               <strong>Vercel Hobby (once per day):</strong> Use an external cron for more frequent syncs. Free options: cron-job.org, EasyCron, or Uptime Robot. Call this URL with GET and header <code className="bg-background border rounded px-1">X-Cron-Secret: your_secret_key</code>. Set <code className="bg-background border rounded px-1">CRON_SECRET</code> in your environment to match.

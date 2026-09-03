@@ -1,29 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncMondayProjects } from '@/app/actions/monday'
-import { updateSyncTimestamp, getSyncSettings } from '@/app/actions/sync-settings'
+import { getSyncSettingsAdmin, markSyncCompleteAdmin } from '@/lib/monday/sync-settings-admin'
 
 /**
  * API route for cron jobs to trigger automatic sync
- * This endpoint should be called by a cron service (Vercel Cron, EasyCron, etc.)
- * 
- * To secure this endpoint, set CRON_SECRET in your environment variables
- * and include it in the X-Cron-Secret header when calling this endpoint.
+ * Called by Vercel Cron (see vercel.json) or an external cron service.
+ *
+ * To secure this endpoint, set CRON_SECRET in your environment variables.
+ * Vercel Cron sends it automatically as `Authorization: Bearer <CRON_SECRET>`;
+ * external services can send it as an `X-Cron-Secret` header instead.
  */
 export async function GET(request: NextRequest) {
   try {
     // Verify cron secret if configured
     const cronSecret = process.env.CRON_SECRET
-    const providedSecret = request.headers.get('X-Cron-Secret')
-    
-    if (cronSecret && providedSecret !== cronSecret) {
-      return NextResponse.json(
-        { error: 'Unauthorized: Invalid cron secret' },
-        { status: 401 }
-      )
+
+    if (cronSecret) {
+      const bearer = request.headers.get('authorization')?.replace(/^Bearer /i, '')
+      const headerSecret = request.headers.get('X-Cron-Secret')
+
+      if (bearer !== cronSecret && headerSecret !== cronSecret) {
+        return NextResponse.json(
+          { error: 'Unauthorized: Invalid cron secret' },
+          { status: 401 }
+        )
+      }
     }
 
-    // Check if sync is enabled
-    const settingsResult = await getSyncSettings()
+    // Check if sync is enabled. Read with the service-role client: a cron request
+    // carries no session, and monday_sync_settings is admin-only under RLS.
+    const settingsResult = await getSyncSettingsAdmin()
     if (settingsResult.error || !settingsResult.settings) {
       return NextResponse.json(
         { error: 'Failed to check sync settings', details: settingsResult.error },
@@ -31,32 +36,36 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    if (!settingsResult.settings.enabled) {
+    // Respect sync interval: only run if enough time has passed since last sync
+    const settings = settingsResult.settings
+    if (!settings.enabled) {
       return NextResponse.json(
         { message: 'Automatic sync is disabled', skipped: true },
         { status: 200 }
       )
     }
 
-    // Respect sync interval: only run if enough time has passed since last sync
-    const settings = settingsResult.settings
-    const intervalMs = (settings.interval_minutes || 60) * 60 * 1000
+    const intervalMinutes = settings.interval_minutes || 60
+    const intervalMs = intervalMinutes * 60 * 1000
+    // Allow a small tolerance, capped at 5 minutes. The Vercel cron fires once a
+    // day, so a 1440-minute interval would otherwise be skipped whenever the run
+    // lands seconds earlier than the previous one — turning a daily sync into an
+    // every-other-day sync.
+    const toleranceMs = Math.min(5 * 60 * 1000, intervalMs * 0.1)
     if (settings.last_sync_at) {
       const elapsed = Date.now() - new Date(settings.last_sync_at).getTime()
-      if (elapsed < intervalMs) {
+      if (elapsed < intervalMs - toleranceMs) {
         return NextResponse.json(
           {
             message: 'Sync skipped: interval not reached',
             skipped: true,
-            nextSyncIn: Math.ceil((intervalMs - elapsed) / 60000) + ' minutes',
+            nextSyncIn: Math.ceil((intervalMs - toleranceMs - elapsed) / 60000) + ' minutes',
           },
           { status: 200 }
         )
       }
     }
 
-    // Perform the sync (this function checks for admin, but in cron context we bypass)
-    // We need to create a version that doesn't require user auth for cron
     const mondayApiToken = process.env.MONDAY_API_TOKEN
     if (!mondayApiToken) {
       return NextResponse.json(
@@ -71,7 +80,10 @@ export async function GET(request: NextRequest) {
     const result = await syncMondayData(mondayApiToken, undefined, false, avoidDeletion)
 
     // Update sync timestamp
-    await updateSyncTimestamp()
+    const timestampResult = await markSyncCompleteAdmin(intervalMinutes)
+    if (timestampResult.error) {
+      console.error('Cron sync: failed to record sync timestamp:', timestampResult.error)
+    }
 
     return NextResponse.json({
       success: true,
@@ -92,4 +104,3 @@ export async function GET(request: NextRequest) {
     )
   }
 }
-
