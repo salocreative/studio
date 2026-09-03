@@ -12,6 +12,7 @@ import {
   extractMondayStatusFromRaw,
 } from '@/lib/monday/column-extract'
 import { findMappingColumnId, type ColumnMappingRow } from '@/lib/monday/mapping-resolver'
+import { getTaskCompletionFromStatus } from '@/lib/monday/task-completion'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
@@ -1459,6 +1460,8 @@ export async function syncMondayData(
             timeline_start: task.timeline_start || null,
             timeline_end: task.timeline_end || null,
             monday_data: task.column_values,
+            // Derived here so the timesheet never has to select the raw payload to read it.
+            is_completed: getTaskCompletionFromStatus(task.column_values),
             updated_at: nowIso,
           }
         })

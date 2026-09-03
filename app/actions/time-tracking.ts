@@ -28,7 +28,20 @@ function toErrorMessage(error: unknown): string {
 /** Columns the timesheet actually renders. `select('*')` would also drag `monday_data` —
  *  the full raw Monday column payload — across the wire for every row. */
 const PROJECT_COLUMNS = 'id, name, client_name, quoted_hours, status'
-const TASK_COLUMNS = 'id, project_id, name, quoted_hours, monday_data'
+
+/** `is_completed` is derived during sync (migration 072), so the raw `monday_data` payload —
+ *  680 KB across 900+ subtasks — no longer has to be read to compute it. */
+const TASK_COLUMNS = 'id, project_id, name, quoted_hours, is_completed'
+
+/** Pre-072 fallback: derive completion from the raw payload in the action instead. */
+const TASK_COLUMNS_LEGACY = 'id, project_id, name, quoted_hours, monday_data'
+
+/**
+ * Set once the database is confirmed to be missing `is_completed`, so an unmigrated
+ * deployment pays the probe query once per server instance rather than on every page load.
+ * Reset by a redeploy, which is when the migration would have been applied.
+ */
+let isCompletedColumnMissing = false
 
 /** Shape sent to the client for each task — deliberately excludes the raw Monday payload. */
 type TimesheetTask = {
@@ -58,6 +71,56 @@ function isMissingFunctionError(error: { code?: string | null; message?: string 
     msg.includes('does not exist') ||
     msg.includes('schema cache')
   )
+}
+
+/** PostgREST/Postgres codes meaning a column hasn't been migrated to this database yet. */
+function isMissingColumnError(error: { code?: string | null; message?: string | null } | null): boolean {
+  if (!error) return false
+  const code = error.code ?? ''
+  const msg = error.message ?? ''
+  return code === '42703' || msg.includes('does not exist') || msg.includes('schema cache')
+}
+
+type TimesheetTaskRow = {
+  id: string
+  project_id: string
+  name: string
+  quoted_hours: number | string | null
+  is_completed?: boolean | null
+  monday_data?: Record<string, unknown> | null
+}
+
+/**
+ * Subtasks for a set of projects, with completion already resolved.
+ *
+ * Prefers the `is_completed` column written during sync. Falls back to reading `monday_data`
+ * and deriving it if the column is missing, since production has sometimes lagged migrations.
+ */
+async function loadTimesheetTasks(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectIds: string[]
+): Promise<TimesheetTaskRow[]> {
+  const query = (columns: string) =>
+    supabase
+      .from('monday_tasks')
+      .select(columns)
+      .in('project_id', projectIds)
+      .eq('is_subtask', true)
+      .order('created_at', { ascending: true })
+
+  if (!isCompletedColumnMissing) {
+    const { data, error } = await query(TASK_COLUMNS)
+
+    if (!error) return (data ?? []) as unknown as TimesheetTaskRow[]
+    if (!isMissingColumnError(error)) throw error
+
+    isCompletedColumnMissing = true
+  }
+
+  const { data: legacyData, error: legacyError } = await query(TASK_COLUMNS_LEGACY)
+  if (legacyError) throw legacyError
+
+  return (legacyData ?? []) as unknown as TimesheetTaskRow[]
 }
 
 /**
@@ -178,18 +241,11 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
       return { success: true, projects: [] }
     }
 
-    const [tasksResult, favoritesResult, totals] = await Promise.all([
-      supabase
-        .from('monday_tasks')
-        .select(TASK_COLUMNS)
-        .in('project_id', projectIds)
-        .eq('is_subtask', true)
-        .order('created_at', { ascending: true }),
+    const [tasks, favoritesResult, totals] = await Promise.all([
+      loadTimesheetTasks(supabase, projectIds),
       supabase.from('favorite_tasks').select('task_id').eq('user_id', user.id),
       loadTimeTotals(supabase, projectIds),
     ])
-
-    if (tasksResult.error) throw tasksResult.error
 
     const favoriteTaskIds = new Set(
       (favoritesResult.data ?? []).map((f: { task_id: string }) => f.task_id)
@@ -197,7 +253,7 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
 
     // Group tasks by project once rather than filtering the full list per project.
     const tasksByProject = new Map<string, TimesheetTask[]>()
-    for (const task of tasksResult.data ?? []) {
+    for (const task of tasks) {
       const loggedHours = totals.byTask[task.id] || 0
       const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : null
 
@@ -209,8 +265,11 @@ export async function getProjectsWithTasks(boardType: 'main' | 'flexi-design' | 
         is_favorite: favoriteTaskIds.has(task.id),
         logged_hours: loggedHours,
         time_left: quotedHours !== null ? Math.max(0, quotedHours - loggedHours) : null,
-        // Derived here so the raw `monday_data` blob never reaches the browser.
-        is_completed: getTaskCompletionFromStatus(task.monday_data),
+        // Written during sync; derived here only on the pre-072 fallback path.
+        is_completed:
+          task.is_completed !== undefined
+            ? task.is_completed
+            : getTaskCompletionFromStatus(task.monday_data),
       }
 
       if (list) {
@@ -339,11 +398,14 @@ export async function getTimeEntries(startDate: string, endDate: string, targetU
 }
 
 /**
- * Everything the time-tracking page needs for its first paint, in one round trip.
+ * Everything the time-tracking page needs for its first paint.
  *
- * The page previously fired four server actions from separate effects. Next queues server
- * actions from a client, so they ran strictly one after another, each paying for its own
- * `auth.getUser()` network call.
+ * Called by the route's server component, not from the browser. Two rounds of consolidation
+ * got it here: the page originally fired four server actions from separate effects, and Next
+ * queues server actions from a client, so they ran strictly one after another, each paying
+ * for its own `auth.getUser()` network call. Collapsing them into one action removed that
+ * queueing; moving the call to the server component removed the post-hydration round trip
+ * and the second middleware auth check that came with it.
  */
 export async function getTimeTrackingBootstrap(params: {
   boardType: 'main' | 'flexi-design' | 'all'
