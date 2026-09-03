@@ -586,7 +586,7 @@ See above under "Customer relationship scores". Read-compatible but new code wri
 
 ## Monday.com sync — what is synced and how
 
-The full implementation lives in `lib/monday/api.ts` (`getMondayProjects`, `getMondayTasks`, `syncMondayData`) and `app/actions/monday.ts`.
+The full implementation lives in `lib/monday/api.ts` (`getMondayProjects`, `getMondayTasksForItems` (batched, 25 items per request), `syncMondayData`) and `app/actions/monday.ts`.
 
 ### What flows from Monday into Supabase
 
