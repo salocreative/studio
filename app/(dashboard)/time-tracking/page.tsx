@@ -111,7 +111,12 @@ export default function TimeTrackingPage() {
     const board = boardType
     const dateStr = format(selectedDate, 'yyyy-MM-dd')
 
-    if (inFlightBoards.current.has(board)) return
+    // Mark the board in flight so the board-select effect below doesn't
+    // duplicate this fetch via loadProjects. Deliberately not gated on
+    // inFlightBoards itself: under React Strict Mode's dev double-invoke,
+    // this effect runs, cleans up, then runs again for the same mount, and
+    // each invocation must independently fetch and be able to commit its
+    // result rather than treating its own prior invocation as a duplicate.
     inFlightBoards.current.add(board)
     entriesKeyRef.current = entriesKeyFor(selectedDate, selectedUserId)
 
