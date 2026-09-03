@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { revalidateMondayBoardConfig } from '@/lib/monday/board-helpers'
 
 export interface FlexiDesignBoardRow {
   id: string
@@ -69,6 +70,7 @@ export async function addFlexiDesignBoard(mondayBoardId: string, boardName: stri
       throw error
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('addFlexiDesignBoard:', error)
@@ -98,6 +100,7 @@ export async function removeFlexiDesignBoard(id: string) {
 
     if (error) throw error
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('removeFlexiDesignBoard:', error)

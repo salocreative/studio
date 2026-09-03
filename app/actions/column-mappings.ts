@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { revalidateMondayBoardConfig } from '@/lib/monday/board-helpers'
 // We'll import from api-helpers, but for now let's duplicate the function here to avoid circular deps
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
@@ -483,6 +484,7 @@ export async function saveColumnMapping(
       if (error) throw error
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error saving column mapping:', error)
@@ -530,6 +532,7 @@ export async function deleteColumnMappings(boardId?: string) {
       if (error) throw error
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error deleting column mappings:', error)

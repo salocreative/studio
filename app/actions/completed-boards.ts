@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { revalidateMondayBoardConfig } from '@/lib/monday/board-helpers'
 
 /**
  * Get all completed boards
@@ -69,6 +70,7 @@ export async function addCompletedBoard(boardId: string, boardName: string) {
 
     if (error) throw error
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error adding completed board:', error)
@@ -105,6 +107,7 @@ export async function removeCompletedBoard(boardId: string) {
 
     if (error) throw error
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error removing completed board:', error)

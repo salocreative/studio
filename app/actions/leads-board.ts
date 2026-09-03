@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { revalidateMondayBoardConfig } from '@/lib/monday/board-helpers'
 
 /**
  * Get the configured leads board
@@ -141,6 +142,7 @@ export async function setLeadsBoard(boardId: string, boardName: string) {
       }
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error setting leads board:', error)
@@ -202,6 +204,7 @@ export async function removeLeadsBoard() {
       throw error
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error removing leads board:', error)

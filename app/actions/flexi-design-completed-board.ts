@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { revalidateMondayBoardConfig } from '@/lib/monday/board-helpers'
 
 /**
  * Get the configured Flexi-Design completed board
@@ -141,6 +142,7 @@ export async function setFlexiDesignCompletedBoard(boardId: string, boardName: s
       }
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error setting Flexi-Design completed board:', error)
@@ -202,6 +204,7 @@ export async function removeFlexiDesignCompletedBoard() {
       throw error
     }
 
+    revalidateMondayBoardConfig()
     return { success: true }
   } catch (error) {
     console.error('Error removing Flexi-Design completed board:', error)
