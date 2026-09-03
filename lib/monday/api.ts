@@ -16,6 +16,13 @@ import { getTaskCompletionFromStatus } from '@/lib/monday/task-completion'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
+/**
+ * Monday caps an `items(ids:)` query at its `limit` argument, which defaults to 25: ids beyond the
+ * limit are dropped from the response, not paginated into a second page. Every `items(ids:)` query
+ * therefore passes an explicit limit, and id batches are sized to match it. 100 is Monday's maximum.
+ */
+const MONDAY_ITEMS_BY_ID_LIMIT = 100
+
 const MONDAY_REQUEST_TIMEOUT_MS = 30_000
 const MONDAY_MAX_RETRIES = 3
 const MONDAY_RETRY_DELAY_MS = 1_000
@@ -42,6 +49,42 @@ function isTransientNetworkError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Monday reports a spent rate limit or complexity budget two ways: an HTTP 429, or a 200 whose
+ * `errors` say so. Both are worth waiting out - the budget resets on a timer - rather than failing
+ * the sync, which is what used to happen.
+ */
+const MONDAY_RATE_LIMIT_PATTERN = /complexity budget exhausted|rate limit|too many requests|minute limit/i
+const MONDAY_RESET_PATTERN = /reset in (\d+) seconds?/i
+const MONDAY_MAX_RATE_LIMIT_WAIT_MS = 60_000
+
+/** Exponential backoff for retry number `attempt`. */
+function backoffMs(attempt: number): number {
+  return MONDAY_RETRY_DELAY_MS * Math.pow(2, attempt)
+}
+
+/**
+ * Clamp a wait Monday asked for to something a sync can afford to sit through, falling back to the
+ * standard backoff when it named no time at all.
+ */
+function clampRateLimitWait(ms: number, fallbackMs: number): number {
+  if (!Number.isFinite(ms) || ms <= 0) return fallbackMs
+  return Math.min(ms, MONDAY_MAX_RATE_LIMIT_WAIT_MS)
+}
+
+/** Wait for a 429, from `Retry-After` (seconds) when Monday sends one. */
+function retryAfterWaitMs(header: string | null, attempt: number): number {
+  const seconds = Number(header)
+  return clampRateLimitWait(Number.isFinite(seconds) ? seconds * 1_000 : NaN, backoffMs(attempt))
+}
+
+/** Wait for a 200-with-errors rate limit, from the "reset in N seconds" the message carries. */
+function rateLimitWaitMsFromMessage(message: string, attempt: number): number | null {
+  if (!MONDAY_RATE_LIMIT_PATTERN.test(message)) return null
+  const reset = MONDAY_RESET_PATTERN.exec(message)
+  return clampRateLimitWait(reset ? Number(reset[1]) * 1_000 : NaN, backoffMs(attempt))
 }
 
 export interface MondayProject {
@@ -79,7 +122,8 @@ interface MondayApiResponse<T> {
 
 /**
  * Make a GraphQL request to Monday.com API.
- * Retries on transient network errors (ECONNRESET, ETIMEDOUT, etc.) with exponential backoff.
+ * Retries on transient network errors (ECONNRESET, ETIMEDOUT, etc.) with exponential backoff, and
+ * on a spent rate limit or complexity budget after waiting however long Monday asks for.
  * Uses a request timeout to avoid hanging on slow or unresponsive connections.
  */
 async function mondayRequest<T>(
@@ -109,13 +153,27 @@ async function mondayRequest<T>(
       clearTimeout(timeoutId)
 
       if (!response.ok) {
-        throw new Error(`Monday.com API error: ${response.statusText}`)
+        const error = new Error(`Monday.com API error: ${response.statusText}`)
+        if ((response.status === 429 || response.status === 503) && attempt < MONDAY_MAX_RETRIES) {
+          lastError = error
+          await sleep(retryAfterWaitMs(response.headers.get('retry-after'), attempt))
+          continue
+        }
+        throw error
       }
 
       const result: MondayApiResponse<T> = await response.json()
 
       if (result.errors && result.errors.length > 0) {
-        throw new Error(`Monday.com API errors: ${result.errors.map((e) => e.message).join(', ')}`)
+        const message = result.errors.map((e) => e.message).join(', ')
+        const error = new Error(`Monday.com API errors: ${message}`)
+        const rateLimitWait = rateLimitWaitMsFromMessage(message, attempt)
+        if (rateLimitWait !== null && attempt < MONDAY_MAX_RETRIES) {
+          lastError = error
+          await sleep(rateLimitWait)
+          continue
+        }
+        throw error
       }
 
       return result.data
@@ -133,33 +191,11 @@ async function mondayRequest<T>(
           : err
       }
 
-      const delayMs = MONDAY_RETRY_DELAY_MS * Math.pow(2, attempt)
-      await sleep(delayMs)
+      await sleep(backoffMs(attempt))
     }
   }
 
   throw lastError
-}
-
-/**
- * Get all boards from Monday.com
- */
-async function getMondayBoards(accessToken: string): Promise<Array<{ id: string; name: string }>> {
-  const query = `
-    query {
-      boards(limit: 100) {
-        id
-        name
-      }
-    }
-  `
-
-  const data = await mondayRequest<{ boards: Array<{ id: string; name: string }> }>(
-    accessToken,
-    query
-  )
-
-  return data.boards || []
 }
 
 /**
@@ -196,6 +232,14 @@ export async function getMondayProjects(
     }
   })
   
+  // The Flexi-Design completed board, read once: it counts as a completed board for column
+  // mapping fallbacks, and is always excluded from the boards that get a full scan.
+  const { data: flexiCompletedBoard } = await supabase
+    .from('flexi_design_completed_board')
+    .select('monday_board_id')
+    .maybeSingle()
+  const flexiCompletedBoardId: string | null = flexiCompletedBoard?.monday_board_id ?? null
+
   // Track completed board IDs to avoid falling back to global mappings for these boards
   // (since they may have different column structures than active boards)
   const completedBoardIds = new Set<string>()
@@ -227,15 +271,9 @@ export async function getMondayProjects(
     
     // Also include Flexi-Design completed board if configured.
     // Always include it so we never miss completed Flexi-Design projects (fetch-by-ID list).
-    const { data: flexiDesignCompletedBoard } = await supabase
-      .from('flexi_design_completed_board')
-      .select('monday_board_id, board_name')
-      .maybeSingle()
-    
-    if (flexiDesignCompletedBoard?.monday_board_id) {
-      const completedBoardId = flexiDesignCompletedBoard.monday_board_id
-      mappedBoardIds.add(completedBoardId)
-      completedBoardIds.add(completedBoardId)
+    if (flexiCompletedBoardId) {
+      mappedBoardIds.add(flexiCompletedBoardId)
+      completedBoardIds.add(flexiCompletedBoardId)
       // Column mappings: use own mappings if present; otherwise getColumnId will inherit from other Flexi boards
     }
   }
@@ -248,13 +286,9 @@ export async function getMondayProjects(
   const allBoardIds = Array.from(mappedBoardIds)
 
   // Split into active boards (full scan) vs completed boards (fetch by ID only)
-  const { data: flexiCompletedBoard } = await supabase
-    .from('flexi_design_completed_board')
-    .select('monday_board_id')
-    .maybeSingle()
   const allCompletedBoardIds = new Set(completedBoardIds)
-  if (flexiCompletedBoard?.monday_board_id) {
-    allCompletedBoardIds.add(flexiCompletedBoard.monday_board_id)
+  if (flexiCompletedBoardId) {
+    allCompletedBoardIds.add(flexiCompletedBoardId)
   }
   const activeBoardIds = allBoardIds.filter(id => !allCompletedBoardIds.has(id))
   const completedBoardIdsList = allBoardIds.filter(id => allCompletedBoardIds.has(id))
@@ -693,13 +727,12 @@ export async function getMondayProjects(
 
   if (itemsToFetchById.size > 0) {
     const idsToFetch = Array.from(itemsToFetchById)
-    const BATCH_SIZE = 100
-    for (let i = 0; i < idsToFetch.length; i += BATCH_SIZE) {
-      const batch = idsToFetch.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < idsToFetch.length; i += MONDAY_ITEMS_BY_ID_LIMIT) {
+      const batch = idsToFetch.slice(i, i + MONDAY_ITEMS_BY_ID_LIMIT)
       const itemsData = await mondayRequest<{ items: Array<BoardItem & { board: { id: string; name?: string } }> }>(
         accessToken,
-        `query($itemIds: [ID!]) {
-          items(ids: $itemIds) {
+        `query($itemIds: [ID!], $limit: Int!) {
+          items(ids: $itemIds, limit: $limit) {
             id
             name
             column_values { id text value type }
@@ -707,7 +740,7 @@ export async function getMondayProjects(
             group { id title }
           }
         }`,
-        { itemIds: batch }
+        { itemIds: batch, limit: MONDAY_ITEMS_BY_ID_LIMIT }
       )
       for (const item of itemsData.items || []) {
         const boardId = item.board?.id != null ? String(item.board.id) : ''
@@ -958,9 +991,13 @@ function parseSubitemsForItem(
   return tasks
 }
 
-// items(ids:) lookups are not capped by the 25-item default page size (the completed-items fetch in
-// getMondayProjects already uses 100 ids per request); 25 keeps subitem payload and query complexity modest.
-const SUBITEM_FETCH_BATCH_SIZE = 25
+/**
+ * Projects per subitem request, which is also the chunk size for writing projects and tasks back.
+ * Matches `MONDAY_ITEMS_BY_ID_LIMIT` because the request is an `items(ids:)` lookup: measured against
+ * our boards, 100 ids per request costs ~26ms per item against ~60ms at 25, and ~22k complexity
+ * against a 10M/minute budget.
+ */
+const SUBITEM_FETCH_BATCH_SIZE = MONDAY_ITEMS_BY_ID_LIMIT
 
 /**
  * Fetch subitems for many parent items in batches. Returns tasks keyed by parent item id;
@@ -978,8 +1015,8 @@ export async function getMondayTasksForItems(
   const byId = new Map(items.map((it) => [it.id, it]))
 
   const query = `
-    query($itemIds: [ID!]) {
-      items(ids: $itemIds) {
+    query($itemIds: [ID!], $limit: Int!) {
+      items(ids: $itemIds, limit: $limit) {
         id
         name
         board { id }
@@ -996,6 +1033,7 @@ export async function getMondayTasksForItems(
     const batch = items.slice(i, i + SUBITEM_FETCH_BATCH_SIZE)
     const data = await mondayRequest<{ items: MondaySubitemsItem[] }>(accessToken, query, {
       itemIds: batch.map((b) => b.id),
+      limit: MONDAY_ITEMS_BY_ID_LIMIT,
     })
     for (const item of data.items || []) {
       const requested = byId.get(item.id)
@@ -1504,7 +1542,20 @@ export async function syncMondayData(
       return { project, existing, projectData, skipTaskSync, isLocked: finalStatus === 'locked' }
     })
 
-      // Phase 2: one Monday request (per 25) for the subitems we actually need.
+      const chunkLabel = `${chunkStart + 1}-${chunkEnd} of ${totalProjects}`
+      const chunkProgress = (fraction: number) =>
+        0.1 + 0.85 * ((chunkStart + chunk.length * fraction) / Math.max(1, totalProjects))
+
+      report({
+        phase: 'syncing',
+        message: `Fetching tasks for projects ${chunkLabel}`,
+        projectIndex: chunkEnd,
+        totalProjects,
+        projectName: chunk[chunk.length - 1]?.name ?? '',
+        progress: chunkProgress(0),
+      })
+
+      // Phase 2: one Monday request per chunk for the subitems we actually need.
       const tasksByItemId = await getMondayTasksForItems(
         accessToken,
         prepared
@@ -1515,11 +1566,11 @@ export async function syncMondayData(
 
       report({
         phase: 'syncing',
-        message: `Syncing projects ${chunkStart + 1}-${chunkEnd} of ${totalProjects}`,
+        message: `Saving projects ${chunkLabel}`,
         projectIndex: chunkEnd,
         totalProjects,
         projectName: chunk[chunk.length - 1]?.name ?? '',
-        progress: 0.1 + 0.85 * (chunkStart / Math.max(1, totalProjects)),
+        progress: chunkProgress(0.5),
       })
 
       // Phase 3: resolve each project's tasks and its quoted-hours total (no I/O), so the total is
