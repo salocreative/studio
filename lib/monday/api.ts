@@ -809,223 +809,197 @@ export async function getMondayProjects(
   return projects
 }
 
-/**
- * Get tasks (subitems) for a specific project
- */
-export async function getMondayTasks(
-  accessToken: string,
-  projectId: string,
-  boardId?: string,
-  boardName?: string,
-  /** Service-role client for sync (bypasses RLS); defaults to user-scoped client */
-  dbClient?: SupabaseClient,
-  /** Pre-loaded column mappings; when supplied, no database query is made */
-  preloadedMappings?: ColumnMappingRow[]
-): Promise<MondayTask[]> {
-  // Get column mappings for subtasks (quoted_hours, timeline)
-  let allMappings: ColumnMappingRow[]
-  if (preloadedMappings) {
-    allMappings = preloadedMappings.filter((m) => m.column_type === 'quoted_hours' || m.column_type === 'timeline')
-  } else {
-    const supabase = dbClient ?? (await createClient())
-    const { data } = await supabase
-      .from('monday_column_mappings')
-      .select('monday_column_id, column_type, board_id')
-      .in('column_type', ['quoted_hours', 'timeline'])
-    allMappings = (data || []) as ColumnMappingRow[]
-  }
+type MondaySubitemsItem = {
+  id: string
+  name: string
+  board: { id: string }
+  subitems: Array<{
+    id: string
+    name: string
+    column_values: Array<{ id: string; text?: string; value?: string; type: string }>
+  }>
+}
 
-  // Build mappings map (board-specific or global)
+/** Resolve quoted_hours and timeline column IDs for a board, with Flexi inheritance and global fallback. */
+function resolveSubitemColumnIds(
+  mappings: ColumnMappingRow[],
+  boardId: string | undefined,
+  boardName: string | undefined
+): { quotedHoursColumnId?: string; timelineColumnId?: string } {
+  const relevant = mappings.filter((m) => m.column_type === 'quoted_hours' || m.column_type === 'timeline')
   let quotedHoursColumnId: string | undefined
   let timelineColumnId: string | undefined
-  
-  if (boardId && allMappings) {
-    // Find board-specific mappings first
-    const boardMappings = allMappings.filter(m => m.board_id === boardId)
-    if (boardMappings.length > 0) {
-      quotedHoursColumnId = boardMappings.find(m => m.column_type === 'quoted_hours')?.monday_column_id
-      timelineColumnId = boardMappings.find(m => m.column_type === 'timeline')?.monday_column_id
-    }
+
+  if (boardId) {
+    const boardMappings = relevant.filter((m) => m.board_id === boardId)
+    quotedHoursColumnId = boardMappings.find((m) => m.column_type === 'quoted_hours')?.monday_column_id
+    timelineColumnId = boardMappings.find((m) => m.column_type === 'timeline')?.monday_column_id
   }
-  
-  // If no board-specific mapping and this is a Flexi-Design board, try to inherit from other Flexi-Design boards
+
   if ((!quotedHoursColumnId || !timelineColumnId) && boardName?.toLowerCase().includes('flexi')) {
-    // Find mappings from any other Flexi-Design board that has mappings
-    for (const mapping of allMappings || []) {
+    for (const mapping of relevant) {
       if (mapping.board_id && mapping.board_id !== boardId) {
-        // If we find a mapping from another board, use it (assuming Flexi-Design boards share structure)
-        if (!quotedHoursColumnId && mapping.column_type === 'quoted_hours') {
-          quotedHoursColumnId = mapping.monday_column_id
-        }
-        if (!timelineColumnId && mapping.column_type === 'timeline') {
-          timelineColumnId = mapping.monday_column_id
-        }
+        if (!quotedHoursColumnId && mapping.column_type === 'quoted_hours') quotedHoursColumnId = mapping.monday_column_id
+        if (!timelineColumnId && mapping.column_type === 'timeline') timelineColumnId = mapping.monday_column_id
         if (quotedHoursColumnId && timelineColumnId) break
       }
     }
   }
-  
-  // Fallback to global mappings if no board-specific ones found
+
   if (!quotedHoursColumnId || !timelineColumnId) {
-    const globalMappings = allMappings?.filter(m => !m.board_id) || []
-    if (!quotedHoursColumnId) {
-      quotedHoursColumnId = globalMappings.find(m => m.column_type === 'quoted_hours')?.monday_column_id
-    }
-    if (!timelineColumnId) {
-      timelineColumnId = globalMappings.find(m => m.column_type === 'timeline')?.monday_column_id
-    }
+    const globalMappings = relevant.filter((m) => !m.board_id)
+    if (!quotedHoursColumnId) quotedHoursColumnId = globalMappings.find((m) => m.column_type === 'quoted_hours')?.monday_column_id
+    if (!timelineColumnId) timelineColumnId = globalMappings.find((m) => m.column_type === 'timeline')?.monday_column_id
   }
 
+  return { quotedHoursColumnId, timelineColumnId }
+}
+
+/** Parse one Monday item's subitems into MondayTask rows. Pure; no I/O. */
+function parseSubitemsForItem(
+  item: MondaySubitemsItem,
+  boardId: string | undefined,
+  boardName: string | undefined,
+  mappings: ColumnMappingRow[]
+): MondayTask[] {
+  const itemBoardId = item.board?.id || boardId
+  const { quotedHoursColumnId, timelineColumnId } = resolveSubitemColumnIds(mappings, itemBoardId, boardName)
+  const tasks: MondayTask[] = []
+
+  for (const subitem of item.subitems || []) {
+    let quoted_hours: number | undefined
+    let timeline_start: string | undefined
+    let timeline_end: string | undefined
+    let assigned_user_ids: string[] | undefined
+
+    if (subitem.column_values) {
+      // Find quoted hours using mapped column
+      if (quotedHoursColumnId) {
+        const quotedHoursColumn = subitem.column_values.find((cv) => cv.id === quotedHoursColumnId)
+        if (quotedHoursColumn) {
+          // Handle different number column types
+          if (quotedHoursColumn.text) {
+            const numValue = parseFloat(quotedHoursColumn.text)
+            if (!isNaN(numValue) && numValue > 0) {
+              quoted_hours = numValue
+            }
+          } else if (quotedHoursColumn.value) {
+            try {
+              const value = JSON.parse(quotedHoursColumn.value)
+              const numValue = typeof value === 'number' ? value : parseFloat(value?.toString() || '0')
+              if (!isNaN(numValue) && numValue > 0) {
+                quoted_hours = numValue
+              }
+            } catch {
+              // Ignore parsing errors
+            }
+          }
+        }
+      }
+
+      // Find timeline using mapped column
+      if (timelineColumnId) {
+        const timelineColumn = subitem.column_values.find((cv) => cv.id === timelineColumnId)
+        if (timelineColumn?.value) {
+          try {
+            const value = JSON.parse(timelineColumn.value)
+            if (value) {
+              if (value.from) timeline_start = value.from
+              if (value.to) timeline_end = value.to
+              // Handle different timeline formats
+              if (!timeline_start && value.start) timeline_start = value.start
+              if (!timeline_end && value.end) timeline_end = value.end
+            }
+          } catch {
+            // Ignore parsing errors
+          }
+        }
+      }
+
+      // Try to find assigned users (people column)
+      for (const col of subitem.column_values) {
+        if (col.type === 'people' && col.value) {
+          try {
+            const value = JSON.parse(col.value)
+            if (Array.isArray(value.personIds)) {
+              assigned_user_ids = value.personIds
+            } else if (Array.isArray(value)) {
+              assigned_user_ids = value.map((v: any) => v.personId || v.id || v).filter(Boolean)
+            }
+          } catch {
+            // Ignore parsing errors
+          }
+        }
+      }
+    }
+
+    const column_values: Record<string, any> = {}
+    subitem.column_values?.forEach((cv) => {
+      column_values[cv.id] = {
+        text: cv.text,
+        value: cv.value ? JSON.parse(cv.value) : null,
+        type: cv.type,
+      }
+    })
+
+    tasks.push({
+      id: subitem.id,
+      name: subitem.name,
+      parent_item_id: item.id,
+      assigned_user_ids: assigned_user_ids?.length ? [...new Set(assigned_user_ids)] : undefined,
+      quoted_hours,
+      timeline_start,
+      timeline_end,
+      column_values,
+    })
+  }
+
+  return tasks
+}
+
+const SUBITEM_FETCH_BATCH_SIZE = 25
+
+/**
+ * Fetch subitems for many parent items in batches. Returns tasks keyed by parent item id;
+ * every requested id is present in the map (empty array when the item has no subitems).
+ */
+export async function getMondayTasksForItems(
+  accessToken: string,
+  items: Array<{ id: string; board_id: string; board_name?: string }>,
+  mappings: ColumnMappingRow[]
+): Promise<Map<string, MondayTask[]>> {
+  const result = new Map<string, MondayTask[]>()
+  if (items.length === 0) return result
+  for (const it of items) result.set(it.id, [])
+  const byId = new Map(items.map((it) => [it.id, it]))
+
   const query = `
-    query($itemId: [ID!]) {
-      items(ids: $itemId) {
+    query($itemIds: [ID!]) {
+      items(ids: $itemIds) {
         id
         name
-        board {
-          id
-        }
+        board { id }
         subitems {
           id
           name
-          column_values {
-            id
-            text
-            value
-            type
-          }
+          column_values { id text value type }
         }
       }
     }
   `
 
-  const data = await mondayRequest<{
-    items: Array<{
-      id: string
-      name: string
-      board: {
-        id: string
-      }
-      subitems: Array<{
-        id: string
-        name: string
-        column_values: Array<{
-          id: string
-          text?: string
-          value?: string
-          type: string
-        }>
-      }>
-    }>
-  }>(accessToken, query, { itemId: [projectId] })
-
-  const tasks: MondayTask[] = []
-
-  for (const item of data.items || []) {
-    // Use board ID from item if not provided
-    const itemBoardId = item.board.id || boardId
-    
-    // Get mappings for this board if we have it
-    let taskQuotedHoursColumnId = quotedHoursColumnId
-    let taskTimelineColumnId = timelineColumnId
-    
-    if (itemBoardId && allMappings) {
-      const boardMappings = allMappings.filter(m => m.board_id === itemBoardId)
-      if (boardMappings.length > 0) {
-        taskQuotedHoursColumnId = boardMappings.find(m => m.column_type === 'quoted_hours')?.monday_column_id || taskQuotedHoursColumnId
-        taskTimelineColumnId = boardMappings.find(m => m.column_type === 'timeline')?.monday_column_id || taskTimelineColumnId
-      }
-    }
-    
-    for (const subitem of item.subitems || []) {
-      let quoted_hours: number | undefined
-      let timeline_start: string | undefined
-      let timeline_end: string | undefined
-      let assigned_user_ids: string[] | undefined
-
-      if (subitem.column_values) {
-        // Find quoted hours using mapped column
-        if (taskQuotedHoursColumnId) {
-          const quotedHoursColumn = subitem.column_values.find((cv) => cv.id === taskQuotedHoursColumnId)
-          if (quotedHoursColumn) {
-            // Handle different number column types
-            if (quotedHoursColumn.text) {
-              const numValue = parseFloat(quotedHoursColumn.text)
-              if (!isNaN(numValue) && numValue > 0) {
-                quoted_hours = numValue
-              }
-            } else if (quotedHoursColumn.value) {
-              try {
-                const value = JSON.parse(quotedHoursColumn.value)
-                const numValue = typeof value === 'number' ? value : parseFloat(value?.toString() || '0')
-                if (!isNaN(numValue) && numValue > 0) {
-                  quoted_hours = numValue
-                }
-              } catch {
-                // Ignore parsing errors
-              }
-            }
-          }
-        }
-
-        // Find timeline using mapped column
-        if (taskTimelineColumnId) {
-          const timelineColumn = subitem.column_values.find((cv) => cv.id === taskTimelineColumnId)
-          if (timelineColumn?.value) {
-            try {
-              const value = JSON.parse(timelineColumn.value)
-              if (value) {
-                if (value.from) timeline_start = value.from
-                if (value.to) timeline_end = value.to
-                // Handle different timeline formats
-                if (!timeline_start && value.start) timeline_start = value.start
-                if (!timeline_end && value.end) timeline_end = value.end
-              }
-            } catch {
-              // Ignore parsing errors
-            }
-          }
-        }
-
-        // Try to find assigned users (people column)
-        for (const col of subitem.column_values) {
-          if (col.type === 'people' && col.value) {
-            try {
-              const value = JSON.parse(col.value)
-              if (Array.isArray(value.personIds)) {
-                assigned_user_ids = value.personIds
-              } else if (Array.isArray(value)) {
-                assigned_user_ids = value.map((v: any) => v.personId || v.id || v).filter(Boolean)
-              }
-            } catch {
-              // Ignore parsing errors
-            }
-          }
-        }
-      }
-
-      const column_values: Record<string, any> = {}
-      subitem.column_values?.forEach((cv) => {
-        column_values[cv.id] = {
-          text: cv.text,
-          value: cv.value ? JSON.parse(cv.value) : null,
-          type: cv.type,
-        }
-      })
-
-      tasks.push({
-        id: subitem.id,
-        name: subitem.name,
-        parent_item_id: projectId,
-        assigned_user_ids: assigned_user_ids?.length ? [...new Set(assigned_user_ids)] : undefined,
-        quoted_hours,
-        timeline_start,
-        timeline_end,
-        column_values,
-      })
+  for (let i = 0; i < items.length; i += SUBITEM_FETCH_BATCH_SIZE) {
+    const batch = items.slice(i, i + SUBITEM_FETCH_BATCH_SIZE)
+    const data = await mondayRequest<{ items: MondaySubitemsItem[] }>(accessToken, query, {
+      itemIds: batch.map((b) => b.id),
+    })
+    for (const item of data.items || []) {
+      const requested = byId.get(item.id)
+      result.set(item.id, parseSubitemsForItem(item, requested?.board_id, requested?.board_name, mappings))
     }
   }
 
-  return tasks
+  return result
 }
 
 export type SyncProgressEvent =
@@ -1204,18 +1178,48 @@ export async function syncMondayData(
       else existingTasksByProjectId.set(row.project_id, [row])
     }
 
-    // 3. Sync projects to Supabase
-    for (let i = 0; i < mondayProjects.length; i++) {
-      const project = mondayProjects[i]
-      const progress = 0.1 + 0.85 * (i / Math.max(1, totalProjects))
-      report({
-        phase: 'syncing',
-        message: `Syncing ${project.name}`,
-        projectIndex: i + 1,
-        totalProjects,
-        projectName: project.name,
-        progress,
-      })
+    // Helper function to extract quote_value from monday_data/column_values
+    const extractQuoteValue = (data: Record<string, any> | undefined, columnId: string | null | undefined): number | null => {
+      if (!data || !columnId || !data[columnId]) return null
+
+      const valueColumn = data[columnId]
+      if (valueColumn.value !== null && valueColumn.value !== undefined) {
+        try {
+          let parsedValue: number
+          if (typeof valueColumn.value === 'number') {
+            parsedValue = valueColumn.value
+          } else if (typeof valueColumn.value === 'object' && valueColumn.value?.value !== undefined) {
+            parsedValue = typeof valueColumn.value.value === 'number'
+              ? valueColumn.value.value
+              : parseFloat(String(valueColumn.value.value))
+          } else {
+            parsedValue = parseFloat(String(valueColumn.value))
+          }
+          if (!isNaN(parsedValue)) {
+            return parsedValue
+          }
+        } catch {
+          // Ignore parsing errors
+        }
+      }
+
+      if (valueColumn.text) {
+        const numValue = parseFloat(valueColumn.text.replace(/[£,$,\s]/g, ''))
+        if (!isNaN(numValue)) {
+          return numValue
+        }
+      }
+
+      return null
+    }
+
+    // 3. Sync projects to Supabase, in chunks so subitems can be fetched in one Monday request per chunk.
+    for (let chunkStart = 0; chunkStart < mondayProjects.length; chunkStart += SUBITEM_FETCH_BATCH_SIZE) {
+      const chunk = mondayProjects.slice(chunkStart, chunkStart + SUBITEM_FETCH_BATCH_SIZE)
+
+      // Phase 1: decide what to write for each project in the chunk (no I/O).
+      const prepared = chunk.map((project, offset) => {
+        const i = chunkStart + offset
       // Determine status based on board
       const isActive = activeBoardIds.has(project.board_id)
       const isCompleted = completedBoardIds.has(project.board_id)
@@ -1248,41 +1252,6 @@ export async function syncMondayData(
 
       // Handle quote_value - try to extract if not provided, preserve for locked projects if still missing
       let finalQuoteValue = project.quote_value || null
-      
-      // Helper function to extract quote_value from monday_data/column_values
-      const extractQuoteValue = (data: Record<string, any> | undefined, columnId: string | null | undefined): number | null => {
-        if (!data || !columnId || !data[columnId]) return null
-        
-        const valueColumn = data[columnId]
-        if (valueColumn.value !== null && valueColumn.value !== undefined) {
-          try {
-            let parsedValue: number
-            if (typeof valueColumn.value === 'number') {
-              parsedValue = valueColumn.value
-            } else if (typeof valueColumn.value === 'object' && valueColumn.value?.value !== undefined) {
-              parsedValue = typeof valueColumn.value.value === 'number' 
-                ? valueColumn.value.value 
-                : parseFloat(String(valueColumn.value.value))
-            } else {
-              parsedValue = parseFloat(String(valueColumn.value))
-            }
-            if (!isNaN(parsedValue)) {
-              return parsedValue
-            }
-          } catch {
-            // Ignore parsing errors
-          }
-        }
-        
-        if (valueColumn.text) {
-          const numValue = parseFloat(valueColumn.text.replace(/[£,$,\s]/g, ''))
-          if (!isNaN(numValue)) {
-            return numValue
-          }
-        }
-        
-        return null
-      }
 
       // Get quote_value column mapping for this board
       const quoteValueColumnId = findMappingColumnId(columnMappings, 'quote_value', project.board_id)
@@ -1381,28 +1350,46 @@ export async function syncMondayData(
         updated_at: new Date().toISOString(),
       }
 
-      // 3. Write and fetch the project record in one round trip
-      const { data: projectRecord } = await supabase
-        .from('monday_projects')
-        .upsert(projectData, { onConflict: 'monday_item_id' })
-        .select('id, status')
-        .single()
-
       // Locked (completed) projects rarely change. Skip the per-project subitem fetch and task
       // writes unless this is a full resync, or the project has only just become locked this run.
       const wasAlreadyLocked = existing?.status === 'locked'
       const skipTaskSync = wasAlreadyLocked && finalStatus === 'locked' && !syncAllBoards
 
-      if (projectRecord && !skipTaskSync) {
+      return { i, project, existing, projectData, skipTaskSync }
+    })
+
+      // Phase 2: one Monday request (per 25) for the subitems we actually need.
+      const tasksByItemId = await getMondayTasksForItems(
+        accessToken,
+        prepared
+          .filter((p) => !p.skipTaskSync)
+          .map((p) => ({ id: p.project.id, board_id: p.project.board_id, board_name: p.project.board_name })),
+        columnMappings
+      )
+
+      // Phase 3: write each project and its tasks.
+      for (const { i, project, existing, projectData, skipTaskSync } of prepared) {
+        const progress = 0.1 + 0.85 * (i / Math.max(1, totalProjects))
+        report({
+          phase: 'syncing',
+          message: `Syncing ${project.name}`,
+          projectIndex: i + 1,
+          totalProjects,
+          projectName: project.name,
+          progress,
+        })
+
+        // Write and fetch the project record in one round trip
+        const { data: projectRecord } = await supabase
+          .from('monday_projects')
+          .upsert(projectData, { onConflict: 'monday_item_id' })
+          .select('id, status')
+          .single()
+
+        if (!projectRecord || skipTaskSync) continue
+
         const isProjectLocked = projectRecord.status === 'locked'
-        const mondayTasks = await getMondayTasks(
-          accessToken,
-          project.id,
-          project.board_id,
-          project.board_name,
-          admin,
-          columnMappings
-        )
+        const mondayTasks = tasksByItemId.get(project.id) ?? []
 
         // Get existing tasks to preserve quoted_hours for locked projects
         const existingTasks = existingTasksByProjectId.get(projectRecord.id) ?? []
@@ -1447,16 +1434,16 @@ export async function syncMondayData(
         // Update project's quoted_hours as sum of all task quoted_hours
         // For locked projects: only update if new total is greater than 0, or if existing is 0/null
         // This preserves historical budget data while still allowing updates when tasks are synced
-        const shouldUpdateQuotedHours = !isProjectLocked || 
-          totalTaskQuotedHours > 0 || 
-          !existing?.quoted_hours || 
+        const shouldUpdateQuotedHours = !isProjectLocked ||
+          totalTaskQuotedHours > 0 ||
+          !existing?.quoted_hours ||
           existing.quoted_hours === 0
-        
+
         if (shouldUpdateQuotedHours) {
           const updatedQuotedHours = totalTaskQuotedHours > 0 ? totalTaskQuotedHours : (existing?.quoted_hours || null)
           await supabase
             .from('monday_projects')
-            .update({ 
+            .update({
               quoted_hours: updatedQuotedHours,
               updated_at: new Date().toISOString()
             })
