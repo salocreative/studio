@@ -36,7 +36,12 @@ interface ProjectTaskSelectorProps {
   boardType?: 'main' | 'flexi-design'
   onBoardTypeChange?: (boardType: 'main' | 'flexi-design') => void
   hideClientFilters?: boolean
+  /** Skeleton the project rows while `projects` is still being fetched. */
+  loading?: boolean
 }
+
+/** Widths vary per row so the placeholder reads as a list rather than a repeated stamp. */
+const SKELETON_ROW_WIDTHS = ['w-1/3', 'w-1/2', 'w-2/5', 'w-1/4', 'w-1/3']
 
 export function ProjectTaskSelector({
   projects,
@@ -45,6 +50,7 @@ export function ProjectTaskSelector({
   boardType = 'main',
   onBoardTypeChange,
   hideClientFilters = false,
+  loading = false,
 }: ProjectTaskSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
@@ -202,7 +208,25 @@ export function ProjectTaskSelector({
         )}
         <hr className="my-2" />
         <div className="space-y-2 py-8">
-          {filteredProjects.length === 0 ? (
+          {loading ? (
+            // Collapsed project rows: name, client, hours, task-count badge. Keeps the
+            // header, board tabs and search above visible rather than replacing the
+            // whole section, so switching boards doesn't blank the page.
+            <div className="space-y-2 animate-pulse" aria-busy="true" aria-label="Loading projects">
+              {SKELETON_ROW_WIDTHS.map((width, i) => (
+                <div key={i} className="border rounded-lg overflow-hidden">
+                  <div className="w-full px-4 py-3 flex items-center justify-between gap-4">
+                    <div className="flex-1 space-y-2">
+                      <div className={cn('h-4 rounded bg-muted', width)} />
+                      <div className="h-3 w-1/4 rounded bg-muted" />
+                      <div className="h-3 w-1/5 rounded bg-muted" />
+                    </div>
+                    <div className="h-5 w-16 rounded-full bg-muted shrink-0" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : filteredProjects.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <p>No tasks found</p>
               {searchQuery && (
