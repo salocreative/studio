@@ -7,6 +7,10 @@ import { getFlexiDesignCompletedBoard } from './flexi-design-completed-board'
 import crypto from 'crypto'
 import { endOfWeek, format, startOfWeek } from 'date-fns'
 import { billableQuotedHours, isSpeculativeProject } from '@/lib/flexi-design/speculative'
+import {
+  buildFlexiDesignCreditBalances,
+  loadFlexiDesignCreditSources,
+} from '@/lib/flexi-design/credits'
 
 interface FlexiDesignClient {
   id: string
@@ -78,16 +82,15 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
   const includeHidden = options?.includeHidden === true
 
   try {
-    // Get Flexi-Design board IDs
-    const flexiDesignBoardIds = await getFlexiDesignBoardIds()
-    
-    // Get Flexi-Design completed board ID to exclude it from active projects
-    const completedBoardResult = await getFlexiDesignCompletedBoard()
-    const completedBoardId = completedBoardResult.success && completedBoardResult.board 
-      ? completedBoardResult.board.monday_board_id 
-      : null
-    
-    if (flexiDesignBoardIds.size === 0) {
+    const sources = await loadFlexiDesignCreditSources(supabase)
+    const {
+      flexiBoardIds,
+      activeProjects: allProjects,
+      completedProjects,
+      clientsData,
+    } = sources
+
+    if (flexiBoardIds.size === 0) {
       return {
         success: true,
         clients: [],
@@ -98,35 +101,6 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
           unused_credits: 0,
           time_logged_this_week: 0,
         } satisfies FlexiDesignClientsSummary,
-      }
-    }
-
-    // Filter out completed board from active board IDs
-    const activeBoardIds = Array.from(flexiDesignBoardIds).filter(
-      boardId => !completedBoardId || boardId !== completedBoardId
-    )
-
-    // Get all Flexi-Design projects with quoted_hours (from active boards, excluding completed board)
-    const { data: allProjects, error: projectsError } = await supabase
-      .from('monday_projects')
-      .select('id, name, client_name, status, created_at, quoted_hours, monday_status')
-      .in('monday_board_id', activeBoardIds)
-      .in('status', ['active', 'archived', 'locked'])
-      .order('created_at', { ascending: false })
-
-    if (projectsError) throw projectsError
-
-    // Get completed projects from the completed board
-    let completedProjects: any[] = []
-    if (completedBoardId) {
-      const { data: completed, error: completedError } = await supabase
-        .from('monday_projects')
-        .select('id, name, client_name, status, created_at, quoted_hours, monday_status')
-        .eq('monday_board_id', completedBoardId)
-        .in('status', ['active', 'archived', 'locked'])
-
-      if (!completedError && completed) {
-        completedProjects = completed
       }
     }
 
@@ -174,36 +148,6 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       }
     }
 
-    // Get all Flexi-Design clients from the database
-    // Handle gracefully if table doesn't exist yet (migration not run)
-    let clientsData: any[] | null = null
-    const { data, error: clientsError } = await supabase
-      .from('flexi_design_clients')
-      .select('*')
-      .order('client_name', { ascending: true })
-
-    if (clientsError) {
-      // Check if table doesn't exist (common error codes)
-      const errorMsg = clientsError.message || ''
-      const errorCode = clientsError.code || ''
-      
-      if (
-        errorCode === 'PGRST116' || 
-        errorCode === '42P01' ||
-        errorMsg.includes('does not exist') || 
-        errorMsg.includes('relation') || 
-        errorMsg.includes('table')
-      ) {
-        console.warn('flexi_design_clients table does not exist yet. Continuing with clients from projects only. Please run migration 004_add_flexi_design_clients.sql')
-        // Continue without client credit data - we'll show clients from projects only
-        clientsData = null
-      } else {
-        throw clientsError
-      }
-    } else {
-      clientsData = data
-    }
-
     // Group projects by client and calculate stats
     const clientsMap = new Map<string, {
       activeCount: number
@@ -243,102 +187,35 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
       client.quotedHoursUsed += billableQuotedHours(project)
     })
 
-    // Get credit transactions to calculate total deposited and last credit added
-    const creditTotalsByClientId: Record<string, number> = {}
-    const creditPurchaseCountsByClientId: Record<string, number> = {}
-    const lastCreditByClientId: Record<
-      string,
-      { hours: number; transaction_date: string; created_at: string }
-    > = {}
-
-    if (clientsData && clientsData.length > 0) {
-      const clientIds = clientsData.map((c: any) => String(c.id))
-      const pageSize = 1000
-      const allTransactions: Array<{
-        client_id: string
-        hours: number | string
-        transaction_date: string
-        created_at: string
-      }> = []
-
-      // Chunk `.in()` filters to avoid request URL limits with many client IDs
-      for (let i = 0; i < clientIds.length; i += 100) {
-        const idChunk = clientIds.slice(i, i + 100)
-        let from = 0
-
-        while (true) {
-          const { data: transactions, error: transactionsError } = await supabase
-            .from('flexi_design_credit_transactions')
-            .select('client_id, hours, transaction_date, created_at')
-            .in('client_id', idChunk)
-            .order('transaction_date', { ascending: false })
-            .order('created_at', { ascending: false })
-            .range(from, from + pageSize - 1)
-
-          if (transactionsError) {
-            console.error('Error loading Flexi credit transactions for client list:', transactionsError)
-            break
-          }
-
-          if (!transactions?.length) break
-          allTransactions.push(...transactions)
-          if (transactions.length < pageSize) break
-          from += pageSize
-        }
-      }
-
-      for (const tx of allTransactions) {
-        const clientId = String(tx.client_id)
-        const hours = Number(tx.hours) || 0
-        creditTotalsByClientId[clientId] = (creditTotalsByClientId[clientId] || 0) + hours
-        creditPurchaseCountsByClientId[clientId] =
-          (creditPurchaseCountsByClientId[clientId] || 0) + 1
-
-        const txDate = String(tx.transaction_date || '').slice(0, 10)
-
-        // Rows are ordered newest-first, so the first time we see a client is their latest credit
-        if (!lastCreditByClientId[clientId]) {
-          lastCreditByClientId[clientId] = {
-            hours,
-            transaction_date: txDate,
-            created_at: String(tx.created_at || ''),
-          }
-        }
-      }
-    }
+    // Credit totals come from the shared builder so admin matches GET /api/flexi-design/credits
+    const creditBalancesByName = new Map(
+      buildFlexiDesignCreditBalances(sources).map((balance) => [balance.client_name, balance])
+    )
 
     // Build client list with stats
     const clients: FlexiDesignClient[] = []
 
     // Add clients from database (they might not have projects yet)
     clientsData?.forEach((client: any) => {
-      const clientId = String(client.id)
       const clientProjects = clientsMap.get(client.client_name)
       const hoursUsed = clientProjects?.hoursUsed || 0
-      const quotedHoursUsed = clientProjects?.quotedHoursUsed || 0
       const totalProjects = clientProjects?.totalCount || 0
       const activeProjects = clientProjects?.activeCount || 0
-      const totalDeposited = creditTotalsByClientId[clientId] || 0
-      const purchaseCount = creditPurchaseCountsByClientId[clientId] || 0
-      const lastCredit = lastCreditByClientId[clientId]
-      
-      // Calculate remaining hours: Total Hours Credited - Total Hours Estimated (quoted)
-      // This includes both active and completed projects' quoted hours
-      const remainingHours = totalDeposited - quotedHoursUsed
+      const credit = creditBalancesByName.get(client.client_name)
 
       clients.push({
         id: client.id,
         client_name: client.client_name,
-        remaining_hours: remainingHours,
-        total_credits: totalDeposited,
+        remaining_hours: credit?.remaining_credits ?? 0,
+        total_credits: credit?.total_credits ?? 0,
         total_projects: totalProjects,
         active_projects: activeProjects,
         hours_used: hoursUsed, // logged hours for internal tracking
-        quoted_hours_used: quotedHoursUsed, // quoted hours for credit deduction
+        quoted_hours_used: credit?.credits_used ?? 0, // quoted hours for credit deduction
         is_hidden: Boolean(client.is_hidden),
-        last_credit_hours: lastCredit ? lastCredit.hours : null,
-        last_credit_date: lastCredit?.transaction_date || null,
-        avg_credit_purchase: purchaseCount > 0 ? totalDeposited / purchaseCount : null,
+        last_credit_hours: credit?.last_credit_hours ?? null,
+        last_credit_date: credit?.last_credit_date ?? null,
+        avg_credit_purchase: credit?.avg_credit_purchase ?? null,
       })
     })
 
@@ -346,15 +223,16 @@ export async function getFlexiDesignClients(options?: { includeHidden?: boolean 
     clientsMap.forEach((data, clientName) => {
       const exists = clients.find(c => c.client_name === clientName)
       if (!exists) {
+        const credit = creditBalancesByName.get(clientName)
         clients.push({
           id: '', // Will be created when they get their first credit
           client_name: clientName,
-          remaining_hours: 0 - data.quotedHoursUsed, // Negative if they have quoted hours but no credit
-          total_credits: 0,
+          remaining_hours: credit?.remaining_credits ?? (0 - data.quotedHoursUsed),
+          total_credits: credit?.total_credits ?? 0,
           total_projects: data.totalCount,
           active_projects: data.activeCount,
           hours_used: data.hoursUsed, // logged hours for internal tracking
-          quoted_hours_used: data.quotedHoursUsed, // quoted hours for credit deduction
+          quoted_hours_used: credit?.credits_used ?? data.quotedHoursUsed,
           is_hidden: false,
           last_credit_hours: null,
           last_credit_date: null,

@@ -170,6 +170,19 @@ export function StudioApiTokensForm() {
             </p>
           </div>
 
+          <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Flexi-Design credits</p>
+            <ul className="mt-2 list-inside list-disc space-y-1 font-mono text-xs">
+              <li>GET /api/flexi-design/credits</li>
+              <li>GET /api/flexi-design/credits?client=Acme</li>
+            </ul>
+            <p className="mt-2">
+              Auth: <code className="text-foreground">Authorization: Bearer …</code> using a token
+              created below. Returns the same remaining/total credits as the Flexi-Design admin
+              page. Optional <code className="text-foreground">include_hidden=true</code>.
+            </p>
+          </div>
+
           {loading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
