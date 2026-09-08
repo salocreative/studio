@@ -183,6 +183,23 @@ export function StudioApiTokensForm() {
             </p>
           </div>
 
+          <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Weekly timesheet status</p>
+            <ul className="mt-2 list-inside list-disc space-y-1 font-mono text-xs">
+              <li>GET /api/time-tracking/status</li>
+              <li>GET /api/time-tracking/status?week_start=2026-09-07</li>
+            </ul>
+            <p className="mt-2">
+              Auth: <code className="text-foreground">Authorization: Bearer …</code> using a token
+              created below. Per person Mon–Fri status:{' '}
+              <code className="text-foreground">complete</code>,{' '}
+              <code className="text-foreground">partial</code>,{' '}
+              <code className="text-foreground">missing</code>, or{' '}
+              <code className="text-foreground">upcoming</code> (after today in UK time). Same 6h /
+              capacity rules as Performance.
+            </p>
+          </div>
+
           {loading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

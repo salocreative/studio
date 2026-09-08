@@ -2,14 +2,7 @@
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { startOfMonth, endOfMonth, eachDayOfInterval, getDay, format, startOfWeek } from 'date-fns'
-
-const BASE_HOURS_PER_DAY = 6
-
-function capacityMultiplier(expectedUtilizationPercentage: number | null | undefined): number {
-  const pct = expectedUtilizationPercentage ?? 100
-  const clamped = Math.min(100, Math.max(0, Number(pct)))
-  return clamped / 100
-}
+import { BASE_HOURS_PER_DAY, capacityMultiplier } from '@/lib/time-tracking/status'
 
 interface TeamMemberUtilization {
   id: string
