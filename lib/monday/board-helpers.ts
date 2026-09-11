@@ -324,6 +324,18 @@ export async function getMainTimesheetBoardIds(): Promise<Set<string>> {
 }
 
 /**
+ * Monday board IDs for the Completed Projects page (ad-hoc work only):
+ * `mainBoardIds ∪ completedBoardIds`, minus Flexi-Design boards and the Flexi completed archive.
+ */
+export async function getCompletedProjectsBoardIds(): Promise<Set<string>> {
+  const { mainBoardIds, completedBoardIds, flexiBoardIds, flexiCompletedBoardId } =
+    await getMondayBoardConfig()
+  const flexiIds = new Set(flexiBoardIds)
+  if (flexiCompletedBoardId) flexiIds.add(flexiCompletedBoardId)
+  return new Set([...mainBoardIds, ...completedBoardIds].filter((id) => !flexiIds.has(id)))
+}
+
+/**
  * Get the leads board ID
  * Returns the board ID if configured, null otherwise
  */

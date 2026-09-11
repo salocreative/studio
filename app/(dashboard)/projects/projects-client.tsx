@@ -17,14 +17,32 @@ import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2, Che
 import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
 import { format, parseISO, compareDesc } from 'date-fns'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
-const INTERNAL_CLIENT_NAME = 'Salo Creative'
+const ALL_FILTER = '__all__'
 /** Pace is "on track" when logged hours are within this fraction of quoted hours of the expected amount */
 const PACE_TOLERANCE = 0.1
 
-function isInternalProject(project: { client_name: string | null }) {
-  return project.client_name?.toLowerCase() === INTERNAL_CLIENT_NAME.toLowerCase()
+function uniqueSortedNames(values: (string | null | undefined)[]): string[] {
+  return Array.from(
+    new Set(values.map((value) => value?.trim()).filter((name): name is string => Boolean(name)))
+  ).sort((a, b) => a.localeCompare(b))
 }
+
+function withSelected(options: string[], selected: string | null): string[] {
+  if (selected && !options.includes(selected)) {
+    return [...options, selected].sort((a, b) => a.localeCompare(b))
+  }
+  return options
+}
+
+export type ProjectsStatusFilter = 'active' | 'locked'
 
 interface ProjectDesigner {
   id: string
@@ -37,6 +55,7 @@ interface Project {
   id: string
   name: string
   client_name: string | null
+  agency?: string | null
   completed_date?: string | null
   due_date?: string | null
   created_at?: string | null
@@ -55,42 +74,8 @@ interface Project {
   }>
 }
 
-export type ProjectsStatusFilter = 'active' | 'locked'
-
 interface ProjectsClientProps {
   statusFilter: ProjectsStatusFilter
-}
-
-function SegmentedSwitch<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T
-  onChange: (value: T) => void
-  options: { value: T; label: string; disabled?: boolean }[]
-}) {
-  return (
-    <div className="inline-flex rounded-lg border bg-muted/40 p-0.5">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          disabled={option.disabled}
-          onClick={() => onChange(option.value)}
-          className={cn(
-            'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-            option.disabled && 'cursor-not-allowed opacity-40',
-            value === option.value
-              ? 'bg-background shadow-sm text-foreground'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
@@ -98,21 +83,21 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
+  const [selectedAgency, setSelectedAgency] = useState<string | null>(null)
   const [selectedDesigner, setSelectedDesigner] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'clients' | 'internal'>('clients')
-  const [filterMode, setFilterMode] = useState<'client' | 'designer'>('client')
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [projectDetails, setProjectDetails] = useState<any>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
 
   useEffect(() => {
     loadProjects()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter])
 
   async function loadProjects() {
     setLoading(true)
     try {
-      const result = await getProjectsWithTimeTracking()
+      const result = await getProjectsWithTimeTracking(statusFilter)
       if (result.error) {
         console.error('Error loading projects:', result.error)
       } else if (result.projects) {
@@ -161,91 +146,77 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
       const q = searchQuery.toLowerCase()
       const matchesName = project.name.toLowerCase().includes(q)
       const matchesClient = project.client_name?.toLowerCase().includes(q)
+      const matchesAgency = project.agency?.toLowerCase().includes(q)
       const matchesDesigner = (project.designers || []).some((d) =>
         (d.full_name || d.email || '').toLowerCase().includes(q)
       )
-      return matchesName || matchesClient || matchesDesigner
+      return matchesName || matchesClient || matchesAgency || matchesDesigner
     })
   }, [projects, searchQuery])
 
-  // Filter by Clients vs Internal (Salo Creative) scope
-  const scopeFilteredProjects = useMemo(() => {
-    return searchFilteredProjects.filter((project) => {
-      const isInternal = isInternalProject(project)
-      return viewMode === 'internal' ? isInternal : !isInternal
-    })
-  }, [searchFilteredProjects, viewMode])
+  const isLive = statusFilter === 'active'
+  const statusScopedProjects = useMemo(
+    () =>
+      searchFilteredProjects.filter((p) =>
+        isLive ? p.status === 'active' : p.status === 'locked'
+      ),
+    [searchFilteredProjects, isLive]
+  )
 
-  // Filter projects based on search query, scope, client, and designer
-  const filteredProjects = useMemo(() => {
-    return scopeFilteredProjects.filter((project) => {
-      const matchesClient = !selectedClient || project.client_name === selectedClient
-      const matchesDesigner =
-        !selectedDesigner ||
-        (project.designers || []).some((d) => d.id === selectedDesigner)
-      return matchesClient && matchesDesigner
-    })
-  }, [scopeFilteredProjects, selectedClient, selectedDesigner])
+  const statusProjects = useMemo(
+    () =>
+      statusScopedProjects.filter((project) => {
+        const matchesClient = !selectedClient || project.client_name === selectedClient
+        const matchesAgency = !selectedAgency || project.agency === selectedAgency
+        const matchesDesigner =
+          !selectedDesigner ||
+          (project.designers || []).some((d) => d.id === selectedDesigner)
+        return matchesClient && matchesAgency && matchesDesigner
+      }),
+    [statusScopedProjects, selectedClient, selectedAgency, selectedDesigner]
+  )
 
-  // Get unique clients for the current tab (Clients mode only — Salo Creative is excluded)
-  const getUniqueClients = (statusFilter: 'active' | 'locked') => {
-    const filtered = scopeFilteredProjects.filter(p =>
-      statusFilter === 'active' ? p.status === 'active' : p.status === 'locked'
-    )
-    const clients = new Set<string>()
-    filtered.forEach(project => {
-      if (project.client_name && !isInternalProject(project)) {
-        clients.add(project.client_name)
+  const matchingOthers = (skip: 'client' | 'agency' | 'designer') =>
+    statusScopedProjects.filter((p) => {
+      if (skip !== 'client' && selectedClient && p.client_name !== selectedClient) return false
+      if (skip !== 'agency' && selectedAgency && p.agency !== selectedAgency) return false
+      if (
+        skip !== 'designer' &&
+        selectedDesigner &&
+        !(p.designers || []).some((d) => d.id === selectedDesigner)
+      ) {
+        return false
       }
+      return true
     })
-    return Array.from(clients).sort()
-  }
 
-  // Designers who have logged time on projects in the current tab/scope (and client filter)
-  const getUniqueDesigners = (statusFilter: 'active' | 'locked') => {
-    const filtered = scopeFilteredProjects.filter((p) => {
-      const matchesStatus = statusFilter === 'active' ? p.status === 'active' : p.status === 'locked'
-      const matchesClient = !selectedClient || p.client_name === selectedClient
-      return matchesStatus && matchesClient
-    })
+  const availableClients = uniqueSortedNames(
+    matchingOthers('client').map((p) => p.client_name)
+  )
+  const availableAgencies = uniqueSortedNames(
+    matchingOthers('agency').map((p) => p.agency)
+  )
+  const availableDesigners = (() => {
     const byId = new Map<string, ProjectDesigner>()
-    filtered.forEach((project) => {
+    matchingOthers('designer').forEach((project) => {
       ;(project.designers || []).forEach((designer) => {
-        if (!byId.has(designer.id)) {
-          byId.set(designer.id, designer)
-        }
+        if (!byId.has(designer.id)) byId.set(designer.id, designer)
       })
     })
+    if (selectedDesigner) {
+      const fromAll = statusScopedProjects
+        .flatMap((p) => p.designers || [])
+        .find((d) => d.id === selectedDesigner)
+      if (fromAll && !byId.has(fromAll.id)) byId.set(fromAll.id, fromAll)
+    }
     return Array.from(byId.values()).sort((a, b) => {
       const nameA = a.full_name || a.email || ''
       const nameB = b.full_name || b.email || ''
       return nameA.localeCompare(nameB)
     })
-  }
+  })()
 
-  const handleViewModeChange = (mode: 'clients' | 'internal') => {
-    setViewMode(mode)
-    setSelectedClient(null)
-    setSelectedDesigner(null)
-    if (mode === 'internal') {
-      setFilterMode('designer')
-    }
-  }
-
-  const handleFilterModeChange = (mode: 'client' | 'designer') => {
-    setFilterMode(mode)
-    setSelectedClient(null)
-    setSelectedDesigner(null)
-  }
-
-  const isLive = statusFilter === 'active'
-  const statusProjects = filteredProjects.filter((p) =>
-    statusFilter === 'active' ? p.status === 'active' : p.status === 'locked'
-  )
-  const availableClients = getUniqueClients(statusFilter)
-  const availableDesigners = getUniqueDesigners(statusFilter)
-
-  const hasActiveFilters = Boolean(searchQuery || selectedClient || selectedDesigner)
+  const hasActiveFilters = Boolean(searchQuery || selectedClient || selectedDesigner || selectedAgency)
 
   return (
     <>
@@ -258,27 +229,54 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
             <div className="mb-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <SegmentedSwitch
-                    value={viewMode}
-                    onChange={handleViewModeChange}
-                    options={[
-                      { value: 'clients', label: 'Client Projects' },
-                      { value: 'internal', label: 'Salo Projects' },
-                    ]}
-                  />
-                  {viewMode === 'clients' && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground whitespace-nowrap">Show by</span>
-                      <SegmentedSwitch
-                        value={filterMode}
-                        onChange={handleFilterModeChange}
-                        options={[
-                          { value: 'client', label: 'Client' },
-                          { value: 'designer', label: 'Designer' },
-                        ]}
-                      />
-                    </div>
-                  )}
+                    <Select
+                      value={selectedClient ?? ALL_FILTER}
+                      onValueChange={(value) => setSelectedClient(value === ALL_FILTER ? null : value)}
+                    >
+                      <SelectTrigger className="w-[200px]" size="sm" aria-label="Filter by client">
+                        <SelectValue placeholder="All clients" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_FILTER}>All clients</SelectItem>
+                        {withSelected(availableClients, selectedClient).map((client) => (
+                          <SelectItem key={client} value={client}>
+                            {client}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={selectedAgency ?? ALL_FILTER}
+                      onValueChange={(value) => setSelectedAgency(value === ALL_FILTER ? null : value)}
+                    >
+                      <SelectTrigger className="w-[200px]" size="sm" aria-label="Filter by agency">
+                        <SelectValue placeholder="All agencies" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_FILTER}>All agencies</SelectItem>
+                        {withSelected(availableAgencies, selectedAgency).map((agency) => (
+                          <SelectItem key={agency} value={agency}>
+                            {agency}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={selectedDesigner ?? ALL_FILTER}
+                      onValueChange={(value) => setSelectedDesigner(value === ALL_FILTER ? null : value)}
+                    >
+                      <SelectTrigger className="w-[200px]" size="sm" aria-label="Filter by designer">
+                        <SelectValue placeholder="All designers" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_FILTER}>All designers</SelectItem>
+                        {availableDesigners.map((designer) => (
+                          <SelectItem key={designer.id} value={designer.id}>
+                            {designerDisplayName(designer)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                 </div>
                 <div className="relative w-full sm:w-56 shrink-0">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -300,22 +298,6 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                   )}
                 </div>
               </div>
-
-              {filterMode === 'client' && viewMode === 'clients' && (
-                <ClientFilters
-                  clients={availableClients}
-                  selectedClient={selectedClient}
-                  onSelectClient={setSelectedClient}
-                />
-              )}
-
-              {filterMode === 'designer' && (
-                <DesignerFilters
-                  designers={availableDesigners}
-                  selectedDesigner={selectedDesigner}
-                  onSelectDesigner={setSelectedDesigner}
-                />
-              )}
             </div>
 
             {statusProjects.length === 0 ? (
@@ -326,23 +308,15 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                     {hasActiveFilters
                       ? 'No matching projects'
                       : isLive
-                        ? viewMode === 'internal'
-                          ? 'No live internal projects'
-                          : 'No live projects'
-                        : viewMode === 'internal'
-                          ? 'No completed internal projects'
-                          : 'No completed projects'}
+                        ? 'No live projects'
+                        : 'No completed projects'}
                   </p>
                   <p className="text-sm text-muted-foreground mt-2">
                     {hasActiveFilters
                       ? 'Try adjusting your search or filter criteria'
                       : isLive
-                        ? viewMode === 'internal'
-                          ? 'Salo Creative projects will appear here once synced from Monday.com'
-                          : 'Active projects will appear here once synced from Monday.com'
-                        : viewMode === 'internal'
-                          ? 'Completed Salo Creative projects will appear here'
-                          : 'Completed projects (from completed boards) will appear here'}
+                        ? 'Active projects will appear here once synced from Monday.com'
+                        : 'Completed projects will appear here once synced from Monday.com'}
                   </p>
                 </CardContent>
               </Card>
@@ -767,7 +741,9 @@ function ProjectListItem({
             <div className="font-medium text-base truncate">{project.name}</div>
             {project.client_name && (
               <div className="text-sm text-muted-foreground mt-0.5 truncate">
-                {project.client_name}
+                {project.agency
+                  ? `${project.client_name} · ${project.agency}`
+                  : project.client_name}
               </div>
             )}
           </div>
@@ -945,81 +921,4 @@ function designerShortName(designer: ProjectDesigner) {
   return name.split(/\s+/)[0]
 }
 
-function ClientFilters({
-  clients,
-  selectedClient,
-  onSelectClient,
-}: {
-  clients: string[]
-  selectedClient: string | null
-  onSelectClient: (client: string | null) => void
-}) {
-  if (clients.length === 0) {
-    return null
-  }
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        variant={selectedClient === null ? 'default' : 'outline'}
-        size="sm"
-        onClick={() => onSelectClient(null)}
-        className="h-8"
-      >
-        All
-      </Button>
-      {clients.map((client) => (
-        <Button
-          key={client}
-          variant={selectedClient === client ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => onSelectClient(selectedClient === client ? null : client)}
-          className="h-8"
-        >
-          {client}
-        </Button>
-      ))}
-    </div>
-  )
-}
-
-function DesignerFilters({
-  designers,
-  selectedDesigner,
-  onSelectDesigner,
-}: {
-  designers: ProjectDesigner[]
-  selectedDesigner: string | null
-  onSelectDesigner: (designerId: string | null) => void
-}) {
-  if (designers.length === 0) {
-    return null
-  }
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        variant={selectedDesigner === null ? 'default' : 'outline'}
-        size="sm"
-        onClick={() => onSelectDesigner(null)}
-        className="h-8"
-      >
-        All
-      </Button>
-      {designers.map((designer) => (
-        <Button
-          key={designer.id}
-          variant={selectedDesigner === designer.id ? 'default' : 'outline'}
-          size="sm"
-          onClick={() =>
-            onSelectDesigner(selectedDesigner === designer.id ? null : designer.id)
-          }
-          className="h-8"
-        >
-          {designerDisplayName(designer)}
-        </Button>
-      ))}
-    </div>
-  )
-}
 

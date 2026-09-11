@@ -1220,8 +1220,19 @@ export async function syncMondayData(
       .from('monday_column_mappings')
       .select('board_id')
       .not('board_id', 'is', null)
-    
-    const activeBoardIds = new Set(allMappings?.map(m => m.board_id) || [])
+
+    // A mapped board only counts as "active" if it isn't also a completed/leads board.
+    // Without this exclusion, a board's first-ever sync (before any `existing` row exists
+    // to trigger the isCompleted correction below) writes every item as status: 'active'
+    // instead of 'locked', even though it's registered as a completed board.
+    const activeBoardIds = new Set(
+      (allMappings?.map(m => m.board_id) || []).filter(
+        (id) =>
+          !completedBoardIds.has(id) &&
+          id !== flexiDesignCompletedBoardId &&
+          id !== leadsBoardId
+      )
+    )
 
     // Track projects found in Monday (by monday_item_id)
     const mondayProjectIds = new Set(mondayProjects.map(p => p.id))
@@ -1236,12 +1247,13 @@ export async function syncMondayData(
       quote_value: number | null
       monday_status: string | null
       likelihood: number | null
+      completed_date: string | null
       monday_data: Record<string, { text?: string; value?: unknown }> | null
     }
     const existingProjects = await selectAllRows<ExistingProjectRow>(
       supabase,
       'monday_projects',
-      'id, monday_item_id, status, monday_board_id, quoted_hours, quote_value, monday_status, likelihood, monday_data'
+      'id, monday_item_id, status, monday_board_id, quoted_hours, quote_value, monday_status, likelihood, completed_date, monday_data'
     )
     const existingByItemId = new Map<string, ExistingProjectRow>(
       existingProjects.map((p) => [p.monday_item_id, p])
@@ -1434,6 +1446,14 @@ export async function syncMondayData(
         ? (existing.quoted_hours || project.quoted_hours || null)
         : (project.quoted_hours || null)
 
+      // For locked projects, preserve the existing completed_date if Monday doesn't provide one.
+      // Several historical items on completed boards never had the mapped date column filled in
+      // on Monday's side, so without this a backfilled date gets wiped on the next sync.
+      const preserveCompletedDate = existing?.status === 'locked' && !project.completed_date
+      const finalCompletedDate = preserveCompletedDate
+        ? (existing.completed_date || project.completed_date || null)
+        : (project.completed_date || null)
+
       // Handle quote_value - try to extract if not provided, preserve for locked projects if still missing
       let finalQuoteValue = project.quote_value || null
 
@@ -1511,8 +1531,8 @@ export async function syncMondayData(
         } else if (isLead) {
           // On leads board, should be 'lead' status
           finalStatus = 'lead'
-        } else if (isCompleted) {
-          // On completed board, should be 'locked'
+        } else if (isCompleted || isFlexiDesignCompleted) {
+          // On a completed board (or the Flexi-Design completed board), should be 'locked'
           finalStatus = 'locked'
         }
       }
@@ -1523,7 +1543,7 @@ export async function syncMondayData(
         name: project.name,
         client_name: project.client_name || null,
         agency: project.agency || null,
-        completed_date: project.completed_date || null,
+        completed_date: finalCompletedDate,
         due_date: project.due_date || null,
         quoted_hours: finalQuotedHours,
         quote_value: finalQuoteValue,

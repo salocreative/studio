@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { getMainTimesheetBoardIds } from '@/lib/monday/board-helpers'
+import { getMondayBoardConfig } from '@/lib/monday/board-helpers'
 
 export interface ProjectDesigner {
   id: string
@@ -14,6 +14,7 @@ interface ProjectWithTimeTracking {
   id: string
   name: string
   client_name: string | null
+  agency: string | null
   completed_date: string | null
   due_date: string | null
   created_at: string
@@ -32,10 +33,43 @@ interface ProjectWithTimeTracking {
   }>
 }
 
+/** PostgREST puts `.in()` values in the query string; too many UUIDs overflow Node's header limit. */
+const IN_FILTER_CHUNK_SIZE = 80
+const PAGE_SIZE = 500
+
+const PROJECT_LIST_COLUMNS =
+  'id, name, client_name, agency, completed_date, due_date, created_at, status, quoted_hours'
+
+type QueryPageResult<T> = { data: T[] | null; error: { message: string } | null }
+
+async function fetchByIdChunks<T>(
+  ids: string[],
+  queryPage: (chunk: string[], from: number, to: number) => PromiseLike<QueryPageResult<T>>
+): Promise<T[]> {
+  const rows: T[] = []
+  for (let i = 0; i < ids.length; i += IN_FILTER_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + IN_FILTER_CHUNK_SIZE)
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await queryPage(chunk, from, from + PAGE_SIZE - 1)
+      if (error) throw new Error(error.message)
+      const page = data ?? []
+      rows.push(...page)
+      if (page.length < PAGE_SIZE) break
+    }
+  }
+  return rows
+}
+
 /**
- * Get all projects with time tracking data (all users, not just current user)
+ * Get all projects with time tracking data (all users, not just current user).
+ *
+ * `statusFilter` chooses both the status and the board set. 'locked' (Completed Projects)
+ * searches Main boards ∪ `monday_completed_boards`, so a finished ad-hoc job still shows
+ * after it is moved onto "25-26: Completed - Projects". Flexi-Design boards and the Flexi
+ * completed archive are never included. Omitted, or 'active', stays Main-boards-only so
+ * the live Projects list is unchanged.
  */
-export async function getProjectsWithTimeTracking() {
+export async function getProjectsWithTimeTracking(statusFilter?: 'active' | 'locked') {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -44,66 +78,80 @@ export async function getProjectsWithTimeTracking() {
   }
 
   try {
-    const mainBoardIds = await getMainTimesheetBoardIds()
+    const {
+      mainBoardIds,
+      completedBoardIds,
+      flexiBoardIds,
+      flexiCompletedBoardId,
+    } = await getMondayBoardConfig()
 
-    if (mainBoardIds.size === 0) {
+    const flexiIds = new Set(flexiBoardIds)
+    if (flexiCompletedBoardId) flexiIds.add(flexiCompletedBoardId)
+
+    const boardIds = new Set(
+      statusFilter === 'locked'
+        ? [...mainBoardIds, ...completedBoardIds].filter((id) => !flexiIds.has(id))
+        : mainBoardIds
+    )
+
+    if (boardIds.size === 0) {
       return { success: true, projects: [] }
     }
 
-    const { data: allProjects, error: projectsError } = await supabase
-      .from('monday_projects')
-      .select('*')
-      .in('status', ['active', 'locked'])
-      .in('monday_board_id', Array.from(mainBoardIds))
-      .order('name', { ascending: true })
+    const statuses = statusFilter ? [statusFilter] : ['active', 'locked']
+    const projects = await fetchByIdChunks(
+      Array.from(boardIds),
+      (boardChunk, from, to) =>
+        supabase
+          .from('monday_projects')
+          .select(PROJECT_LIST_COLUMNS)
+          .in('status', statuses)
+          .in('monday_board_id', boardChunk)
+          .order('name', { ascending: true })
+          .range(from, to)
+    )
 
-    if (projectsError) throw projectsError
-
-    const projects = allProjects || []
-
-    if (!projects || projects.length === 0) {
+    if (projects.length === 0) {
       return { success: true, projects: [] }
     }
 
-    // Get all tasks for these projects
     const projectIds = projects.map((p) => p.id)
-    const { data: tasks, error: tasksError } = await supabase
-      .from('monday_tasks')
-      .select('*')
-      .in('project_id', projectIds)
-      .eq('is_subtask', true)
 
-    if (tasksError) throw tasksError
+    const tasks = await fetchByIdChunks(
+      projectIds,
+      (idChunk, from, to) =>
+        supabase
+          .from('monday_tasks')
+          .select('id, name, quoted_hours, project_id, timeline_start, timeline_end')
+          .in('project_id', idChunk)
+          .eq('is_subtask', true)
+          .range(from, to)
+    )
 
-    // Get all time entries for these projects
-    // Query by project_id to ensure we get ALL entries, even if tasks were deleted
-    // This is important for completed/locked projects where tasks might no longer exist in Monday
+    // Query by project_id so we still get hours when tasks were later deleted in Monday.
     let timeEntriesByTask: Record<string, number> = {}
     let timeEntriesByProject: Record<string, number> = {}
     const hoursByProjectUser: Record<string, Record<string, number>> = {}
-    
-    // First, get time entries by project_id (this ensures we get all entries for completed projects)
-    const { data: allTimeEntries, error: timeEntriesError } = await supabase
-      .from('time_entries')
-      .select('task_id, project_id, hours, user_id')
-      .in('project_id', projectIds)
 
-    if (timeEntriesError) throw timeEntriesError
+    const allTimeEntries = await fetchByIdChunks(
+      projectIds,
+      (idChunk, from, to) =>
+        supabase
+          .from('time_entries')
+          .select('task_id, project_id, hours, user_id')
+          .in('project_id', idChunk)
+          .range(from, to)
+    )
 
-    // Aggregate hours by task_id, project_id, and designer
-    if (allTimeEntries) {
-      for (const entry of allTimeEntries) {
-        // Aggregate by task_id
-        timeEntriesByTask[entry.task_id] = (timeEntriesByTask[entry.task_id] || 0) + Number(entry.hours)
-        // Also aggregate by project_id as a backup
-        timeEntriesByProject[entry.project_id] = (timeEntriesByProject[entry.project_id] || 0) + Number(entry.hours)
-        if (entry.user_id) {
-          if (!hoursByProjectUser[entry.project_id]) {
-            hoursByProjectUser[entry.project_id] = {}
-          }
-          hoursByProjectUser[entry.project_id][entry.user_id] =
-            (hoursByProjectUser[entry.project_id][entry.user_id] || 0) + Number(entry.hours)
+    for (const entry of allTimeEntries) {
+      timeEntriesByTask[entry.task_id] = (timeEntriesByTask[entry.task_id] || 0) + Number(entry.hours)
+      timeEntriesByProject[entry.project_id] = (timeEntriesByProject[entry.project_id] || 0) + Number(entry.hours)
+      if (entry.user_id) {
+        if (!hoursByProjectUser[entry.project_id]) {
+          hoursByProjectUser[entry.project_id] = {}
         }
+        hoursByProjectUser[entry.project_id][entry.user_id] =
+          (hoursByProjectUser[entry.project_id][entry.user_id] || 0) + Number(entry.hours)
       }
     }
 
@@ -158,7 +206,7 @@ export async function getProjectsWithTimeTracking() {
 
     // Build projects with time tracking data
     const projectsWithTracking: ProjectWithTimeTracking[] = projects.map((project) => {
-      const projectTasks = (tasks || []).filter((task) => task.project_id === project.id)
+      const projectTasks = tasks.filter((task) => task.project_id === project.id)
       
       const tasksWithTracking = projectTasks.map((task) => {
         const loggedHours = timeEntriesByTask[task.id] || 0
@@ -201,6 +249,7 @@ export async function getProjectsWithTimeTracking() {
         id: project.id,
         name: project.name,
         client_name: project.client_name,
+        agency: project.agency || null,
         completed_date: project.completed_date || null,
         due_date: project.due_date || null,
         created_at: project.created_at,
