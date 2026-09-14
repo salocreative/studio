@@ -13,7 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { FolderKanban, AlertCircle, CheckCircle2, Clock, Search, X, Loader2, ChevronRight, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react'
+import { FolderKanban, AlertCircle, CheckCircle2, Search, X, Loader2, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react'
 import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
 import { cn } from '@/lib/utils'
 import { format, parseISO, compareDesc } from 'date-fns'
@@ -26,8 +26,18 @@ import {
 } from '@/components/ui/select'
 
 const ALL_FILTER = '__all__'
+const SALO_CREATIVE = 'salo creative'
 /** Pace is "on track" when logged hours are within this fraction of quoted hours of the expected amount */
 const PACE_TOLERANCE = 0.1
+
+function isSaloCreative(value: string | null | undefined) {
+  return value?.trim().toLowerCase() === SALO_CREATIVE
+}
+
+/** Internal jobs have Salo Creative as both the client and the agency. */
+function isInternalJob(project: { client_name: string | null; agency?: string | null }) {
+  return isSaloCreative(project.client_name) && isSaloCreative(project.agency)
+}
 
 function uniqueSortedNames(values: (string | null | undefined)[]): string[] {
   return Array.from(
@@ -85,6 +95,7 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [selectedAgency, setSelectedAgency] = useState<string | null>(null)
   const [selectedDesigner, setSelectedDesigner] = useState<string | null>(null)
+  const [jobScope, setJobScope] = useState<'external' | 'internal'>('external')
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [projectDetails, setProjectDetails] = useState<any>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
@@ -157,10 +168,12 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
   const isLive = statusFilter === 'active'
   const statusScopedProjects = useMemo(
     () =>
-      searchFilteredProjects.filter((p) =>
-        isLive ? p.status === 'active' : p.status === 'locked'
-      ),
-    [searchFilteredProjects, isLive]
+      searchFilteredProjects.filter((p) => {
+        const matchesStatus = isLive ? p.status === 'active' : p.status === 'locked'
+        if (!matchesStatus) return false
+        return jobScope === 'internal' ? isInternalJob(p) : !isInternalJob(p)
+      }),
+    [searchFilteredProjects, isLive, jobScope]
   )
 
   const statusProjects = useMemo(
@@ -229,6 +242,28 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
             <div className="mb-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
+                    <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+                      {(['external', 'internal'] as const).map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => {
+                            setJobScope(option)
+                            setSelectedClient(null)
+                            setSelectedAgency(null)
+                            setSelectedDesigner(null)
+                          }}
+                          className={cn(
+                            'px-2.5 py-1 text-sm font-medium rounded-[5px] transition-colors',
+                            jobScope === option
+                              ? 'bg-background shadow-sm text-foreground'
+                              : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          {option === 'external' ? 'External' : 'Internal'}
+                        </button>
+                      ))}
+                    </div>
                     <Select
                       value={selectedClient ?? ALL_FILTER}
                       onValueChange={(value) => setSelectedClient(value === ALL_FILTER ? null : value)}
@@ -308,15 +343,21 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                     {hasActiveFilters
                       ? 'No matching projects'
                       : isLive
-                        ? 'No live projects'
-                        : 'No completed projects'}
+                        ? jobScope === 'internal'
+                          ? 'No live internal projects'
+                          : 'No live projects'
+                        : jobScope === 'internal'
+                          ? 'No completed internal projects'
+                          : 'No completed projects'}
                   </p>
                   <p className="text-sm text-muted-foreground mt-2">
                     {hasActiveFilters
                       ? 'Try adjusting your search or filter criteria'
-                      : isLive
-                        ? 'Active projects will appear here once synced from Monday.com'
-                        : 'Completed projects will appear here once synced from Monday.com'}
+                      : jobScope === 'internal'
+                        ? 'Internal jobs have Salo Creative as both client and agency.'
+                        : isLive
+                          ? 'Active projects will appear here once synced from Monday.com'
+                          : 'Completed projects will appear here once synced from Monday.com'}
                   </p>
                 </CardContent>
               </Card>
@@ -727,119 +768,39 @@ function ProjectListItem({
 }) {
   const stats = getProjectStats(project)
   const health = showHealth ? getProjectHealth(project) : null
-  const { totalQuotedHours, totalLoggedHours, percentage, status, isOverBudget } = stats
+  const { totalQuotedHours, totalLoggedHours, percentage } = stats
   const designers = project.designers || []
+  const clientLine = [project.client_name, project.agency].filter(Boolean).join(' • ')
+  const designerLabel = designers.map(designerShortName).join(', ')
+  const timeLabel = `Time ${totalLoggedHours.toFixed(1)}h / ${totalQuotedHours.toFixed(1)}h (${formatBudgetPercentage(percentage)})`
 
   return (
     <button
       onClick={onClick}
-      className="w-full px-6 py-4 flex items-center justify-between gap-4 hover:bg-accent transition-colors text-left"
+      className="w-full px-4 py-2.5 flex items-center gap-4 hover:bg-accent transition-colors text-left"
     >
-      <div className="flex-1 min-w-0 space-y-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-medium text-base truncate">{project.name}</div>
-            {project.client_name && (
-              <div className="text-sm text-muted-foreground mt-0.5 truncate">
-                {project.agency
-                  ? `${project.client_name} · ${project.agency}`
-                  : project.client_name}
-              </div>
-            )}
-          </div>
-          {project.status === 'locked' && (
-            <Badge variant="outline" className="bg-muted text-xs shrink-0">
-              Completed
-            </Badge>
-          )}
-          {showHealth && health && <HealthBadge health={health} />}
-        </div>
-
-        {designers.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {designers.map((designer) => (
-              <Badge
-                key={designer.id}
-                variant="secondary"
-                className="font-normal text-xs"
-                title={`${designerDisplayName(designer)} · ${designer.hours.toFixed(1)}h`}
-              >
-                {designerShortName(designer)}
-              </Badge>
-            ))}
-          </div>
+      <div className="flex-1 min-w-0 space-y-0.5">
+        {clientLine && (
+          <div className="text-xs text-muted-foreground truncate">{clientLine}</div>
         )}
-
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Time:</span>
-            <span className="font-medium">
-              {totalLoggedHours.toFixed(1)}h / {totalQuotedHours.toFixed(1)}h
-            </span>
-            <span className={cn(
-              "font-semibold",
-              percentage > 100 ? "text-destructive" : "text-muted-foreground"
-            )}>
-              {Number.isFinite(percentage) ? `${percentage.toFixed(0)}%` : '—'}
-            </span>
-          </div>
-          {showHealth && health && health.timelineProgress !== null && health.expectedHours !== null && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <span>
-                Timeline {(health.timelineProgress * 100).toFixed(0)}%
-              </span>
-              <span>·</span>
-              <span>Expected {health.expectedHours.toFixed(1)}h</span>
-              {health.varianceHours !== null && Math.abs(health.varianceHours) >= 0.05 && (
-                <>
-                  <span>·</span>
-                  <span className={cn(
-                    health.pace === 'ahead' || health.pace === 'over-budget'
-                      ? 'text-destructive'
-                      : health.pace === 'behind'
-                        ? 'text-amber-600'
-                        : undefined
-                  )}>
-                    {health.varianceHours > 0 ? '+' : ''}
-                    {health.varianceHours.toFixed(1)}h vs pace
-                  </span>
-                </>
-              )}
-            </div>
-          )}
-          {!showHealth && (
-            <div className="flex items-center gap-1.5">
-              {status === 'over' && (
-                <>
-                  <AlertCircle className="h-4 w-4 text-destructive" />
-                  <span className="text-sm text-destructive">Over budget</span>
-                </>
-              )}
-              {status === 'on-track' && (
-                <>
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <span className="text-sm text-green-600">On track</span>
-                </>
-              )}
-              {status === 'under' && (
-                <>
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Under budget</span>
-                </>
-              )}
-            </div>
-          )}
+        <div className="font-medium text-sm truncate">{project.name}</div>
+        <div className="text-xs text-muted-foreground truncate">
+          {designerLabel ? `${designerLabel} | ${timeLabel}` : timeLabel}
         </div>
-
-        <Progress
-          value={Math.min(100, Number.isFinite(percentage) ? percentage : 0)}
-          className={cn(
-            "h-1.5 max-w-md",
-            (isOverBudget || percentage > 100) && "bg-destructive/20 [&>[data-slot=progress-indicator]]:bg-destructive"
-          )}
-        />
       </div>
-      <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
+      <div className="flex items-center gap-2.5 shrink-0">
+        <Progress
+          value={budgetProgressValue(percentage)}
+          className={cn('h-1.5 w-16', budgetProgressBarClass(percentage))}
+        />
+        {project.status === 'locked' ? (
+          <Badge variant="outline" className="bg-muted text-xs font-medium">
+            Completed
+          </Badge>
+        ) : showHealth && health ? (
+          <HealthBadge health={health} />
+        ) : null}
+      </div>
     </button>
   )
 }
@@ -876,8 +837,8 @@ function HealthBadge({ health }: { health: ReturnType<typeof getProjectHealth> }
   const Icon = config.icon
 
   return (
-    <Badge variant="outline" className={cn('shrink-0 gap-1 font-medium', config.className)}>
-      <Icon className="h-3.5 w-3.5" />
+    <Badge variant="outline" className={cn('shrink-0 gap-1 text-xs font-medium', config.className)}>
+      <Icon className="h-3 w-3" />
       {config.label}
     </Badge>
   )
