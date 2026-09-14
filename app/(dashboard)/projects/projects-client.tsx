@@ -772,7 +772,11 @@ function ProjectListItem({
   const designers = project.designers || []
   const clientLine = [project.client_name, project.agency].filter(Boolean).join(' • ')
   const designerLabel = designers.map(designerShortName).join(', ')
-  const timeLabel = `Time ${totalLoggedHours.toFixed(1)}h / ${totalQuotedHours.toFixed(1)}h (${formatBudgetPercentage(percentage)})`
+  const isCompleted = project.status === 'locked'
+  const timePercentClass = isCompleted ? completedBudgetPercentageTextClass(percentage) : undefined
+  const progressClass = isCompleted
+    ? completedBudgetProgressBarClass(percentage)
+    : budgetProgressBarClass(percentage)
 
   return (
     <button
@@ -785,21 +789,24 @@ function ProjectListItem({
         )}
         <div className="font-medium text-sm truncate">{project.name}</div>
         <div className="text-xs text-muted-foreground truncate">
-          {designerLabel ? `${designerLabel} | ${timeLabel}` : timeLabel}
+          {designerLabel ? `${designerLabel} | ` : ''}
+          Time {totalLoggedHours.toFixed(1)}h / {totalQuotedHours.toFixed(1)}h (
+          <span className={timePercentClass}>{formatBudgetPercentage(percentage)}</span>
+          )
         </div>
       </div>
       <div className="flex items-center gap-2.5 shrink-0">
-        <Progress
-          value={budgetProgressValue(percentage)}
-          className={cn('h-1.5 w-16', budgetProgressBarClass(percentage))}
-        />
-        {project.status === 'locked' ? (
+        {isCompleted ? (
           <Badge variant="outline" className="bg-muted text-xs font-medium">
             Completed
           </Badge>
         ) : showHealth && health ? (
           <HealthBadge health={health} />
         ) : null}
+        <Progress
+          value={budgetProgressValue(percentage)}
+          className={cn('h-1.5 w-16', progressClass)}
+        />
       </div>
     </button>
   )
@@ -871,6 +878,22 @@ function budgetProgressBarClass(percentage: number) {
     return 'bg-destructive/20 [&>[data-slot=progress-indicator]]:bg-destructive'
   }
   return undefined
+}
+
+function completedBudgetPercentageTextClass(percentage: number) {
+  if (!Number.isFinite(percentage) || percentage > 120) return 'text-destructive'
+  if (percentage > 100) return 'text-amber-600'
+  return 'text-green-600'
+}
+
+function completedBudgetProgressBarClass(percentage: number) {
+  if (!Number.isFinite(percentage) || percentage > 120) {
+    return 'bg-destructive/20 [&>[data-slot=progress-indicator]]:bg-destructive'
+  }
+  if (percentage > 100) {
+    return 'bg-amber-500/20 [&>[data-slot=progress-indicator]]:bg-amber-500'
+  }
+  return 'bg-green-600/20 [&>[data-slot=progress-indicator]]:bg-green-600'
 }
 
 function designerDisplayName(designer: ProjectDesigner) {
