@@ -56,6 +56,7 @@ import {
   Upload,
   FileDown,
   ClipboardCopy,
+  Wand2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -87,6 +88,7 @@ import {
   scaleForQuote,
   resolvePartyRate,
   formatSowMoney,
+  suggestLineItemTimeline,
   type SowCurrency,
 } from '@/lib/sow/calculations'
 import {
@@ -628,6 +630,45 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     setNewItemStart(item.timeline_start)
     setNewItemEnd(item.timeline_end)
     setLineItemDialogOpen(true)
+  }
+
+  function previousLineItemEnd(): string {
+    const currentIndex = editingItemId
+      ? lineItems.findIndex((item) => item.id === editingItemId)
+      : lineItems.length
+    const before = lineItems.slice(0, currentIndex >= 0 ? currentIndex : lineItems.length)
+    for (let i = before.length - 1; i >= 0; i--) {
+      if (before[i].timeline_end) return before[i].timeline_end
+    }
+    return ''
+  }
+
+  function handleSuggestTimeline() {
+    const suggested = suggestLineItemTimeline(
+      previousLineItemEnd(),
+      newItemQuantity,
+      newItemIsDays,
+      hoursPerDay
+    )
+    if (!suggested) return
+    setNewItemStart(suggested.start)
+    setNewItemEnd(suggested.end)
+  }
+
+  function canSuggestTimeline() {
+    return Boolean(previousLineItemEnd()) && newItemQuantity > 0
+  }
+
+  function suggestTimelineHint() {
+    if (canSuggestTimeline()) {
+      return 'Fill from the previous item’s end date, using working days'
+    }
+    if (!previousLineItemEnd()) {
+      return newItemQuantity > 0
+        ? 'Needs a previous line item with an end date'
+        : 'Needs a previous end date and days or hours'
+    }
+    return 'Enter days or hours first'
   }
 
   function handleRemoveItem(id: string) {
@@ -1527,25 +1568,39 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                             rows={3}
                           />
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label htmlFor="line-item-start">Timeline start</Label>
-                            <Input
-                              id="line-item-start"
-                              type="date"
-                              value={newItemStart}
-                              onChange={(e) => setNewItemStart(e.target.value)}
-                            />
+                        <div className="flex items-end gap-2">
+                          <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="line-item-start">Timeline start</Label>
+                              <Input
+                                id="line-item-start"
+                                type="date"
+                                value={newItemStart}
+                                onChange={(e) => setNewItemStart(e.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="line-item-end">Timeline end</Label>
+                              <Input
+                                id="line-item-end"
+                                type="date"
+                                value={newItemEnd}
+                                onChange={(e) => setNewItemEnd(e.target.value)}
+                              />
+                            </div>
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="line-item-end">Timeline end</Label>
-                            <Input
-                              id="line-item-end"
-                              type="date"
-                              value={newItemEnd}
-                              onChange={(e) => setNewItemEnd(e.target.value)}
-                            />
-                          </div>
+                          <span title={suggestTimelineHint()}>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              disabled={!canSuggestTimeline()}
+                              onClick={handleSuggestTimeline}
+                              aria-label="Fill timeline from previous item"
+                            >
+                              <Wand2 className="h-4 w-4" />
+                            </Button>
+                          </span>
                         </div>
                         {newItemQuantity > 0 && hourlyRate > 0 && (
                           <p className="text-sm text-muted-foreground">

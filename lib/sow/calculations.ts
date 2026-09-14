@@ -1,3 +1,5 @@
+import { addDays, format, isWeekend, parseISO } from 'date-fns'
+
 export const VAT_RATE = 0.2
 
 export interface SowLineItemInput {
@@ -236,4 +238,48 @@ export function validateLineItemTimeline(
     return 'Line item end date must be on or after its start date'
   }
   return null
+}
+
+function parseTimelineDate(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  const date = parseISO(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function nextWorkingDay(date: Date): Date {
+  let next = addDays(date, 1)
+  while (isWeekend(next)) next = addDays(next, 1)
+  return next
+}
+
+function addWorkingDaysInclusive(start: Date, workingDays: number): Date {
+  let remaining = Math.max(1, workingDays) - 1
+  let current = start
+  while (remaining > 0) {
+    current = addDays(current, 1)
+    if (!isWeekend(current)) remaining -= 1
+  }
+  return current
+}
+
+/** Sequential working-day span after a previous line item end date. */
+export function suggestLineItemTimeline(
+  previousEnd: string,
+  quantity: number,
+  isDays: boolean,
+  hoursPerDay: number
+): { start: string; end: string } | null {
+  const previous = parseTimelineDate(previousEnd)
+  if (!previous || !(quantity > 0)) return null
+
+  const perDay = hoursPerDay > 0 ? hoursPerDay : 6
+  const effortDays = isDays ? quantity : quantity / perDay
+  const workingDays = Math.max(1, Math.ceil(effortDays - 1e-9))
+  const start = nextWorkingDay(previous)
+  const end = addWorkingDaysInclusive(start, workingDays)
+
+  return {
+    start: format(start, 'yyyy-MM-dd'),
+    end: format(end, 'yyyy-MM-dd'),
+  }
 }
