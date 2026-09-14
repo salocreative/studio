@@ -123,6 +123,11 @@
   }
 }
 
+/* Sonner's dark-theme description (#e8e8e8) is unreadable on our light toast surface. */
+[data-sonner-toaster] [data-description] {
+  color: oklch(0.35 0 0) !important;
+}
+
 /* Stolzl font from Adobe - requires loading via Adobe Fonts or self-hosted */
 @font-face {
   font-family: 'Stolzl';

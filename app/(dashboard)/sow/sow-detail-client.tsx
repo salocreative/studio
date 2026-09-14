@@ -33,6 +33,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   ArrowLeft,
   Copy,
   Check,
@@ -187,6 +195,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [newItemStart, setNewItemStart] = useState('')
   const [newItemEnd, setNewItemEnd] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [lineItemDialogOpen, setLineItemDialogOpen] = useState(false)
 
   const isReadOnly = document?.status === 'approved'
   const isPartnerWork = customerType === 'partner'
@@ -570,6 +579,16 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     setEditingItemId(null)
   }
 
+  function openAddLineItem() {
+    clearLineItemForm()
+    setLineItemDialogOpen(true)
+  }
+
+  function handleLineItemDialogChange(open: boolean) {
+    setLineItemDialogOpen(open)
+    if (!open) clearLineItemForm()
+  }
+
   function handleAddItem() {
     if (!newItemTitle.trim()) {
       toast.error('Enter a task title')
@@ -596,6 +615,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     } else {
       setLineItems((prev) => [...prev, nextItem])
     }
+    setLineItemDialogOpen(false)
     clearLineItemForm()
   }
 
@@ -607,6 +627,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     setNewItemIsDays(item.is_days)
     setNewItemStart(item.timeline_start)
     setNewItemEnd(item.timeline_end)
+    setLineItemDialogOpen(true)
   }
 
   function handleRemoveItem(id: string) {
@@ -1293,7 +1314,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       </CardDescription>
                     </div>
                     {!isReadOnly && (
-                      <>
+                      <div className="flex flex-wrap items-center gap-2">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
@@ -1351,12 +1372,21 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                             void handleDeliverablesCsvFile(file, mode)
                           }}
                         />
-                      </>
+                        <Button type="button" size="sm" onClick={openAddLineItem}>
+                          <Plus className="mr-1 h-4 w-4" />
+                          Add line item
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {lineItems.length > 0 && (
+                  {lineItems.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No line items yet
+                      {!isReadOnly && '. Add a deliverable to get started.'}
+                    </p>
+                  ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1374,10 +1404,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                             : item.quantity
                           const cost = hours * hourlyRate
                           return (
-                            <TableRow
-                              key={item.id}
-                              className={cn(editingItemId === item.id && 'bg-muted/40')}
-                            >
+                            <TableRow key={item.id}>
                               <TableCell>
                                 <p className="font-medium">{item.title}</p>
                                 {item.description && (
@@ -1427,78 +1454,133 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                   )}
 
                   {!isReadOnly && (
-                    <div className="rounded-lg border p-4 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <Label>{editingItemId ? 'Edit line item' : 'Add line item'}</Label>
-                        {editingItemId && (
-                          <Button type="button" variant="ghost" size="sm" onClick={clearLineItemForm}>
-                            Cancel edit
-                          </Button>
-                        )}
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-4">
-                        <Input
-                          className="sm:col-span-2"
-                          placeholder="Task title"
-                          value={newItemTitle}
-                          onChange={(e) => setNewItemTitle(e.target.value)}
-                        />
-                        <Input
-                          type="number"
-                          min={0}
-                          step={0.5}
-                          placeholder={newItemIsDays ? 'Days' : 'Hours'}
-                          value={newItemQuantity || ''}
-                          onChange={(e) => setNewItemQuantity(parseFloat(e.target.value) || 0)}
-                        />
-                        <Button onClick={handleAddItem}>
-                          {editingItemId ? (
-                            <>
-                              <Check className="mr-1 h-4 w-4" />
-                              Update
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="mr-1 h-4 w-4" />
-                              Add
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                      <Textarea
-                        placeholder="Description (optional)"
-                        value={newItemDescription}
-                        onChange={(e) => setNewItemDescription(e.target.value)}
-                        rows={2}
-                      />
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label>Timeline start</Label>
-                          <Input
-                            type="date"
-                            value={newItemStart}
-                            onChange={(e) => setNewItemStart(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Timeline end</Label>
-                          <Input
-                            type="date"
-                            value={newItemEnd}
-                            onChange={(e) => setNewItemEnd(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          id="new-item-days"
-                          checked={newItemIsDays}
-                          onCheckedChange={setNewItemIsDays}
-                        />
-                        <Label htmlFor="new-item-days">Enter as days</Label>
-                      </div>
-                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={openAddLineItem}>
+                      <Plus className="mr-1 h-4 w-4" />
+                      Add line item
+                    </Button>
                   )}
+
+                  <Dialog open={lineItemDialogOpen} onOpenChange={handleLineItemDialogChange}>
+                    <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>
+                          {editingItemId ? 'Edit line item' : 'Add line item'}
+                        </DialogTitle>
+                        <DialogDescription>
+                          {editingItemId
+                            ? 'Update the time, description, and timeline for this deliverable.'
+                            : 'Add a deliverable with time, an optional description, and timeline.'}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form
+                        className="space-y-4"
+                        onSubmit={(e) => {
+                          e.preventDefault()
+                          handleAddItem()
+                        }}
+                      >
+                        <div className="space-y-2">
+                          <Label htmlFor="line-item-title">Task title</Label>
+                          <Input
+                            id="line-item-title"
+                            placeholder="e.g. Surveys page"
+                            value={newItemTitle}
+                            onChange={(e) => setNewItemTitle(e.target.value)}
+                            autoFocus
+                          />
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="line-item-quantity">
+                              {newItemIsDays ? 'Days' : 'Hours'}
+                            </Label>
+                            <Input
+                              id="line-item-quantity"
+                              type="number"
+                              min={0}
+                              step={0.5}
+                              placeholder={newItemIsDays ? 'Days' : 'Hours'}
+                              value={newItemQuantity || ''}
+                              onChange={(e) =>
+                                setNewItemQuantity(parseFloat(e.target.value) || 0)
+                              }
+                            />
+                          </div>
+                          <div className="flex items-end pb-2">
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                id="line-item-days"
+                                checked={newItemIsDays}
+                                onCheckedChange={setNewItemIsDays}
+                              />
+                              <Label htmlFor="line-item-days">Enter as days</Label>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="line-item-description">Description (optional)</Label>
+                          <Textarea
+                            id="line-item-description"
+                            placeholder="What this deliverable includes"
+                            value={newItemDescription}
+                            onChange={(e) => setNewItemDescription(e.target.value)}
+                            rows={3}
+                          />
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="line-item-start">Timeline start</Label>
+                            <Input
+                              id="line-item-start"
+                              type="date"
+                              value={newItemStart}
+                              onChange={(e) => setNewItemStart(e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="line-item-end">Timeline end</Label>
+                            <Input
+                              id="line-item-end"
+                              type="date"
+                              value={newItemEnd}
+                              onChange={(e) => setNewItemEnd(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        {newItemQuantity > 0 && hourlyRate > 0 && (
+                          <p className="text-sm text-muted-foreground">
+                            Cost{' '}
+                            {formatMoney(
+                              (newItemIsDays ? newItemQuantity * hoursPerDay : newItemQuantity) *
+                                hourlyRate
+                            )}
+                          </p>
+                        )}
+                        <DialogFooter>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleLineItemDialogChange(false)}
+                          >
+                            Cancel
+                          </Button>
+                          <Button type="submit">
+                            {editingItemId ? (
+                              <>
+                                <Check className="mr-1 h-4 w-4" />
+                                Update
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="mr-1 h-4 w-4" />
+                                Add
+                              </>
+                            )}
+                          </Button>
+                        </DialogFooter>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
                 </CardContent>
               </Card>
             </TabsContent>
