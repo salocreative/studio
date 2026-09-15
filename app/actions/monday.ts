@@ -35,6 +35,9 @@ export async function syncMondayProjects() {
   try {
     const result = await syncMondayData(mondayApiToken)
     const messages = [`Synced ${result.projectsSynced} projects`]
+    if (result.holidaysSynced > 0) {
+      messages.push(`${result.holidaysSynced} holiday requests`)
+    }
     if (result.archived > 0) {
       messages.push(`${result.archived} archived`)
     }

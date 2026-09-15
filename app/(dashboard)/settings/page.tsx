@@ -35,6 +35,7 @@ import { SyncButton } from './sync-button'
 import { ColumnMappingForm } from './column-mapping-form'
 import { FlexiDesignBoardsForm } from './flexi-design-boards-form'
 import { FlexiDesignHiddenClientsForm } from './flexi-design-hidden-clients-form'
+import { HolidaysBoardForm } from './holidays-board-form'
 import { XeroConnectionForm } from './xero-connection-form'
 import { AutomaticSyncForm } from './automatic-sync-form'
 import { QuoteRatesForm } from './quote-rates-form'
@@ -46,7 +47,8 @@ import { RetainersForm } from './retainers-form'
 import { ThankYouClientsForm } from './thank-you-clients-form'
 import { StudioApiTokensForm } from './studio-api-tokens-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
-import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion, updateUserExpectedUtilization, getFormerUsers } from '@/app/actions/users'
+import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion, updateUserExpectedUtilization, updateUserMondayUserId, getFormerUsers } from '@/app/actions/users'
+import { getMondayPeople, type MondayPerson } from '@/app/actions/holidays-board'
 import { toast } from 'sonner'
 
 interface User {
@@ -56,6 +58,7 @@ interface User {
   role: 'admin' | 'designer' | 'manager'
   exclude_from_utilization?: boolean
   expected_utilization_percentage?: number
+  monday_user_id?: string | null
   created_at: string
 }
 
@@ -76,6 +79,7 @@ export default function SettingsPage() {
   // Team management state
   const [users, setUsers] = useState<User[]>([])
   const [formerUsers, setFormerUsers] = useState<FormerUser[]>([])
+  const [mondayPeople, setMondayPeople] = useState<MondayPerson[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
   const [showExistingForm, setShowExistingForm] = useState(false)
@@ -95,7 +99,11 @@ export default function SettingsPage() {
   async function loadUsers() {
     setLoadingUsers(true)
     try {
-      const [activeResult, formerResult] = await Promise.all([getUsers(), getFormerUsers()])
+      const [activeResult, formerResult, peopleResult] = await Promise.all([
+        getUsers(),
+        getFormerUsers(),
+        getMondayPeople(),
+      ])
       if (activeResult.error) {
         toast.error(activeResult.error)
       } else if (activeResult.users) {
@@ -105,6 +113,9 @@ export default function SettingsPage() {
         console.error('Error loading former users:', formerResult.error)
       } else if (formerResult.users) {
         setFormerUsers(formerResult.users)
+      }
+      if (peopleResult.people) {
+        setMondayPeople(peopleResult.people)
       }
     } catch (error) {
       console.error('Error loading users:', error)
@@ -220,6 +231,24 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Error updating expected utilization:', error)
       toast.error('Failed to update expected utilization')
+    }
+  }
+
+  async function handleUpdateMondayUserId(userId: string, mondayUserId: string) {
+    const value = mondayUserId === '__none__' ? null : mondayUserId
+    try {
+      const result = await updateUserMondayUserId(userId, value)
+      if (result.error) {
+        toast.error(result.error)
+      } else {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === userId ? { ...u, monday_user_id: value } : u))
+        )
+        toast.success(value ? 'Monday account linked' : 'Monday account unlinked')
+      }
+    } catch (error) {
+      console.error('Error updating Monday user:', error)
+      toast.error('Failed to update Monday account')
     }
   }
 
@@ -464,6 +493,7 @@ export default function SettingsPage() {
                             <TableHead>Email</TableHead>
                             <TableHead>Role</TableHead>
                             <TableHead>Expected capacity</TableHead>
+                            <TableHead>Monday account</TableHead>
                             <TableHead>Exclude from utilisation</TableHead>
                             <TableHead>Joined</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
@@ -472,7 +502,7 @@ export default function SettingsPage() {
                         <TableBody>
                           {users.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={7} className="text-center text-muted-foreground">
+                              <TableCell colSpan={8} className="text-center text-muted-foreground">
                                 No users found
                               </TableCell>
                             </TableRow>
@@ -527,6 +557,30 @@ export default function SettingsPage() {
                                   <p className="text-xs text-muted-foreground mt-1">
                                     of 5 days × 6h
                                   </p>
+                                </TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={user.monday_user_id || '__none__'}
+                                    onValueChange={(value) => handleUpdateMondayUserId(user.id, value)}
+                                  >
+                                    <SelectTrigger className="w-48">
+                                      <SelectValue placeholder="Not linked" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">Not linked</SelectItem>
+                                      {user.monday_user_id &&
+                                        !mondayPeople.some((person) => person.id === user.monday_user_id) && (
+                                          <SelectItem value={user.monday_user_id}>
+                                            Monday {user.monday_user_id}
+                                          </SelectItem>
+                                        )}
+                                      {mondayPeople.map((person) => (
+                                        <SelectItem key={person.id} value={person.id}>
+                                          {person.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center space-x-2">
@@ -672,6 +726,20 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent>
                     <FlexiDesignBoardsForm />
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Holidays board</CardTitle>
+                    <CardDescription>
+                      The Monday Annual Leave board. Requests sync with projects (not as projects) and
+                      approved leave, sickness, birthdays and bank holidays reduce available hours on Performance.
+                      Do not map this board under Column Mappings.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <HolidaysBoardForm />
                   </CardContent>
                 </Card>
 

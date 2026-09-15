@@ -89,6 +89,7 @@ export async function GET(request: NextRequest) {
       success: true,
       message: `Synced ${result.projectsSynced} projects`,
       projectsSynced: result.projectsSynced,
+      holidaysSynced: result.holidaysSynced,
       archived: result.archived,
       deleted: result.deleted,
       timestamp: new Date().toISOString(),

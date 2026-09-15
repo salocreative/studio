@@ -126,7 +126,7 @@ interface MondayApiResponse<T> {
  * on a spent rate limit or complexity budget after waiting however long Monday asks for.
  * Uses a request timeout to avoid hanging on slow or unresponsive connections.
  */
-async function mondayRequest<T>(
+export async function mondayRequest<T>(
   accessToken: string,
   query: string,
   variables?: Record<string, any>
@@ -276,6 +276,15 @@ export async function getMondayProjects(
       completedBoardIds.add(flexiCompletedBoardId)
       // Column mappings: use own mappings if present; otherwise getColumnId will inherit from other Flexi boards
     }
+  }
+
+  // The Annual Leave board is synced into holiday_requests, not monday_projects.
+  const { data: holidaysBoard } = await supabase
+    .from('monday_holidays_board')
+    .select('monday_board_id')
+    .maybeSingle()
+  if (holidaysBoard?.monday_board_id) {
+    mappedBoardIds.delete(holidaysBoard.monday_board_id)
   }
   
   // If no board-specific mappings, we can't sync (need at least one board mapped)
@@ -1147,7 +1156,7 @@ export type SyncProgressEvent =
   | { phase: 'fetching'; message: string; progress: number }
   | { phase: 'checking'; message: string; progress: number }
   | { phase: 'syncing'; message: string; projectIndex: number; totalProjects: number; projectName: string; progress: number }
-  | { phase: 'complete'; message: string; progress: number; projectsSynced: number; archived: number; deleted: number }
+  | { phase: 'complete'; message: string; progress: number; projectsSynced: number; archived: number; deleted: number; holidaysSynced?: number }
   | { phase: 'error'; message: string }
 
 /**
@@ -1162,7 +1171,7 @@ export async function syncMondayData(
   onProgress?: (event: SyncProgressEvent) => void,
   syncAllBoards: boolean = false,
   avoidDeletion: boolean = true
-): Promise<{ projectsSynced: number; archived: number; deleted: number }> {
+): Promise<{ projectsSynced: number; archived: number; deleted: number; holidaysSynced: number }> {
   // Use service role so sync can write monday_projects / monday_tasks and read admin-only config tables.
   // RLS only allows admins to mutate projects/tasks; designers' JWT would otherwise fail every upsert.
   const admin = await createAdminClient()
@@ -1714,14 +1723,27 @@ export async function syncMondayData(
       }
     }
 
+    let holidaysSynced = 0
+    try {
+      const { syncHolidayRequests } = await import('@/lib/monday/holiday-sync')
+      const holidayResult = await syncHolidayRequests(accessToken, supabase, report)
+      holidaysSynced = holidayResult.holidaysSynced
+    } catch (holidayError) {
+      console.error('Holiday sync failed:', holidayError)
+      throw holidayError
+    }
+
     const result = {
       projectsSynced: mondayProjects.length,
       archived,
       deleted,
+      holidaysSynced,
     }
     report({
       phase: 'complete',
-      message: 'Sync complete',
+      message: holidaysSynced > 0
+        ? `Sync complete (${holidaysSynced} holiday requests)`
+        : 'Sync complete',
       progress: 1,
       ...result,
     })

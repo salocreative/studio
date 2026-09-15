@@ -57,6 +57,8 @@ Mirrors `auth.users` 1:1 and stores app-level profile data.
 | `full_name` | `text` | |
 | `role` | `user_role` not null default `'manager'` | Used everywhere for RLS checks. |
 | `exclude_from_utilization` | `boolean` not null default `false` | If true, user is hidden from team utilization/perf views. |
+| `expected_utilization_percentage` | `numeric(5,2)` not null default `100` | % of full-time (5 weekdays × 6h). |
+| `monday_user_id` | `text` unique when set | Monday.com people id. Used to attach holiday-board items. |
 | `deleted_at` | `timestamptz` | Soft delete. Most RLS checks filter `deleted_at is null`. |
 | `created_at`, `updated_at` | `timestamptz` | Trigger maintained. |
 
@@ -165,6 +167,41 @@ Single-row-by-convention config that names the board to treat as **leads**. Proj
 | `monday_board_id` | `text` unique | |
 | `board_name` | `text` | |
 | `created_at`, `updated_at` | `timestamptz` | Trigger maintained. |
+
+RLS: Auth read; Admin all.
+
+### `public.monday_holidays_board`
+Single-row-by-convention config that names the **Annual Leave** board. Items on this board are synced into `holiday_requests`, never into `monday_projects`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `monday_board_id` | `text` unique not null | Seeded as `6382233029`. |
+| `board_name` | `text` | |
+| `created_at`, `updated_at` | `timestamptz` | Trigger maintained. |
+
+RLS: Auth read; Admin all.
+
+### `public.holiday_requests`
+One row per item on the holidays board. Used by Performance and timesheet status to reduce available hours.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `monday_item_id` | `text` unique not null | |
+| `monday_board_id` | `text` not null | |
+| `name` | `text` not null | |
+| `user_id` | `uuid` | FK → `users.id` (`on delete set null`). |
+| `monday_user_id` | `text` | Monday people id. |
+| `leave_type` | `text` | Annual Leave / Bank Holiday / Sick Leave / Birthday. |
+| `status` | `text` | Submitted / Approved / Denied / Completed / … |
+| `start_date`, `end_date` | `date` | Timeline. |
+| `days` | `numeric(6,2)` | Can be 0.5. |
+| `reduces_capacity` | `boolean` not null default `false` | Approved, Completed, Before Sarah joined. |
+| `monday_data` | `jsonb` | |
+| `created_at`, `updated_at` | `timestamptz` | |
+
+Indexes: `user_id`, `(start_date, end_date)`, partial `reduces_capacity = true`.
 
 RLS: Auth read; Admin all.
 
@@ -596,6 +633,7 @@ The full implementation lives in `lib/monday/api.ts` (`getMondayProjects`, `getM
 - For each in-scope **active board** the sync paginates `items_page` (page size 500, cursor valid ~60 min) and produces one row per item in `monday_projects`.
 - For each in-scope **completed board** (archive boards, Flexi completed board) the sync only fetches items by ID — usually items the DB already knows about. This avoids re-scanning huge archives but means completed boards rely on already-known IDs.
 - For each project, `subitems` are pulled via a separate query and written to `monday_tasks` (`is_subtask = true`).
+- The configured **holidays board** (`monday_holidays_board`) is fetched in the same sync run but written to `holiday_requests`. It is never treated as a project board.
 
 ### How column values become typed columns on `monday_projects` / `monday_tasks`
 
@@ -701,11 +739,11 @@ These are the practical patterns you'll likely want when building a separate con
     and (rc.end_date   is null or rc.end_date   >= current_date);
   ```
 - Active vs Flexi boards (matches what the app calls "Main timesheet"):
-  - Boards in `monday_column_mappings.board_id` minus boards in `flexi_design_boards`, `monday_completed_boards`, `flexi_design_completed_board`, and `monday_leads_board.monday_board_id`.
+  - Boards in `monday_column_mappings.board_id` minus boards in `flexi_design_boards`, `monday_completed_boards`, `flexi_design_completed_board`, `monday_leads_board.monday_board_id`, and `monday_holidays_board.monday_board_id`.
 
 ### Things to know / gotchas
 - **`monday_item_id` is the join key with Monday.com**, not `id`. `id` is a Supabase UUID.
-- **`assigned_user_ids`** on `monday_tasks` are **Monday user IDs** as strings. There is no automatic mapping to `public.users.id`. If you need to map, do it yourself by storing Monday user IDs on the user profile (currently not stored anywhere).
+- **`assigned_user_ids`** on `monday_tasks` are **Monday user IDs** as strings. Studio users can store the same id on `public.users.monday_user_id` (used by holiday sync).
 - **`time_entries.date` is a `date`** (no timezone). All retainer/reporting code compares it as a plain `YYYY-MM-DD` string.
 - **Project status `'lead'` is real** — leads flow through the same `monday_projects` table. Filter on `status` if you want only billable work.
 - **`monday_projects.quoted_hours` is denormalised** from the child tasks' `quoted_hours`, not from Monday itself. For locked projects it's preserved on purpose, so older historical projects can show a sum that no longer matches the current Monday data.
@@ -770,3 +808,4 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | 048 | `allow_auth_read_monday_completed_boards` | Auth read on completed boards. |
 | 049 | `add_retainer_end_date` | `retainer_clients.end_date` (finish date, prorates final month). |
 | `20260113085747` | `add_cover_image_to_cupboard` | `cupboard_items.cover_image_path`. |
+| 073 | `holiday_leave` | `monday_holidays_board`, `holiday_requests`, `users.monday_user_id`. |

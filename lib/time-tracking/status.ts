@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { addDays, format, startOfWeek } from 'date-fns'
+import { buildLeaveFractionByUserDate, loadCapacityReducingLeave } from '@/lib/holidays/working-days'
 
 /** Full-time expected hours per weekday. Matches Performance / utilisation. */
 export const BASE_HOURS_PER_DAY = 6
@@ -119,9 +120,14 @@ export async function getWeeklyTimesheetStatus(
     }
   }
 
+  const leaveByUserDate = buildLeaveFractionByUserDate(
+    await loadCapacityReducingLeave(supabase, weekStart, weekEnd)
+  )
+
   const team: WeeklyTimesheetMember[] = teamUsers.map((user) => {
-    const expected = expectedHoursPerDay(user.expected_utilization_percentage)
+    const expectedFull = expectedHoursPerDay(user.expected_utilization_percentage)
     const userHours = hoursByUserAndDate[String(user.id)] || {}
+    const userLeave = leaveByUserDate[String(user.id)] || {}
     const days = {} as Record<WeekdayKey, TimesheetDayStatus>
 
     WEEKDAY_KEYS.forEach((key, index) => {
@@ -130,6 +136,8 @@ export async function getWeeklyTimesheetStatus(
         days[key] = 'upcoming'
         return
       }
+      const leaveFraction = userLeave[dateStr] || 0
+      const expected = expectedFull * (1 - leaveFraction)
       days[key] = classifyLoggedHours(userHours[dateStr] || 0, expected)
     })
 

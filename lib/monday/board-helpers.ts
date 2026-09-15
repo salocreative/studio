@@ -167,8 +167,8 @@ async function resolveFlexiDesignBoardIds(
  * Everything needed to classify a Monday board, resolved in one go.
  *
  * `mainBoardIds` are the boards behind the Main timesheet and projects list: boards with
- * column mappings, minus Flexi boards, completed archives, the Flexi completed board and
- * the leads board. Aligns with Settings → Column Mappings.
+ * column mappings, minus Flexi boards, completed archives, the Flexi completed board,
+ * the leads board and the holidays board. Aligns with Settings → Column Mappings.
  */
 export type MondayBoardConfig = {
   mappedBoardIds: string[]
@@ -176,6 +176,7 @@ export type MondayBoardConfig = {
   completedBoardIds: string[]
   leadsBoardId: string | null
   flexiCompletedBoardId: string | null
+  holidaysBoardId: string | null
   mainBoardIds: string[]
 }
 
@@ -195,6 +196,22 @@ async function loadFlexiCompletedBoardId(supabase: SupabaseClient): Promise<stri
   return data?.monday_board_id ?? null
 }
 
+async function loadHolidaysBoardId(supabase: SupabaseClient): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('monday_holidays_board')
+    .select('monday_board_id')
+    .maybeSingle()
+
+  if (error) {
+    if (!isMissingTableError(error)) {
+      console.error('monday_holidays_board:', error)
+    }
+    return null
+  }
+
+  return data?.monday_board_id ?? null
+}
+
 async function resolveBoardConfig(supabase: SupabaseClient): Promise<MondayBoardConfig> {
   const mappedBoardIds = await loadMappedBoardIds(supabase)
 
@@ -207,16 +224,18 @@ async function resolveBoardConfig(supabase: SupabaseClient): Promise<MondayBoard
       completedBoardIds: [],
       leadsBoardId: null,
       flexiCompletedBoardId,
+      holidaysBoardId: await loadHolidaysBoardId(supabase),
       mainBoardIds: [],
     }
   }
 
   // Everything below depends only on the mapped board list, so resolve it concurrently.
-  const [flexiIds, completedBoardsResult, leadsResult, flexiCompletedBoardId] = await Promise.all([
+  const [flexiIds, completedBoardsResult, leadsResult, flexiCompletedBoardId, holidaysBoardId] = await Promise.all([
     resolveFlexiDesignBoardIds(supabase, mappedBoardIds),
     supabase.from('monday_completed_boards').select('monday_board_id'),
     supabase.from('monday_leads_board').select('monday_board_id').maybeSingle(),
     loadFlexiCompletedBoardId(supabase),
+    loadHolidaysBoardId(supabase),
   ])
 
   const completedIds = new Set(
@@ -230,6 +249,7 @@ async function resolveBoardConfig(supabase: SupabaseClient): Promise<MondayBoard
     if (completedIds.has(bid)) continue
     if (leadsBoardId && bid === leadsBoardId) continue
     if (flexiCompletedBoardId && bid === flexiCompletedBoardId) continue
+    if (holidaysBoardId && bid === holidaysBoardId) continue
     mainBoardIds.push(bid)
   }
 
@@ -239,6 +259,7 @@ async function resolveBoardConfig(supabase: SupabaseClient): Promise<MondayBoard
     completedBoardIds: Array.from(completedIds),
     leadsBoardId,
     flexiCompletedBoardId,
+    holidaysBoardId,
     mainBoardIds,
   }
 }
@@ -267,8 +288,8 @@ const loadBoardConfigCached = unstable_cache(
 /**
  * Drop the cached board classification. Call from every Settings action that changes
  * `monday_column_mappings`, `flexi_design_boards`, `monday_completed_boards`,
- * `monday_leads_board` or `flexi_design_completed_board`, otherwise the change won't show
- * up on the timesheet or projects list until the TTL expires.
+ * `monday_leads_board`, `flexi_design_completed_board` or `monday_holidays_board`,
+ * otherwise the change won't show up on the timesheet or projects list until the TTL expires.
  */
 export function revalidateMondayBoardConfig() {
   // `{ expire: 0 }` rather than a named profile: a named profile is stale-while-revalidate,
@@ -315,7 +336,7 @@ export async function getFlexiDesignCompletedBoardId(): Promise<string | null> {
 
 /**
  * Monday board IDs used for the Main projects surface (timesheet, projects list):
- * boards that have column mappings, excluding Flexi boards, completed archives, Flexi completed, and leads.
+ * boards that have column mappings, excluding Flexi boards, completed archives, Flexi completed, leads, and holidays.
  * Aligns with Settings → Column Mappings classification for Main vs other board types.
  */
 export async function getMainTimesheetBoardIds(): Promise<Set<string>> {

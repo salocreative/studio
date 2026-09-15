@@ -49,14 +49,14 @@ Several actions tolerate a table not existing yet (Postgres `42P01` / "schema ca
 
 ### Monday.com sync
 
-Monday is the source of truth for projects, tasks, clients and leads. `lib/monday/api.ts` holds the GraphQL client (`mondayRequest`, with timeout and retry) and `syncMondayData`, which upserts into `monday_projects` / `monday_tasks` using the admin client. Triggered manually from Settings (`app/actions/monday.ts`) or by Vercel cron hitting `/api/sync/cron` daily (see `vercel.json`), which respects `monday_sync_settings` (enabled, interval, avoid_deletion) and an optional `CRON_SECRET` header.
+Monday is the source of truth for projects, tasks, clients, leads and holiday requests. `lib/monday/api.ts` holds the GraphQL client (`mondayRequest`, with timeout and retry) and `syncMondayData`, which upserts into `monday_projects` / `monday_tasks` using the admin client, then syncs the Annual Leave board into `holiday_requests` (`lib/monday/holiday-sync.ts`). Triggered manually from Settings (`app/actions/monday.ts`) or by Vercel cron hitting `/api/sync/cron` daily (see `vercel.json`), which respects `monday_sync_settings` (enabled, interval, avoid_deletion) and an optional `CRON_SECRET` header.
 
 Column extraction is configuration-driven: admins map Monday column IDs to semantic types (client, quoted_hours, quote_value, timeline, status, likelihood, dates) in `monday_column_mappings`, per board or global (`board_id null`). Resolve with `findMappingColumnId` in `lib/monday/mapping-resolver.ts`; parse values with `lib/monday/column-extract.ts`. Raw column payloads are also stored on the row (`column_values` / `monday_data`).
 
 Board classification is central to the app and lives in `lib/monday/board-helpers.ts`:
-- Main boards = boards with column mappings minus Flexi boards, completed/archive boards, the Flexi completed board and the leads board.
+- Main boards = boards with column mappings minus Flexi boards, completed/archive boards, the Flexi completed board, the leads board and the holidays board.
 - Flexi-Design boards = union of `flexi_design_boards` table and legacy name-contains-"flexi" detection.
-- Configured in Settings via `monday_completed_boards`, `monday_leads_board`, `flexi_design_boards`, `flexi_design_completed_board`.
+- Configured in Settings via `monday_completed_boards`, `monday_leads_board`, `monday_holidays_board`, `flexi_design_boards`, `flexi_design_completed_board`.
 
 Time tracking, projects, performance and Flexi views all filter by these sets, so changes here ripple everywhere.
 
@@ -68,6 +68,7 @@ Time tracking, projects, performance and Flexi views all filter by these sets, s
 - **Xero** (`lib/xero/api.ts`, `app/api/xero/callback`): OAuth tokens stored in DB; feeds the Forecast page.
 - **Figma plugin API** (`app/api/figma/*`, `lib/api/figma-auth.ts`): Bearer auth accepting either the shared `FIGMA_PLUGIN_API_TOKEN` env secret or a `salo_…` Studio API token (hashed in `studio_api_tokens`, issued from Settings). Responses need the CORS helpers in that file.
 - **Cupboard**: internal documents in Supabase Storage with categories; formerly "documents" (migration 031 renamed it).
+- **Holidays**: Monday Annual Leave board synced to `holiday_requests`. Performance utilisation and timesheet status subtract approved leave (including bank holidays logged per person) via `lib/holidays/working-days.ts`. Link Studio users to Monday people ids on Settings → Team.
 
 ### Environment variables
 

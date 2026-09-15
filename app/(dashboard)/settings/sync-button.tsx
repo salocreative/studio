@@ -8,7 +8,7 @@ type SyncProgressEvent =
   | { phase: 'fetching'; message: string; progress: number }
   | { phase: 'checking'; message: string; progress: number }
   | { phase: 'syncing'; message: string; projectIndex: number; totalProjects: number; projectName: string; progress: number }
-  | { phase: 'complete'; message: string; progress: number; projectsSynced: number; archived: number; deleted: number }
+  | { phase: 'complete'; message: string; progress: number; projectsSynced: number; archived: number; deleted: number; holidaysSynced?: number }
   | { phase: 'error'; message: string }
 
 export function SyncButton() {
@@ -62,6 +62,7 @@ export function SyncButton() {
               } else if (event.phase === 'complete') {
                 setProgress(100)
                 const messages = [`Synced ${event.projectsSynced} projects`]
+                if (event.holidaysSynced) messages.push(`${event.holidaysSynced} holiday requests`)
                 if (event.archived > 0) messages.push(`${event.archived} archived`)
                 if (event.deleted > 0) messages.push(`${event.deleted} deleted`)
                 setResult({ message: messages.join(', ') + ' from Monday.com' })
@@ -103,7 +104,7 @@ export function SyncButton() {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Quick Sync: active boards and known completed items. Sync all Boards: full scan of every board (use to restore history).
+          Quick Sync: active boards, known completed items, and holiday requests. Sync all Boards: full scan of every board (use to restore history).
         </p>
       </div>
       {isLoading && (

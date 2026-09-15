@@ -424,6 +424,55 @@ export async function updateUserUtilizationExclusion(
 }
 
 /**
+ * Link a Studio user to a Monday.com people id (admin only)
+ */
+export async function updateUserMondayUserId(userId: string, mondayUserId: string | null) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'Not authenticated' }
+  }
+
+  const { data: userProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (userProfile?.role !== 'admin') {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const adminClient = await createAdminClient()
+  if (!adminClient) {
+    return { error: 'Admin API not available. Please configure SUPABASE_SERVICE_ROLE_KEY.' }
+  }
+
+  const value = mondayUserId?.trim() || null
+
+  try {
+    const { error } = await adminClient
+      .from('users')
+      .update({ monday_user_id: value })
+      .eq('id', userId)
+      .is('deleted_at', null)
+
+    if (error) {
+      if (error.code === '23505') {
+        return { error: 'That Monday account is already linked to another user' }
+      }
+      throw error
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating Monday user id:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to update Monday user' }
+  }
+}
+
+/**
  * Update a user's expected utilization percentage (capacity for performance metrics)
  */
 export async function updateUserExpectedUtilization(

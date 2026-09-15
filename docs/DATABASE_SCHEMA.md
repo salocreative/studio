@@ -34,6 +34,8 @@ Extends `auth.users`. The `id` is identical to `auth.users.id`.
 | `full_name` | `text` | |
 | `role` | `user_role` not null | Defaults to `manager` |
 | `exclude_from_utilization` | `boolean` not null default `false` | Hide user from team utilization/perf calcs |
+| `expected_utilization_percentage` | `numeric(5,2)` not null default `100` | % of full-time (5 weekdays × 6h) |
+| `monday_user_id` | `text` unique when set | Monday.com people id; joins holiday requests |
 | `deleted_at` | `timestamptz` | Soft delete; treat non-null as removed |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
@@ -120,6 +122,41 @@ Configuration for a single "Leads" board (only one row in practice).
 | `monday_board_id` | `text` unique |
 | `board_name` | `text` |
 | `created_at` / `updated_at` | `timestamptz` |
+
+### `monday_holidays_board`
+Configuration for a single Annual Leave / holidays board (only one row in practice). Items on this board are synced into `holiday_requests`, not `monday_projects`.
+
+| Column | Type |
+| --- | --- |
+| `id` | `uuid` PK |
+| `monday_board_id` | `text` unique, not null |
+| `board_name` | `text` |
+| `created_at` / `updated_at` | `timestamptz` |
+
+Seeded with board `6382233029` (Annual Leave).
+
+### `holiday_requests`
+One row per Monday item on the holidays board (leave, sickness, birthday, bank holiday).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `monday_item_id` | `text` unique, not null | |
+| `monday_board_id` | `text` not null | |
+| `name` | `text` not null | Monday item name |
+| `user_id` | `uuid` | FK → `users.id` (set null); null until the Monday person is linked |
+| `monday_user_id` | `text` | Monday people id |
+| `leave_type` | `text` | e.g. Annual Leave, Bank Holiday, Sick Leave, Birthday |
+| `status` | `text` | e.g. Submitted, Approved, Denied, Completed |
+| `start_date` / `end_date` | `date` | From the Timeline column |
+| `days` | `numeric(6,2)` | Monday "Number of days" (can be 0.5) |
+| `reduces_capacity` | `boolean` not null default `false` | True for Approved, Completed, and Before Sarah joined |
+| `monday_data` | `jsonb` | Raw column payload |
+| `created_at` / `updated_at` | `timestamptz` | |
+
+**Indexes:** `user_id`, `(start_date, end_date)`, partial on `reduces_capacity` where true.
+
+**RLS:** Auth read. Admin all.
 
 ### `leads_status_config`
 Single-row config (enforced via unique index on `((1))`) for which lead statuses to include in monthly summaries.
@@ -503,7 +540,7 @@ auth.users 1───1 users
 
 monday_tasks (parent_task_id self-ref)
 monday_column_mappings (config table, no FKs)
-monday_completed_boards / monday_leads_board / flexi_design_completed_board (config)
+monday_completed_boards / monday_leads_board / monday_holidays_board / flexi_design_completed_board (config)
 monday_sync_settings / leads_status_config / quote_rates / lifetime_value_brackets (singleton config)
 xero_connection >── xero_financial_cache (by tenant_id, no FK)
 ```

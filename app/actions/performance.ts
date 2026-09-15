@@ -3,6 +3,7 @@
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { startOfMonth, endOfMonth, eachDayOfInterval, getDay, format, startOfWeek } from 'date-fns'
 import { BASE_HOURS_PER_DAY, capacityMultiplier } from '@/lib/time-tracking/status'
+import { buildLeaveFractionByUserDate, loadCapacityReducingLeave } from '@/lib/holidays/working-days'
 
 interface TeamMemberUtilization {
   id: string
@@ -25,6 +26,7 @@ interface DayBreakdown {
     userName: string
     hoursLogged: number
     percentage: number
+    leaveFraction: number
   }[]
   totalHoursLogged: number
   expectedHours: number
@@ -99,13 +101,16 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       const dayOfWeek = getDay(date)
       return dayOfWeek !== 0 && dayOfWeek !== 6 // Exclude Sunday (0) and Saturday (6)
     })
-
-    // Standard expected hours per day at 100% capacity
+    const workingDayDates = workingDays.map((date) => format(date, 'yyyy-MM-dd'))
     const workingDayCount = workingDays.length
 
     // Get all time entries for the period
     const startDateStr = format(periodStart, 'yyyy-MM-dd')
     const endDateStr = format(periodEnd, 'yyyy-MM-dd')
+
+    const leaveByUserDate = buildLeaveFractionByUserDate(
+      await loadCapacityReducingLeave(adminClient, startDateStr, endDateStr)
+    )
 
     const { data: timeEntries, error: timeEntriesError } = await supabase
       .from('time_entries')
@@ -150,7 +155,11 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
     const members: TeamMemberUtilization[] = users.map((user: any) => {
       const userCapacity = capacityMultiplier(user.expected_utilization_percentage)
       const expectedHoursPerDay = BASE_HOURS_PER_DAY * userCapacity
-      const totalAvailableHours = workingDayCount * expectedHoursPerDay
+      const userLeave = leaveByUserDate[user.id] || {}
+      const totalAvailableHours = workingDayDates.reduce((sum, date) => {
+        const leaveFraction = userLeave[date] || 0
+        return sum + expectedHoursPerDay * (1 - leaveFraction)
+      }, 0)
       const userHours = hoursByUser[user.id]?.hours || 0
       const daysWorked = hoursByUser[user.id]?.days.size || 0
       const utilization = totalAvailableHours > 0
@@ -229,25 +238,26 @@ export async function getTeamUtilization(startDate?: string, endDate?: string) {
       const dayEntries = hoursByUserAndDate[dateStr] || {}
       const dayUsers: DayBreakdown['users'] = []
       let totalHoursForDay = 0
+      let totalExpectedHours = 0
       
       // Get hours logged for each user on this day
       users.forEach((user: any) => {
         const hoursLogged = dayEntries[user.id] || 0
-        const expectedHoursPerDay = BASE_HOURS_PER_DAY * capacityMultiplier(user.expected_utilization_percentage)
-        const percentage = expectedHoursPerDay > 0 ? (hoursLogged / expectedHoursPerDay) * 100 : 0
+        const leaveFraction = leaveByUserDate[user.id]?.[dateStr] || 0
+        const expectedHoursPerDay = BASE_HOURS_PER_DAY * capacityMultiplier(user.expected_utilization_percentage) * (1 - leaveFraction)
+        const percentage = expectedHoursPerDay > 0 ? (hoursLogged / expectedHoursPerDay) * 100 : hoursLogged > 0 ? 100 : 0
         totalHoursForDay += hoursLogged
+        totalExpectedHours += expectedHoursPerDay
         
         dayUsers.push({
           userId: user.id,
           userName: user.full_name || user.email,
           hoursLogged,
           percentage,
+          leaveFraction,
         })
       })
       
-      const totalExpectedHours = users.reduce((sum, user: any) => {
-        return sum + BASE_HOURS_PER_DAY * capacityMultiplier(user.expected_utilization_percentage)
-      }, 0)
       const totalPercentage = totalExpectedHours > 0 
         ? (totalHoursForDay / totalExpectedHours) * 100 
         : 0

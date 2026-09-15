@@ -67,6 +67,7 @@ interface DayBreakdown {
     userName: string
     hoursLogged: number
     percentage: number
+    leaveFraction: number
   }[]
   totalHoursLogged: number
   expectedHours: number
@@ -409,7 +410,7 @@ export default function PerformancePage() {
               <CardHeader>
                 <CardTitle>Daily Breakdown</CardTitle>
                 <CardDescription>
-                  Day-by-day breakdown of hours logged by each team member. Days with no logging are highlighted.
+                  Day-by-day breakdown of hours logged by each team member. Days with no logging are highlighted. Approved leave and bank holidays are excluded from expected hours.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -464,8 +465,9 @@ export default function PerformancePage() {
                               </TableHeader>
                               <TableBody>
                                 {weekDays.map((day) => {
-                                  const hasNoLogging = day.totalHoursLogged === 0
+                                  const hasNoLogging = day.totalHoursLogged === 0 && day.expectedHours > 0
                                   const isIncomplete = day.totalPercentage < 100 && day.totalHoursLogged > 0
+                                  const allOnLeave = day.expectedHours <= 0
                                   
                                   return (
                                     <TableRow 
@@ -483,6 +485,11 @@ export default function PerformancePage() {
                                               No time logged
                                             </div>
                                           )}
+                                          {allOnLeave && (
+                                            <div className="text-xs text-muted-foreground font-normal mt-1">
+                                              Leave
+                                            </div>
+                                          )}
                                           {isIncomplete && (
                                             <div className="text-xs text-yellow-600 dark:text-yellow-500 font-normal mt-1">
                                               Incomplete
@@ -494,25 +501,34 @@ export default function PerformancePage() {
                                         const dayUser = day.users.find(u => u.userId === member.id)
                                         const hoursLogged = dayUser?.hoursLogged || 0
                                         const percentage = dayUser?.percentage || 0
+                                        const leaveFraction = dayUser?.leaveFraction || 0
+                                        const onLeave = leaveFraction >= 1
                                         const hasLoggedHours = hoursLogged > 0
                                         
                                         return (
                                           <TableCell key={member.id} className="text-right">
                                             <div className="flex flex-col items-end gap-1">
-                                              <span className={cn(
-                                                "text-sm",
-                                                hasLoggedHours ? "font-medium" : "text-muted-foreground"
-                                              )}>
-                                                {hoursLogged > 0 ? `${hoursLogged.toFixed(1)}h` : '—'}
-                                              </span>
-                                              <span className={cn(
-                                                "text-xs",
-                                                percentage === 0 && "text-muted-foreground",
-                                                percentage > 0 && percentage < 100 && "text-yellow-600 dark:text-yellow-500",
-                                                percentage >= 100 && "text-green-600 dark:text-green-500"
-                                              )}>
-                                                {percentage.toFixed(0)}%
-                                              </span>
+                                              {onLeave && !hasLoggedHours ? (
+                                                <span className="text-sm text-muted-foreground">Leave</span>
+                                              ) : (
+                                                <>
+                                                  <span className={cn(
+                                                    "text-sm",
+                                                    hasLoggedHours ? "font-medium" : "text-muted-foreground"
+                                                  )}>
+                                                    {hoursLogged > 0 ? `${hoursLogged.toFixed(1)}h` : '—'}
+                                                  </span>
+                                                  <span className={cn(
+                                                    "text-xs",
+                                                    percentage === 0 && "text-muted-foreground",
+                                                    percentage > 0 && percentage < 100 && "text-yellow-600 dark:text-yellow-500",
+                                                    percentage >= 100 && "text-green-600 dark:text-green-500"
+                                                  )}>
+                                                    {percentage.toFixed(0)}%
+                                                    {leaveFraction > 0 && leaveFraction < 1 ? ' · part day' : ''}
+                                                  </span>
+                                                </>
+                                              )}
                                             </div>
                                           </TableCell>
                                         )
@@ -554,7 +570,7 @@ export default function PerformancePage() {
           <CardHeader>
             <CardTitle>Team Utilisation</CardTitle>
             <CardDescription>
-              Utilisation is hours logged divided by each person&apos;s expected capacity (their % of 6 hours per working day)
+              Utilisation is hours logged divided by each person&apos;s expected capacity (their % of 6 hours per working day, excluding approved leave and bank holidays)
             </CardDescription>
           </CardHeader>
           <CardContent>
