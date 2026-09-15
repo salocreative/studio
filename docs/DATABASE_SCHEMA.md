@@ -304,6 +304,8 @@ Audit log of credit deposits.
 | `client_id` | `uuid` not null | FK → `flexi_design_clients.id` (cascade) |
 | `hours` | `numeric(10,2)` not null | Positive = deposit |
 | `transaction_date` | `date` not null default current_date | |
+| `value_gbp` | `numeric(10,2)` | Ex-VAT GBP charged for this top-up. Null when unknown. |
+| `value_is_estimated` | `boolean` not null default `false` | True when `value_gbp` was backfilled/estimated rather than confirmed against an invoice. |
 | `created_by` | `uuid` | FK → `users.id` (set null) |
 | `created_at` | `timestamptz` | |
 

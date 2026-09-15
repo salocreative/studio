@@ -29,6 +29,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { format, differenceInMonths, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import {
+  FLEXI_DESIGN_STANDARD_PACKS,
+  findStandardPack,
+  formatGbp,
+  standardPackHint,
+} from '@/lib/flexi-design/credit-packs'
 
 interface FlexiDesignClient {
   id: string
@@ -70,10 +76,107 @@ interface ClientDetail {
     transaction_date: string
     created_at: string
     created_by: string | null
+    value_gbp: number | null
+    value_is_estimated: boolean
   }>
   completed_projects?: FlexiDesignProject[]
   completed_quoted_hours?: number
   completed_logged_hours?: number
+}
+
+function CreditTopUpFields({
+  hours,
+  date,
+  valueGbp,
+  onHoursChange,
+  onDateChange,
+  onValueChange,
+  hoursId = 'hours',
+  dateId = 'credit-date',
+  valueId = 'credit-value',
+  hoursLabel = 'Hours to Add',
+  dateLabel = 'Credit Date',
+}: {
+  hours: string
+  date: string
+  valueGbp: string
+  onHoursChange: (hours: string) => void
+  onDateChange: (date: string) => void
+  onValueChange: (value: string) => void
+  hoursId?: string
+  dateId?: string
+  valueId?: string
+  hoursLabel?: string
+  dateLabel?: string
+}) {
+  const matchingPack = findStandardPack(parseFloat(hours))
+  const valueAlreadyMatches =
+    matchingPack != null && parseFloat(valueGbp) === matchingPack.valueGbp
+
+  return (
+    <div className="space-y-4 py-4">
+      <div className="space-y-2">
+        <Label htmlFor={hoursId}>{hoursLabel}</Label>
+        <Input
+          id={hoursId}
+          type="number"
+          placeholder="e.g. 20, 40, 55, 80"
+          value={hours}
+          onChange={(e) => onHoursChange(e.target.value)}
+        />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {FLEXI_DESIGN_STANDARD_PACKS.map((pack) => (
+          <Button
+            key={pack.hours}
+            type="button"
+            variant={matchingPack?.hours === pack.hours ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              onHoursChange(String(pack.hours))
+              onValueChange(String(pack.valueGbp))
+            }}
+          >
+            {pack.hours}h · {formatGbp(pack.valueGbp)}
+          </Button>
+        ))}
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={valueId}>Value (£, ex VAT)</Label>
+        <Input
+          id={valueId}
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="e.g. 1800"
+          value={valueGbp}
+          onChange={(e) => onValueChange(e.target.value)}
+        />
+        {matchingPack && !valueAlreadyMatches && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => onValueChange(String(matchingPack.valueGbp))}
+          >
+            Use {standardPackHint(matchingPack)}
+          </Button>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Standard packs fill the typical ex-VAT price. Override for bespoke deals.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={dateId}>{dateLabel}</Label>
+        <Input
+          id={dateId}
+          type="date"
+          value={date}
+          onChange={(e) => onDateChange(e.target.value)}
+        />
+      </div>
+    </div>
+  )
 }
 
 function FlexiDesignPageContent() {
@@ -95,6 +198,7 @@ function FlexiDesignPageContent() {
   const [showCreditDialog, setShowCreditDialog] = useState(false)
   const [showCreditHistoryDialog, setShowCreditHistoryDialog] = useState(false)
   const [creditHours, setCreditHours] = useState('')
+  const [creditValue, setCreditValue] = useState('')
   const [creditDate, setCreditDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [selectedClientForCredit, setSelectedClientForCredit] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -105,6 +209,7 @@ function FlexiDesignPageContent() {
   const [showEditTransactionDialog, setShowEditTransactionDialog] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState<NonNullable<ClientDetail['credit_transactions']>[number] | null>(null)
   const [editTransactionHours, setEditTransactionHours] = useState('')
+  const [editTransactionValue, setEditTransactionValue] = useState('')
   const [editTransactionDate, setEditTransactionDate] = useState('')
   const [savingTransaction, setSavingTransaction] = useState(false)
 
@@ -232,6 +337,7 @@ function FlexiDesignPageContent() {
   function openEditTransactionDialog(transaction: NonNullable<ClientDetail['credit_transactions']>[number]) {
     setEditingTransaction(transaction)
     setEditTransactionHours(String(transaction.hours))
+    setEditTransactionValue(transaction.value_gbp == null ? '' : String(transaction.value_gbp))
     setEditTransactionDate(transaction.transaction_date)
     setShowEditTransactionDialog(true)
   }
@@ -240,17 +346,33 @@ function FlexiDesignPageContent() {
     if (!editingTransaction) return
 
     const hours = parseFloat(editTransactionHours)
-    if (Number.isNaN(hours)) {
+    if (Number.isNaN(hours) || hours <= 0) {
       toast.error('Please enter a valid number of hours')
       return
     }
 
+    const trimmedValue = editTransactionValue.trim()
+    const parsedValue = trimmedValue === '' ? null : parseFloat(trimmedValue)
+    if (parsedValue !== null && (Number.isNaN(parsedValue) || parsedValue < 0)) {
+      toast.error('Please enter a valid ex-VAT value')
+      return
+    }
+
+    const updates: {
+      hours: number
+      transaction_date: string
+      value_gbp?: number | null
+    } = {
+      hours,
+      transaction_date: editTransactionDate,
+    }
+    if (parsedValue !== editingTransaction.value_gbp) {
+      updates.value_gbp = parsedValue
+    }
+
     setSavingTransaction(true)
     try {
-      const result = await updateFlexiDesignCreditTransaction(editingTransaction.id, {
-        hours,
-        transaction_date: editTransactionDate,
-      })
+      const result = await updateFlexiDesignCreditTransaction(editingTransaction.id, updates)
 
       if (result.error) {
         toast.error('Error updating transaction', { description: result.error })
@@ -309,6 +431,7 @@ function FlexiDesignPageContent() {
   const handleAddCredit = (clientName: string) => {
     setSelectedClientForCredit(clientName)
     setCreditHours('')
+    setCreditValue('')
     setCreditDate(format(new Date(), 'yyyy-MM-dd'))
     setShowCreditDialog(true)
   }
@@ -325,8 +448,24 @@ function FlexiDesignPageContent() {
       return
     }
 
+    if (!creditValue.trim()) {
+      toast.error('Please enter the ex-VAT value')
+      return
+    }
+
+    const valueGbp = parseFloat(creditValue)
+    if (Number.isNaN(valueGbp) || valueGbp < 0) {
+      toast.error('Please enter a valid ex-VAT value')
+      return
+    }
+
     try {
-      const result = await updateFlexiDesignClientCredit(selectedClientForCredit, hours, creditDate)
+      const result = await updateFlexiDesignClientCredit(
+        selectedClientForCredit,
+        hours,
+        creditDate,
+        valueGbp
+      )
       if (result.error) {
         toast.error('Error updating credit', { description: result.error })
       } else {
@@ -334,6 +473,7 @@ function FlexiDesignPageContent() {
         const wasViewingClient = selectedClientForCredit === clientName
         setShowCreditDialog(false)
         setCreditHours('')
+        setCreditValue('')
         setSelectedClientForCredit(null)
         setCreditDate(format(new Date(), 'yyyy-MM-dd'))
         
@@ -911,60 +1051,17 @@ function FlexiDesignPageContent() {
             <DialogHeader>
               <DialogTitle>Add Credit Hours</DialogTitle>
               <DialogDescription>
-                Add credit hours to {selectedClientForCredit}. Common blocks: 20, 40, 60, 80 hours.
+                Add credit hours to {selectedClientForCredit}. Choose a standard pack or enter a bespoke hours and value.
               </DialogDescription>
             </DialogHeader>
-              <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="hours">Hours to Add</Label>
-                <Input
-                  id="hours"
-                  type="number"
-                  placeholder="e.g., 20, 40, 60, 80"
-                  value={creditHours}
-                  onChange={(e) => setCreditHours(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('20')}
-                >
-                  20h
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('40')}
-                >
-                  40h
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('60')}
-                >
-                  60h
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('80')}
-                >
-                  80h
-                </Button>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="credit-date">Credit Date</Label>
-                <Input
-                  id="credit-date"
-                  type="date"
-                  value={creditDate}
-                  onChange={(e) => setCreditDate(e.target.value)}
-                />
-              </div>
-            </div>
+            <CreditTopUpFields
+              hours={creditHours}
+              date={creditDate}
+              valueGbp={creditValue}
+              onHoursChange={setCreditHours}
+              onDateChange={setCreditDate}
+              onValueChange={setCreditValue}
+            />
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowCreditDialog(false)}>
                 Cancel
@@ -1000,9 +1097,16 @@ function FlexiDesignPageContent() {
                       <div className="flex-1">
                         <div className="font-medium text-green-600">
                           +{transaction.hours.toFixed(1)} hours
+                          {transaction.value_gbp != null && (
+                            <span className="ml-2 font-normal text-foreground">
+                              {formatGbp(transaction.value_gbp)}
+                              {transaction.value_is_estimated ? ' (estimated)' : ''}
+                            </span>
+                          )}
                         </div>
                         <div className="text-sm text-muted-foreground mt-0.5">
                           Transaction Date: {format(new Date(transaction.transaction_date), 'MMM d, yyyy')}
+                          {transaction.value_gbp == null && ' · No value recorded'}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1045,30 +1149,23 @@ function FlexiDesignPageContent() {
             <DialogHeader>
               <DialogTitle>Edit credit entry</DialogTitle>
               <DialogDescription>
-                Update hours or transaction date.
+                Update hours, ex-VAT value, or transaction date.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="edit-hours">Hours</Label>
-                <Input
-                  id="edit-hours"
-                  type="number"
-                  value={editTransactionHours}
-                  onChange={(e) => setEditTransactionHours(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-date">Transaction date</Label>
-                <Input
-                  id="edit-date"
-                  type="date"
-                  value={editTransactionDate}
-                  onChange={(e) => setEditTransactionDate(e.target.value)}
-                />
-              </div>
-            </div>
+            <CreditTopUpFields
+              hours={editTransactionHours}
+              date={editTransactionDate}
+              valueGbp={editTransactionValue}
+              onHoursChange={setEditTransactionHours}
+              onDateChange={setEditTransactionDate}
+              onValueChange={setEditTransactionValue}
+              hoursId="edit-hours"
+              dateId="edit-date"
+              valueId="edit-value"
+              hoursLabel="Hours"
+              dateLabel="Transaction date"
+            />
 
             <DialogFooter>
               <Button
@@ -1312,60 +1409,17 @@ function FlexiDesignPageContent() {
             <DialogHeader>
               <DialogTitle>Add Credit Hours</DialogTitle>
               <DialogDescription>
-                Add credit hours to {selectedClientForCredit}. Common blocks: 20, 40, 60, 80 hours.
+                Add credit hours to {selectedClientForCredit}. Choose a standard pack or enter a bespoke hours and value.
               </DialogDescription>
             </DialogHeader>
-              <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="hours">Hours to Add</Label>
-                <Input
-                  id="hours"
-                  type="number"
-                  placeholder="e.g., 20, 40, 60, 80"
-                  value={creditHours}
-                  onChange={(e) => setCreditHours(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('20')}
-                >
-                  20h
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('40')}
-                >
-                  40h
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('60')}
-                >
-                  60h
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreditHours('80')}
-                >
-                  80h
-                </Button>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="credit-date">Credit Date</Label>
-                <Input
-                  id="credit-date"
-                  type="date"
-                  value={creditDate}
-                  onChange={(e) => setCreditDate(e.target.value)}
-                />
-              </div>
-            </div>
+            <CreditTopUpFields
+              hours={creditHours}
+              date={creditDate}
+              valueGbp={creditValue}
+              onHoursChange={setCreditHours}
+              onDateChange={setCreditDate}
+              onValueChange={setCreditValue}
+            />
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowCreditDialog(false)}>
                 Cancel

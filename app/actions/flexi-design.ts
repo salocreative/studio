@@ -62,6 +62,8 @@ interface ClientDetail {
     transaction_date: string
     created_at: string
     created_by: string | null
+    value_gbp: number | null
+    value_is_estimated: boolean
   }>
   completed_projects?: FlexiDesignProject[]
   completed_quoted_hours?: number
@@ -413,30 +415,58 @@ export async function getFlexiDesignClientDetail(clientName: string) {
       transaction_date: string
       created_at: string
       created_by: string | null
+      value_gbp: number | null
+      value_is_estimated: boolean
     }> = []
     
     if (clientData) {
-      const { data: transactions, error: transactionsError } = await supabase
-        .from('flexi_design_credit_transactions')
-        .select('id, hours, transaction_date, created_at, created_by')
-        .eq('client_id', clientData.id)
-        .order('transaction_date', { ascending: false })
-        .order('created_at', { ascending: false })
-      
-      if (transactionsError) {
-        // If table doesn't exist yet, just continue without transactions
-        if (!transactionsError.message.includes('does not exist') && 
-            !transactionsError.message.includes('relation')) {
-          throw transactionsError
-        }
-      } else if (transactions) {
-        creditTransactions = transactions.map((tx: any) => ({
+      const mapTransactions = (rows: any[]) =>
+        rows.map((tx: any) => ({
           id: tx.id,
           hours: Number(tx.hours),
           transaction_date: tx.transaction_date,
           created_at: tx.created_at,
           created_by: tx.created_by,
+          value_gbp: tx.value_gbp == null ? null : Number(tx.value_gbp),
+          value_is_estimated: Boolean(tx.value_is_estimated),
         }))
+
+      const { data: transactions, error: transactionsError } = await supabase
+        .from('flexi_design_credit_transactions')
+        .select('id, hours, transaction_date, created_at, created_by, value_gbp, value_is_estimated')
+        .eq('client_id', clientData.id)
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false })
+
+      const errorMsg = transactionsError?.message || ''
+      const missingValueCols =
+        transactionsError?.code === '42703' ||
+        errorMsg.includes('value_gbp') ||
+        errorMsg.includes('value_is_estimated') ||
+        errorMsg.includes('schema cache')
+
+      if (missingValueCols) {
+        const { data: fallback, error: fallbackError } = await supabase
+          .from('flexi_design_credit_transactions')
+          .select('id, hours, transaction_date, created_at, created_by')
+          .eq('client_id', clientData.id)
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false })
+
+        if (fallbackError) {
+          if (!fallbackError.message.includes('does not exist') &&
+              !fallbackError.message.includes('relation')) {
+            throw fallbackError
+          }
+        } else if (fallback) {
+          creditTransactions = mapTransactions(fallback)
+        }
+      } else if (transactionsError) {
+        if (!errorMsg.includes('does not exist') && !errorMsg.includes('relation')) {
+          throw transactionsError
+        }
+      } else if (transactions) {
+        creditTransactions = mapTransactions(transactions)
       }
     }
 
@@ -605,7 +635,8 @@ export async function setFlexiDesignClientHidden(clientName: string, isHidden: b
 export async function updateFlexiDesignClientCredit(
   clientName: string,
   additionalHours: number,
-  transactionDate?: string
+  transactionDate: string | undefined,
+  valueGbp: number
 ) {
   const supabase = await createClient()
 
@@ -623,6 +654,14 @@ export async function updateFlexiDesignClientCredit(
 
   if (userProfile?.role !== 'admin') {
     return { error: 'Unauthorized: Admin access required' }
+  }
+
+  if (!Number.isFinite(additionalHours) || additionalHours <= 0) {
+    return { error: 'Please enter a valid number of hours' }
+  }
+
+  if (!Number.isFinite(valueGbp) || valueGbp < 0) {
+    return { error: 'Please enter a valid ex-VAT value' }
   }
 
   try {
@@ -674,6 +713,8 @@ export async function updateFlexiDesignClientCredit(
         client_id: clientId,
         hours: additionalHours,
         transaction_date: dateToUse,
+        value_gbp: valueGbp,
+        value_is_estimated: false,
         created_by: user.id,
       })
       .select()
@@ -685,6 +726,15 @@ export async function updateFlexiDesignClientCredit(
       if (errorMsg.includes('does not exist') || errorMsg.includes('relation')) {
         return { 
           error: 'Credit transactions table not found. Please run migration 013_add_flexi_design_credit_transactions.sql in Supabase.' 
+        }
+      }
+      if (
+        transactionError.code === '42703' ||
+        errorMsg.includes('value_gbp') ||
+        errorMsg.includes('schema cache')
+      ) {
+        return {
+          error: 'Credit value columns not found. Please run migration 074_flexi_design_credit_value.sql in Supabase.'
         }
       }
       console.error('Error creating credit transaction:', transactionError)
@@ -714,7 +764,7 @@ export async function updateFlexiDesignClientCredit(
 
 export async function updateFlexiDesignCreditTransaction(
   transactionId: string,
-  updates: { hours?: number; transaction_date?: string }
+  updates: { hours?: number; transaction_date?: string; value_gbp?: number | null }
 ) {
   const supabase = await createClient()
 
@@ -735,6 +785,16 @@ export async function updateFlexiDesignCreditTransaction(
   const payload: Record<string, any> = {}
   if (typeof updates.hours === 'number') payload.hours = updates.hours
   if (typeof updates.transaction_date === 'string') payload.transaction_date = updates.transaction_date
+  if (updates.value_gbp === null) {
+    payload.value_gbp = null
+    payload.value_is_estimated = false
+  } else if (typeof updates.value_gbp === 'number') {
+    if (!Number.isFinite(updates.value_gbp) || updates.value_gbp < 0) {
+      return { error: 'Please enter a valid ex-VAT value' }
+    }
+    payload.value_gbp = updates.value_gbp
+    payload.value_is_estimated = false
+  }
   if (Object.keys(payload).length === 0) return { error: 'No updates provided' }
 
   try {
@@ -742,7 +802,7 @@ export async function updateFlexiDesignCreditTransaction(
       .from('flexi_design_credit_transactions')
       .update(payload)
       .eq('id', transactionId)
-      .select('id, client_id, hours, transaction_date, created_at, created_by')
+      .select('id, client_id, hours, transaction_date, created_at, created_by, value_gbp, value_is_estimated')
       .single()
 
     if (error) throw error

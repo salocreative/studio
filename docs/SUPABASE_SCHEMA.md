@@ -352,6 +352,8 @@ A transaction that adds hours to a Flexi client's bank.
 | `client_id` | `uuid` not null | FK → `flexi_design_clients.id` (`cascade`). |
 | `hours` | `numeric(10,2)` not null | Positive to add credit. |
 | `transaction_date` | `date` not null default `current_date` | |
+| `value_gbp` | `numeric(10,2)` | Ex-VAT GBP charged for this top-up. Null when unknown. |
+| `value_is_estimated` | `boolean` not null default `false` | True when `value_gbp` was backfilled/estimated rather than confirmed against an invoice. |
 | `created_at` | `timestamptz` | |
 | `created_by` | `uuid` | FK → `users.id` (`set null`). |
 
@@ -809,3 +811,4 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | 049 | `add_retainer_end_date` | `retainer_clients.end_date` (finish date, prorates final month). |
 | `20260113085747` | `add_cover_image_to_cupboard` | `cupboard_items.cover_image_path`. |
 | 073 | `holiday_leave` | `monday_holidays_board`, `holiday_requests`, `users.monday_user_id`. |
+| 074 | `flexi_design_credit_value` | `flexi_design_credit_transactions.value_gbp`, `value_is_estimated`; backfill standard packs. |
