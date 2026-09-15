@@ -294,96 +294,6 @@ export default function PerformancePage() {
           </CardContent>
         </Card>
 
-        {/* Client Hours Panel */}
-        {clientHours.length > 0 && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Building2 className="h-5 w-5" />
-                Client Hours
-              </CardTitle>
-              <CardDescription>
-                Hours logged per client for the selected period
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[400px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={clientHours}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis
-                      dataKey="clientName"
-                      angle={-45}
-                      textAnchor="end"
-                      height={100}
-                      interval={0}
-                      tick={{ fontSize: 12 }}
-                      className="stroke-muted-foreground"
-                    />
-                    <YAxis
-                      label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
-                      tick={{ fontSize: 12 }}
-                      className="stroke-muted-foreground"
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: 'hsl(var(--background))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '6px',
-                      }}
-                      formatter={(value: number) => [`${value.toFixed(1)}h`, 'Hours']}
-                      labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold' }}
-                    />
-                    <Bar
-                      dataKey="hours"
-                      fill="hsl(var(--primary))"
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              
-              {/* Summary Table */}
-              <div className="mt-6 rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Client</TableHead>
-                      <TableHead className="text-right">Hours</TableHead>
-                      <TableHead className="text-right">Percentage</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {clientHours.map((client) => {
-                      const totalHours = clientHours.reduce((sum, c) => sum + c.hours, 0)
-                      const percentage = totalHours > 0 ? (client.hours / totalHours) * 100 : 0
-                      return (
-                        <TableRow key={client.clientName}>
-                          <TableCell className="font-medium">{client.clientName}</TableCell>
-                          <TableCell className="text-right">{client.hours.toFixed(1)}h</TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {percentage.toFixed(1)}%
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                    <TableRow className="font-semibold bg-muted/50">
-                      <TableCell>Total</TableCell>
-                      <TableCell className="text-right">
-                        {clientHours.reduce((sum, c) => sum + c.hours, 0).toFixed(1)}h
-                      </TableCell>
-                      <TableCell className="text-right">100%</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Daily Breakdown */}
         {dailyBreakdown.length > 0 && (() => {
           // Group days by week
@@ -686,6 +596,94 @@ export default function PerformancePage() {
                   )}
                 </>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {clientHours.length > 0 && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5" />
+                Client Hours
+              </CardTitle>
+              <CardDescription>
+                Hours logged per client for the selected period
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={clientHours}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis
+                      dataKey="clientName"
+                      angle={-45}
+                      textAnchor="end"
+                      height={100}
+                      interval={0}
+                      tick={{ fontSize: 12 }}
+                      className="stroke-muted-foreground"
+                    />
+                    <YAxis
+                      label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
+                      tick={{ fontSize: 12 }}
+                      className="stroke-muted-foreground"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'hsl(var(--background))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '6px',
+                      }}
+                      formatter={(value: number) => [`${value.toFixed(1)}h`, 'Hours']}
+                      labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold' }}
+                    />
+                    <Bar
+                      dataKey="hours"
+                      fill="hsl(var(--primary))"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="mt-6 rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Client</TableHead>
+                      <TableHead className="text-right">Hours</TableHead>
+                      <TableHead className="text-right">Percentage</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {clientHours.map((client) => {
+                      const totalHours = clientHours.reduce((sum, c) => sum + c.hours, 0)
+                      const percentage = totalHours > 0 ? (client.hours / totalHours) * 100 : 0
+                      return (
+                        <TableRow key={client.clientName}>
+                          <TableCell className="font-medium">{client.clientName}</TableCell>
+                          <TableCell className="text-right">{client.hours.toFixed(1)}h</TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {percentage.toFixed(1)}%
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                    <TableRow className="font-semibold bg-muted/50">
+                      <TableCell>Total</TableCell>
+                      <TableCell className="text-right">
+                        {clientHours.reduce((sum, c) => sum + c.hours, 0).toFixed(1)}h
+                      </TableCell>
+                      <TableCell className="text-right">100%</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         )}
