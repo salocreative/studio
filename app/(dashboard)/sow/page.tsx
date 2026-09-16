@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,9 +21,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Plus, Loader2, ScrollText, ExternalLink, Link2, Copy } from 'lucide-react'
+import { Plus, Loader2, ScrollText, ExternalLink, Link2, Copy, CopyPlus } from 'lucide-react'
 import { toast } from 'sonner'
-import { getSowDocuments, type SowDocument, type SowStatus } from '@/app/actions/sow'
+import {
+  duplicateSowDocument,
+  getSowDocuments,
+  type SowDocument,
+  type SowStatus,
+} from '@/app/actions/sow'
 import { getClientApprovalStatus } from '@/lib/sow/status'
 import { cn } from '@/lib/utils'
 
@@ -30,6 +36,7 @@ const STATUS_TABS: { value: SowStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'sent', label: 'Sent' },
   { value: 'approved', label: 'Approved' },
+  { value: 'complete', label: 'Complete' },
   { value: 'rejected', label: 'Declined' },
   { value: 'archived', label: 'Archived' },
 ]
@@ -50,9 +57,11 @@ function formatMoney(value: number) {
 }
 
 export default function SowListPage() {
+  const router = useRouter()
   const [documents, setDocuments] = useState<SowDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<SowStatus>('draft')
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
 
   useEffect(() => {
     loadDocuments()
@@ -108,11 +117,29 @@ export default function SowListPage() {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  async function handleDuplicate(doc: SowDocument) {
+    setDuplicatingId(doc.id)
+    try {
+      const result = await duplicateSowDocument(doc.id)
+      if (result.error) {
+        toast.error('Could not duplicate SoW', { description: result.error })
+        return
+      }
+      if (result.document) {
+        toast.success('SoW duplicated')
+        router.push(`/sow/${result.document.id}`)
+      }
+    } finally {
+      setDuplicatingId(null)
+    }
+  }
+
   const counts = useMemo(() => {
     const next: Record<SowStatus, number> = {
       draft: 0,
       sent: 0,
       approved: 0,
+      complete: 0,
       rejected: 0,
       archived: 0,
     }
@@ -171,6 +198,7 @@ export default function SowListPage() {
                     {tab.value === 'draft' && 'SoWs still being prepared'}
                     {tab.value === 'sent' && 'Shared with the client and awaiting approval'}
                     {tab.value === 'approved' && 'Approved by the client'}
+                    {tab.value === 'complete' && 'Finished projects'}
                     {tab.value === 'rejected' && 'Declined by the client'}
                     {tab.value === 'archived' && 'Archived statements of work'}
                   </CardDescription>
@@ -192,8 +220,10 @@ export default function SowListPage() {
                   ) : (
                     <SowTable
                       documents={tabDocuments}
+                      duplicatingId={duplicatingId}
                       onCopyPublicLink={handleCopyPublicLink}
                       onOpenPublicLink={handleOpenPublicLink}
+                      onDuplicate={handleDuplicate}
                     />
                   )}
                 </CardContent>
@@ -208,12 +238,16 @@ export default function SowListPage() {
 
 function SowTable({
   documents,
+  duplicatingId,
   onCopyPublicLink,
   onOpenPublicLink,
+  onDuplicate,
 }: {
   documents: SowDocument[]
+  duplicatingId: string | null
   onCopyPublicLink: (doc: SowDocument) => void
   onOpenPublicLink: (doc: SowDocument) => void
+  onDuplicate: (doc: SowDocument) => void
 }) {
   return (
     <Table>
@@ -296,6 +330,20 @@ function SowTable({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onDuplicate(doc)}
+                    disabled={duplicatingId === doc.id}
+                    title="Duplicate"
+                  >
+                    {duplicatingId === doc.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CopyPlus className="h-4 w-4" />
+                    )}
+                    <span className="sr-only">Duplicate</span>
+                  </Button>
                   <Button variant="ghost" size="sm" asChild>
                     <Link href={`/sow/${doc.id}`}>Open</Link>
                   </Button>

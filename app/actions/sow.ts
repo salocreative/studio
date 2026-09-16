@@ -2,10 +2,12 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { getQuoteRateByType } from '@/app/actions/quote-rates'
+import { getSowPartyRates } from '@/app/actions/sow-party-rates'
 import {
   computeLineItem,
   computeSowTotals,
   hourlyRateFromQuoteRate,
+  resolvePartyRate,
   validateLineItemTimeline,
   validatePaymentSchedule,
   type SowLineItemInput,
@@ -22,7 +24,7 @@ function getActionError(error: unknown, fallback: string): string {
   return fallback
 }
 
-export type SowStatus = 'draft' | 'sent' | 'approved' | 'rejected' | 'archived'
+export type SowStatus = 'draft' | 'sent' | 'approved' | 'rejected' | 'archived' | 'complete'
 
 export interface SowLineItem {
   id: string
@@ -85,6 +87,8 @@ export interface SowDocument {
   monday_item_id: string | null
   monday_board_id: string | null
   pushed_to_monday_at: string | null
+  allow_white_label_view: boolean
+  white_label_day_rate_gbp: number | null
   /** Latest active public share token, when one exists */
   active_share_token?: string | null
   line_items?: SowLineItem[]
@@ -198,6 +202,49 @@ function mapPaymentMilestones(milestones: SowPaymentMilestoneInput[], sowId: str
     due_date: m.due_date || null,
     sort_order: index,
   }))
+}
+
+async function resolveWhiteLabelFields(input: {
+  customer_type: 'partner' | 'client'
+  client_name: string
+  allow_white_label_view?: boolean
+}): Promise<
+  | { error: string }
+  | { allow_white_label_view: boolean; white_label_day_rate_gbp: number | null }
+> {
+  const allow = input.customer_type === 'partner' && Boolean(input.allow_white_label_view)
+  if (!allow) {
+    return { allow_white_label_view: false, white_label_day_rate_gbp: null }
+  }
+
+  const partyResult = await getSowPartyRates()
+  const partyRates =
+    'success' in partyResult && partyResult.success && partyResult.rates ? partyResult.rates : []
+  const resolved = resolvePartyRate({
+    customerType: 'client',
+    clientName: input.client_name,
+    rates: partyRates,
+  })
+  if (resolved && resolved.day_rate_gbp > 0) {
+    return {
+      allow_white_label_view: true,
+      white_label_day_rate_gbp: Math.round(resolved.day_rate_gbp * 100) / 100,
+    }
+  }
+
+  const quote = await getQuoteRateByType('client')
+  if ('error' in quote || !quote.rate) {
+    return {
+      error:
+        quote.error ||
+        'Direct client rates are not configured in Settings, so white-label view cannot be enabled.',
+    }
+  }
+
+  return {
+    allow_white_label_view: true,
+    white_label_day_rate_gbp: Math.round(Number(quote.rate.day_rate_gbp) * 100) / 100,
+  }
 }
 
 export async function getSowAgencies() {
@@ -450,6 +497,7 @@ export type SowDocumentInput = {
   payment_milestones: SowPaymentMilestoneInput[]
   monday_project_id?: string | null
   push_to_monday?: boolean
+  allow_white_label_view?: boolean
 }
 
 export async function createSowDocument(input: SowDocumentInput) {
@@ -471,6 +519,8 @@ export async function createSowDocument(input: SowDocumentInput) {
   const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
   const currency = normalizeCurrency(input.currency)
   const fxRate = normalizeFxRate(currency, input.fx_rate)
+  const whiteLabel = await resolveWhiteLabelFields(input)
+  if ('error' in whiteLabel) return { error: whiteLabel.error }
 
   let mondayLink: {
     monday_project_id?: string | null
@@ -516,6 +566,7 @@ export async function createSowDocument(input: SowDocumentInput) {
         notes: input.notes?.trim() || null,
         status: 'draft',
         created_by: auth.userId,
+        ...whiteLabel,
         ...totals,
         ...mondayLink,
       })
@@ -560,8 +611,11 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
 
   const existing = await getSowDocument(id)
   if (existing.error || !existing.document) return { error: existing.error || 'Not found' }
-  if (existing.document.status === 'approved') {
-    return { error: 'Approved statements of work cannot be edited' }
+  if (
+    existing.document.status === 'approved' ||
+    existing.document.status === 'complete'
+  ) {
+    return { error: 'Approved or complete statements of work cannot be edited' }
   }
 
   const validationError = validateSowInput(input)
@@ -579,6 +633,8 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
   const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
   const currency = normalizeCurrency(input.currency)
   const fxRate = normalizeFxRate(currency, input.fx_rate)
+  const whiteLabel = await resolveWhiteLabelFields(input)
+  if ('error' in whiteLabel) return { error: whiteLabel.error }
 
   try {
     const { error: docError } = await auth.supabase
@@ -599,6 +655,7 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         currency,
         fx_rate: fxRate,
         notes: input.notes?.trim() || null,
+        ...whiteLabel,
         ...totals,
       })
       .eq('id', id)
@@ -639,6 +696,147 @@ export async function archiveSowDocument(id: string) {
   } catch (error) {
     console.error('Error archiving SoW:', error)
     return { error: getActionError(error, 'Failed to archive statement of work') }
+  }
+}
+
+export async function completeSowDocument(id: string) {
+  const auth = await requireTeamMember()
+  if (auth.error || !auth.supabase) return { error: auth.error ?? 'Not authenticated' }
+
+  const existing = await getSowDocument(id)
+  if (existing.error || !existing.document) return { error: existing.error || 'Not found' }
+  if (existing.document.status !== 'approved') {
+    return { error: 'Only approved statements of work can be marked complete' }
+  }
+
+  try {
+    const { error } = await auth.supabase
+      .from('sow_documents')
+      .update({ status: 'complete' })
+      .eq('id', id)
+
+    if (error) throw error
+    return { success: true }
+  } catch (error) {
+    console.error('Error completing SoW:', error)
+    return { error: getActionError(error, 'Failed to mark statement of work complete') }
+  }
+}
+
+export async function setSowWhiteLabelView(id: string, enabled: boolean) {
+  const auth = await requireTeamMember()
+  if (auth.error || !auth.supabase) return { error: auth.error ?? 'Not authenticated' }
+
+  const existing = await getSowDocument(id)
+  if (existing.error || !existing.document) return { error: existing.error || 'Not found' }
+  if (existing.document.customer_type !== 'partner' && enabled) {
+    return { error: 'White-label rates are only available on partner (agency) SoWs' }
+  }
+
+  const whiteLabel = await resolveWhiteLabelFields({
+    customer_type: existing.document.customer_type,
+    client_name: existing.document.client_name,
+    allow_white_label_view: enabled,
+  })
+  if ('error' in whiteLabel) return { error: whiteLabel.error }
+
+  try {
+    const { error } = await auth.supabase
+      .from('sow_documents')
+      .update(whiteLabel)
+      .eq('id', id)
+
+    if (error) throw error
+    return { success: true, ...whiteLabel }
+  } catch (error) {
+    console.error('Error updating white-label view:', error)
+    return { error: getActionError(error, 'Failed to update white-label view') }
+  }
+}
+
+export async function duplicateSowDocument(id: string) {
+  const auth = await requireTeamMember()
+  if (auth.error || !auth.supabase || !auth.userId) {
+    return { error: auth.error ?? 'Not authenticated' }
+  }
+
+  const existing = await getSowDocument(id)
+  if (existing.error || !existing.document) return { error: existing.error || 'Not found' }
+  const source = existing.document
+
+  try {
+    const { data: document, error: docError } = await auth.supabase
+      .from('sow_documents')
+      .insert({
+        title: `${source.title} (copy)`,
+        client_name: source.client_name,
+        agency_name: source.agency_name,
+        customer_type: source.customer_type,
+        include_vat: source.include_vat,
+        show_quoted_hours: source.show_quoted_hours ?? false,
+        show_payment_schedule: source.show_payment_schedule ?? true,
+        start_date: source.start_date,
+        end_date: source.end_date,
+        day_rate_override_gbp: source.day_rate_override_gbp,
+        base_day_rate_gbp: source.base_day_rate_gbp,
+        hours_per_day: source.hours_per_day,
+        currency: source.currency,
+        fx_rate: source.fx_rate,
+        notes: source.notes,
+        subtotal_gbp: source.subtotal_gbp,
+        vat_amount_gbp: source.vat_amount_gbp,
+        total_gbp: source.total_gbp,
+        total_hours: source.total_hours,
+        allow_white_label_view: source.allow_white_label_view ?? false,
+        white_label_day_rate_gbp: source.white_label_day_rate_gbp ?? null,
+        status: 'draft',
+        created_by: auth.userId,
+      })
+      .select()
+      .single()
+
+    if (docError) throw docError
+
+    const lineItems = source.line_items || []
+    if (lineItems.length > 0) {
+      const { error: itemsError } = await auth.supabase.from('sow_line_items').insert(
+        lineItems.map((item) => ({
+          sow_id: document.id,
+          title: item.title,
+          description: item.description,
+          quantity: item.quantity,
+          is_days: item.is_days,
+          hours: item.hours,
+          unit_rate_gbp: item.unit_rate_gbp,
+          line_total_gbp: item.line_total_gbp,
+          sort_order: item.sort_order,
+          timeline_start: item.timeline_start,
+          timeline_end: item.timeline_end,
+        }))
+      )
+      if (itemsError) throw itemsError
+    }
+
+    const milestones = source.payment_milestones || []
+    if (milestones.length > 0) {
+      const { error: milestonesError } = await auth.supabase
+        .from('sow_payment_milestones')
+        .insert(
+          milestones.map((m) => ({
+            sow_id: document.id,
+            label: m.label,
+            percentage: m.percentage,
+            due_date: m.due_date,
+            sort_order: m.sort_order,
+          }))
+        )
+      if (milestonesError) throw milestonesError
+    }
+
+    return { success: true, document: document as SowDocument }
+  } catch (error) {
+    console.error('Error duplicating SoW:', error)
+    return { error: getActionError(error, 'Failed to duplicate statement of work') }
   }
 }
 

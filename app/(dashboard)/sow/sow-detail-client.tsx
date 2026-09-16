@@ -44,6 +44,7 @@ import {
   ArrowLeft,
   Copy,
   Check,
+  CheckCircle2,
   ChevronDown,
   Loader2,
   Plus,
@@ -57,17 +58,21 @@ import {
   FileDown,
   ClipboardCopy,
   Wand2,
+  CopyPlus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   archiveSowDocument,
+  completeSowDocument,
   createSowDocument,
   createSowShareLink,
   deactivateSowShareLink,
   deleteSowDocument,
+  duplicateSowDocument,
   getSowAgencies,
   getSowClients,
   getSowDocument,
+  setSowWhiteLabelView,
   updateSowDocument,
   type SowDocument,
   type SowShareLink,
@@ -157,6 +162,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [mondayProjectId, setMondayProjectId] = useState<string | null>(null)
   const [pushToMonday, setPushToMonday] = useState(false)
   const [updatingMonday, setUpdatingMonday] = useState(false)
+  const [duplicating, setDuplicating] = useState(false)
+  const [completing, setCompleting] = useState(false)
   const [editorTab, setEditorTab] = useState<'details' | 'deliverables' | 'payment' | 'rates'>(
     'details'
   )
@@ -170,6 +177,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [includeVat, setIncludeVat] = useState(true)
   const [showQuotedHours, setShowQuotedHours] = useState(false)
   const [showPaymentSchedule, setShowPaymentSchedule] = useState(true)
+  const [allowWhiteLabelView, setAllowWhiteLabelView] = useState(false)
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [notes, setNotes] = useState('')
@@ -199,7 +207,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [lineItemDialogOpen, setLineItemDialogOpen] = useState(false)
 
-  const isReadOnly = document?.status === 'approved'
+  const isReadOnly = document?.status === 'approved' || document?.status === 'complete'
   const isPartnerWork = customerType === 'partner'
   const resolvedAgencyName = agencyName === '__custom__' ? customAgency.trim() : agencyName
   const resolvedClientName = clientName === '__custom__' ? customClient.trim() : clientName
@@ -391,6 +399,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         setIncludeVat(doc.include_vat)
         setShowQuotedHours(doc.show_quoted_hours ?? true)
         setShowPaymentSchedule(doc.show_payment_schedule ?? true)
+        setAllowWhiteLabelView(Boolean(doc.allow_white_label_view))
         setStartDate(doc.start_date || '')
         setEndDate(doc.end_date || '')
         setNotes(doc.notes || '')
@@ -828,6 +837,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         include_vat: includeVat,
         show_quoted_hours: showQuotedHours,
         show_payment_schedule: showPaymentSchedule,
+        allow_white_label_view: isPartnerWork && allowWhiteLabelView,
         start_date: startDate || null,
         end_date: endDate || null,
         day_rate_override_gbp: dayRateOverride,
@@ -907,6 +917,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           include_vat: includeVat,
           show_quoted_hours: showQuotedHours,
           show_payment_schedule: showPaymentSchedule,
+          allow_white_label_view: isPartnerWork && allowWhiteLabelView,
           start_date: startDate || null,
           end_date: endDate || null,
           day_rate_override_gbp: dayRateOverride,
@@ -984,6 +995,61 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     }
   }
 
+  async function handleDuplicate() {
+    if (!sowId) return
+    setDuplicating(true)
+    try {
+      const result = await duplicateSowDocument(sowId)
+      if (result.error) {
+        toast.error('Could not duplicate SoW', { description: result.error })
+        return
+      }
+      if (result.document) {
+        toast.success('SoW duplicated')
+        router.push(`/sow/${result.document.id}`)
+      }
+    } finally {
+      setDuplicating(false)
+    }
+  }
+
+  async function handleComplete() {
+    if (!sowId || !confirm('Mark this statement of work as complete?')) return
+    setCompleting(true)
+    try {
+      const result = await completeSowDocument(sowId)
+      if (result.error) {
+        toast.error('Could not mark complete', { description: result.error })
+        return
+      }
+      toast.success('SoW marked complete')
+      await loadDocument(sowId)
+    } finally {
+      setCompleting(false)
+    }
+  }
+
+  async function handleWhiteLabelToggle(enabled: boolean) {
+    setAllowWhiteLabelView(enabled)
+    if (!sowId) return
+    const result = await setSowWhiteLabelView(sowId, enabled)
+    if ('error' in result && result.error) {
+      setAllowWhiteLabelView(!enabled)
+      toast.error('Could not update white-label view', { description: result.error })
+      return
+    }
+    if (!('error' in result) && document) {
+      setDocument({
+        ...document,
+        allow_white_label_view: result.allow_white_label_view ?? enabled,
+        white_label_day_rate_gbp: result.white_label_day_rate_gbp ?? null,
+      })
+    }
+    toast.success(
+      enabled ? 'White-label rates enabled on the share view' : 'White-label rates hidden on the share view'
+    )
+  }
+
   async function handleArchive() {
     if (!sowId || !confirm('Archive this statement of work?')) return
     const result = await archiveSowDocument(sowId)
@@ -999,7 +1065,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     if (!sowId) return
 
     const message =
-      document?.status === 'approved'
+      document?.status === 'approved' || document?.status === 'complete'
         ? 'Permanently delete this approved statement of work? This cannot be undone.'
         : 'Permanently delete this statement of work? This cannot be undone.'
 
@@ -1056,6 +1122,34 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           )}
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
+          {!isNew && (
+            <Button
+              variant="outline"
+              onClick={handleDuplicate}
+              disabled={duplicating}
+            >
+              {duplicating ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <CopyPlus className="mr-2 h-4 w-4" />
+              )}
+              Duplicate
+            </Button>
+          )}
+          {document?.status === 'approved' && (
+            <Button
+              variant="outline"
+              onClick={handleComplete}
+              disabled={completing}
+            >
+              {completing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+              )}
+              Mark complete
+            </Button>
+          )}
           {!isNew && (
             <Button
               variant="outline"
@@ -1941,6 +2035,23 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       </p>
                     )}
                   </div>
+
+                  {isPartnerWork && (
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <Label htmlFor="sow-white-label">Allow white-label rates on share view</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Lets the client switch from partner pricing to direct (white-label) rates.
+                          Off by default.
+                        </p>
+                      </div>
+                      <Switch
+                        id="sow-white-label"
+                        checked={allowWhiteLabelView}
+                        onCheckedChange={(checked) => void handleWhiteLabelToggle(checked)}
+                      />
+                    </div>
+                  )}
 
                   {hoursPerDayInput.trim() && !(parseFloat(hoursPerDayInput) > 0) && (
                     <p className="text-sm text-destructive">Enter hours per day greater than 0</p>

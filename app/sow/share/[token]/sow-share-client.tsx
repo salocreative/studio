@@ -16,13 +16,21 @@ import {
 } from '@/components/ui/table'
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { SaloLogo } from '@/components/brand/salo-logo'
+import { Switch } from '@/components/ui/switch'
 import {
   approveSowByToken,
   getSowByToken,
   rejectSowByToken,
   type PublicSowDocument,
 } from '@/app/actions/sow-public'
-import { getRateMultiplier, scaleForQuote, formatSowMoney, formatSowDate } from '@/lib/sow/calculations'
+import {
+  getRateMultiplier,
+  scaleForQuote,
+  formatSowMoney,
+  formatSowDate,
+  lineTotalAtDayRate,
+  computeSowTotalsAtDayRate,
+} from '@/lib/sow/calculations'
 import { cn } from '@/lib/utils'
 
 interface SowShareClientProps {
@@ -38,6 +46,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
   const [rejectionNotes, setRejectionNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [showRejectForm, setShowRejectForm] = useState(false)
+  const [showWhiteLabelRates, setShowWhiteLabelRates] = useState(false)
 
   async function loadDocument() {
     setLoading(true)
@@ -103,21 +112,46 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
   if (!document) return null
 
   const isApproved = document.status === 'approved'
+  const isComplete = document.status === 'complete'
   const isRejected = document.status === 'rejected'
-  const canRespond = !isApproved && !isRejected
+  const canRespond = !isApproved && !isRejected && !isComplete
   const showQuotedHours = document.show_quoted_hours ?? true
   const showPaymentSchedule = document.show_payment_schedule ?? true
   const currency = document.currency === 'USD' ? 'USD' : 'GBP'
   const fxRate = currency === 'GBP' ? 1 : Number(document.fx_rate) > 0 ? Number(document.fx_rate) : 1
   const money = (amountGbp: number) => formatSowMoney(amountGbp, currency, fxRate)
-  const rateMultiplier = getRateMultiplier(
-    Number(document.base_day_rate_gbp) || 0,
-    document.day_rate_override_gbp != null ? Number(document.day_rate_override_gbp) : null
-  )
-  const displayTotalHours = document.line_items.reduce(
-    (sum, item) => sum + scaleForQuote(Number(item.hours), rateMultiplier),
-    0
-  )
+  const canViewWhiteLabel =
+    document.customer_type === 'partner' &&
+    Boolean(document.allow_white_label_view) &&
+    Number(document.white_label_day_rate_gbp) > 0
+  const viewingWhiteLabel = canViewWhiteLabel && showWhiteLabelRates
+  const whiteLabelDayRate = Number(document.white_label_day_rate_gbp) || 0
+  const hoursPerDay = Number(document.hours_per_day) || 6
+  const whiteLabelTotals = viewingWhiteLabel
+    ? computeSowTotalsAtDayRate(
+        document.line_items,
+        document.include_vat,
+        hoursPerDay,
+        whiteLabelDayRate
+      )
+    : null
+  const rateMultiplier = viewingWhiteLabel
+    ? 1
+    : getRateMultiplier(
+        Number(document.base_day_rate_gbp) || 0,
+        document.day_rate_override_gbp != null ? Number(document.day_rate_override_gbp) : null
+      )
+  const displayTotalHours = viewingWhiteLabel
+    ? whiteLabelTotals?.total_hours ?? 0
+    : document.line_items.reduce(
+        (sum, item) => sum + scaleForQuote(Number(item.hours), rateMultiplier),
+        0
+      )
+  const displaySubtotal = whiteLabelTotals
+    ? whiteLabelTotals.subtotal_gbp
+    : Number(document.subtotal_gbp)
+  const displayVat = whiteLabelTotals ? whiteLabelTotals.vat_amount_gbp : Number(document.vat_amount_gbp)
+  const displayTotal = whiteLabelTotals ? whiteLabelTotals.total_gbp : Number(document.total_gbp)
 
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">
@@ -156,6 +190,20 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
           </Card>
         )}
 
+        {isComplete && (
+          <Card className="border-green-200 bg-green-50 dark:bg-green-950/20">
+            <CardContent className="pt-6 flex items-center gap-3">
+              <CheckCircle2 className="h-6 w-6 text-green-600" />
+              <div>
+                <p className="font-semibold text-green-800 dark:text-green-300">Complete</p>
+                <p className="text-sm text-green-700 dark:text-green-400">
+                  Work on this statement of work is finished
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {isRejected && (
           <Card className="border-destructive/30 bg-destructive/5">
             <CardContent className="pt-6 flex items-start gap-3">
@@ -182,6 +230,23 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            {canViewWhiteLabel && (
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label htmlFor="sow-white-label-view">Show white-label rates</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {showWhiteLabelRates
+                      ? 'Figures use Salo’s direct client day rate'
+                      : 'Figures currently use the partner rate'}
+                  </p>
+                </div>
+                <Switch
+                  id="sow-white-label-view"
+                  checked={showWhiteLabelRates}
+                  onCheckedChange={setShowWhiteLabelRates}
+                />
+              </div>
+            )}
             {document.notes && (
               <div className="rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
                 {document.notes}
@@ -240,7 +305,11 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                           </p>
                         )}
                         <p className="mt-1.5 text-sm font-medium sm:hidden">
-                          {money(Number(item.line_total_gbp))}
+                          {money(
+                            viewingWhiteLabel
+                              ? lineTotalAtDayRate(Number(item.hours), hoursPerDay, whiteLabelDayRate)
+                              : Number(item.line_total_gbp)
+                          )}
                         </p>
                       </TableCell>
                       {showQuotedHours && (
@@ -255,7 +324,11 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                         </TableCell>
                       )}
                       <TableCell className="hidden sm:table-cell text-right">
-                        {money(Number(item.line_total_gbp))}
+                        {money(
+                          viewingWhiteLabel
+                            ? lineTotalAtDayRate(Number(item.hours), hoursPerDay, whiteLabelDayRate)
+                            : Number(item.line_total_gbp)
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -271,17 +344,17 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
               )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
-                <span>{money(Number(document.subtotal_gbp))}</span>
+                <span>{money(displaySubtotal)}</span>
               </div>
               {document.include_vat && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">VAT (20%)</span>
-                  <span>{money(Number(document.vat_amount_gbp))}</span>
+                  <span>{money(displayVat)}</span>
                 </div>
               )}
               <div className="flex justify-between font-semibold text-base pt-2">
                 <span>Total</span>
-                <span>{money(Number(document.total_gbp))}</span>
+                <span>{money(displayTotal)}</span>
               </div>
               {showQuotedHours && (
                 <div className="flex justify-between text-muted-foreground">
@@ -297,7 +370,7 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 <div className="space-y-1.5 text-sm">
                   {document.payment_milestones!.map((milestone) => {
                     const amount =
-                      (Number(document.total_gbp) * Number(milestone.percentage)) / 100
+                      (displayTotal * Number(milestone.percentage)) / 100
                     return (
                       <div
                         key={milestone.id}

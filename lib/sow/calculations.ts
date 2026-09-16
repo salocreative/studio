@@ -50,6 +50,28 @@ export function computeLineItem(
   }
 }
 
+export function lineTotalAtDayRate(
+  hours: number,
+  hoursPerDay: number,
+  dayRateGbp: number
+): number {
+  const hourlyRate = hourlyRateFromQuoteRate(dayRateGbp, hoursPerDay)
+  return Math.round((Number(hours) || 0) * hourlyRate * 100) / 100
+}
+
+export function computeSowTotalsAtDayRate(
+  lineItems: Array<{ hours: number }>,
+  includeVat: boolean,
+  hoursPerDay: number,
+  dayRateGbp: number
+): SowTotals {
+  const priced = lineItems.map((item) => ({
+    hours: Number(item.hours) || 0,
+    line_total_gbp: lineTotalAtDayRate(item.hours, hoursPerDay, dayRateGbp),
+  }))
+  return computeSowTotals(priced, includeVat)
+}
+
 export function computeSowTotals(
   lineItems: Array<{ hours: number; line_total_gbp: number }>,
   includeVat: boolean

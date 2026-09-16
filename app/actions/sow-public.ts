@@ -89,7 +89,9 @@ export async function approveSowByToken(
       .single()
 
     if (!existing) return { error: 'Statement of work not found' }
-    if (existing.status === 'approved') return { error: 'This statement of work is already approved' }
+    if (existing.status === 'approved' || existing.status === 'complete') {
+      return { error: 'This statement of work is already approved' }
+    }
     if (existing.status === 'rejected') {
       return { error: 'This statement of work was declined. Contact Salo for a revised version.' }
     }
@@ -138,7 +140,7 @@ export async function rejectSowByToken(
       .single()
 
     if (!existing) return { error: 'Statement of work not found' }
-    if (existing.status === 'approved') {
+    if (existing.status === 'approved' || existing.status === 'complete') {
       return { error: 'This statement of work has already been approved' }
     }
 

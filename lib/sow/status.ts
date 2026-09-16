@@ -28,6 +28,12 @@ export function getClientApprovalStatus(
           : 'The client has approved this statement of work',
         tone: 'success',
       }
+    case 'complete':
+      return {
+        label: 'Complete',
+        description: 'Work on this statement of work is finished',
+        tone: 'success',
+      }
     case 'rejected':
       return {
         label: 'Client declined',
