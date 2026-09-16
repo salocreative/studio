@@ -1448,9 +1448,13 @@ export async function syncMondayData(
       // Check if project exists - use the pre-loaded record to preserve quoted_hours and quote_value for locked projects
       const existing = existingByItemId.get(project.id) ?? null
 
+      // Preserve historical fields on the first lock as well as later syncs. Moving a project to a
+      // completed board drops subitems in Monday, so parent quoted_hours is usually empty on that run.
+      const willLock = existing?.status === 'locked' || isCompleted || !!isFlexiDesignCompleted
+
       // For locked/completed projects, preserve existing quoted_hours if Monday doesn't provide it
       // This ensures historical budget data is maintained for reflection
-      const preserveQuotedHours = existing?.status === 'locked' && (!project.quoted_hours || project.quoted_hours === 0)
+      const preserveQuotedHours = willLock && existing && (!project.quoted_hours || project.quoted_hours === 0)
       const finalQuotedHours = preserveQuotedHours 
         ? (existing.quoted_hours || project.quoted_hours || null)
         : (project.quoted_hours || null)
@@ -1458,7 +1462,7 @@ export async function syncMondayData(
       // For locked projects, preserve the existing completed_date if Monday doesn't provide one.
       // Several historical items on completed boards never had the mapped date column filled in
       // on Monday's side, so without this a backfilled date gets wiped on the next sync.
-      const preserveCompletedDate = existing?.status === 'locked' && !project.completed_date
+      const preserveCompletedDate = willLock && existing && !project.completed_date
       const finalCompletedDate = preserveCompletedDate
         ? (existing.completed_date || project.completed_date || null)
         : (project.completed_date || null)
@@ -1476,7 +1480,7 @@ export async function syncMondayData(
 
       // For locked projects, preserve existing quote_value if we couldn't extract a new one
       // This ensures historical data is maintained
-      if (existing?.status === 'locked' && (!finalQuoteValue || finalQuoteValue === 0)) {
+      if (willLock && existing && (!finalQuoteValue || finalQuoteValue === 0)) {
         finalQuoteValue = existing.quote_value || null
         
         // If still no value and we have existing monday_data, try extracting from that
@@ -1563,10 +1567,9 @@ export async function syncMondayData(
         updated_at: new Date().toISOString(),
       }
 
-      // Locked (completed) projects rarely change. Skip the per-project subitem fetch and task
-      // writes unless this is a full resync, or the project has only just become locked this run.
-      const wasAlreadyLocked = existing?.status === 'locked'
-      const skipTaskSync = wasAlreadyLocked && finalStatus === 'locked' && !syncAllBoards
+      // Locked (completed) projects keep the task snapshot from when they were last active.
+      // Monday drops subitems on the completed-board move, so never fetch/write/delete tasks once locked.
+      const skipTaskSync = finalStatus === 'locked'
 
       return { project, existing, projectData, skipTaskSync, isLocked: finalStatus === 'locked' }
     })
@@ -1609,7 +1612,7 @@ export async function syncMondayData(
 
       for (const { project, existing, projectData, skipTaskSync, isLocked } of prepared) {
         // If Monday omitted this item from the subitems response, don't treat it as "no
-        // subitems" - skip task sync for this project rather than deleting its tasks as orphans.
+        // subitems" - skip task writes for this project rather than deleting its tasks as orphans.
         const mondayTasks = skipTaskSync ? undefined : tasksByItemId.get(project.id)
         const existingTasks = existing ? existingTasksByProjectId.get(existing.id) ?? [] : []
 
@@ -1669,8 +1672,8 @@ export async function syncMondayData(
         pending.push({ project, mondayTasks, existingTasks, taskRows })
       }
 
-      // Phase 4: write the chunk - one upsert for its projects, one for their tasks, one delete for
-      // the tasks that have gone from Monday.
+      // Phase 4: write the chunk - one upsert for its projects, one for their tasks, and (for
+      // active projects only) a delete for subitems that have gone from Monday.
       const projectIdByItemId = await upsertProjectRows(
         supabase,
         Array.from(projectRowByItemId.values())
@@ -1681,6 +1684,8 @@ export async function syncMondayData(
 
       for (const { project, mondayTasks, existingTasks, taskRows } of pending) {
         // No id means the project row failed to write; skip its tasks rather than orphan them.
+        // Locked projects skip task sync entirely, so mondayTasks is undefined and their
+        // subitems stay as they were when the project was last active.
         const projectId = projectIdByItemId.get(project.id)
         if (!projectId || mondayTasks === undefined) continue
 
@@ -1688,7 +1693,7 @@ export async function syncMondayData(
           taskRowByItemId.set(row.monday_item_id, { ...row, project_id: projectId })
         }
 
-        // Tasks in the DB but no longer in Monday, minus any that have time logged against them.
+        // Active projects: tasks in the DB but no longer in Monday, minus any that have time logged.
         const syncedMondayTaskIds = new Set(mondayTasks.map((t) => t.id))
         for (const existingTask of existingTasks) {
           if (

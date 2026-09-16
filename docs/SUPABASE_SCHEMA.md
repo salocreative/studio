@@ -699,12 +699,14 @@ The status is then:
 
 ### Locked-project preservation
 For projects on completed/locked boards, the sync **preserves** these historical fields when Monday wouldn't return them:
-- `quoted_hours` on both the project and its tasks (existing value retained if Monday no longer provides one).
+- `quoted_hours` on both the project and its tasks (existing value retained if Monday no longer provides one). This also applies on the **first** sync that locks a project, not only later runs.
 - `quote_value` on the project (existing value retained, and as a last resort re-extracted from existing `monday_data`).
 - `status = 'locked'` (never moves back to `active`/`lead`).
 
-### Orphaned task cleanup
-After syncing tasks for a project, any task in the DB that wasn't in the latest Monday response is deleted **only** if it has zero `time_entries`. Tasks with time entries are preserved to keep historical reporting intact (FK is `on delete restrict`).
+### Task retention
+While a project is **active**, sync upserts subitems Monday still has and deletes admin tasks that Monday no longer lists (unless they have time entries — those are kept because of `on delete restrict`).
+
+Once a project is **locked** (moved to a completed board), task sync is skipped entirely. The `monday_tasks` snapshot stays as it was on the last active sync, even though Monday drops subitems on that move. Tasks are removed only if the parent `monday_projects` row is deleted (`on delete cascade`). `avoid_deletion` (default on) still blocks that project prune.
 
 ---
 
@@ -749,7 +751,7 @@ These are the practical patterns you'll likely want when building a separate con
 - **`time_entries.date` is a `date`** (no timezone). All retainer/reporting code compares it as a plain `YYYY-MM-DD` string.
 - **Project status `'lead'` is real** — leads flow through the same `monday_projects` table. Filter on `status` if you want only billable work.
 - **`monday_projects.quoted_hours` is denormalised** from the child tasks' `quoted_hours`, not from Monday itself. For locked projects it's preserved on purpose, so older historical projects can show a sum that no longer matches the current Monday data.
-- **`avoid_deletion`** in `monday_sync_settings` is on by default, so syncing won't prune. If your tool expects "this project no longer exists in Monday → it should be gone here", you'll either have to detect this yourself (e.g. by `updated_at` going stale) or wait for an admin to disable safe mode.
+- **`avoid_deletion`** in `monday_sync_settings` is on by default, so syncing won't prune **projects**. Locked-project tasks are frozen even if Monday dropped the subitems; active-project tasks still follow Monday (except tasks with time logged). If your tool expects "this project no longer exists in Monday → it should be gone here", you'll either have to detect this yourself (e.g. by `updated_at` going stale) or wait for an admin to disable safe mode.
 - **`monday_data`** is JSONB and contains every column value with the raw type. It's the safety net for fields not yet promoted to typed columns.
 - **Share-link tables** (`retainer_share_links`, `flexi_design_share_links`, `time_report_share_links`) are not intended for direct anon reads — the app reads them with the service role and enforces `is_active` and `expires_at` in application code.
 - **`public.users.deleted_at`** is soft delete. Most RLS predicates filter it, and any reporting query should `where deleted_at is null` unless explicitly looking at history.
