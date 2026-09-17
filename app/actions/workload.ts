@@ -82,12 +82,16 @@ function isOpenTask(task: LiveTask) {
   return task.is_completed !== true
 }
 
+function isStuckProject(project: { monday_status?: string | null }) {
+  return /\bstuck\b/i.test(project.monday_status ?? '')
+}
+
 /**
  * Live-project workload per teammate.
  *
  * A project is on someone's plate if they are assigned to an open Monday subitem.
- * Completed tasks and speculative Flexi jobs are excluded. Bubble size is project
- * remaining hours (quoted minus logged), matching the timesheet.
+ * Completed tasks, speculative Flexi jobs, and Stuck projects are excluded. Bubble size
+ * is project remaining hours (quoted minus logged), matching the timesheet.
  */
 export async function getTeamWorkload(): Promise<
   { success: true; members: WorkloadMember[] } | { error: string }
@@ -135,7 +139,9 @@ export async function getTeamWorkload(): Promise<
           .range(from, to)
     )
 
-    const liveProjects = projects.filter((project) => !isSpeculativeProject(project))
+    const liveProjects = projects.filter(
+      (project) => !isSpeculativeProject(project) && !isStuckProject(project)
+    )
 
     if (liveProjects.length === 0) {
       return {
