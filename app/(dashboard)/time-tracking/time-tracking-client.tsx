@@ -320,6 +320,21 @@ export function TimeTrackingClient({ initial }: { initial: TimeTrackingInitialDa
     void loadProjects(boardType) // Refresh favourites and logged hours
   }
 
+  const handleProjectRemoved = (projectId: string) => {
+    setProjectsByBoard((prev) => {
+      const next: Partial<Record<BoardType, Project[]>> = { ...prev }
+      for (const board of ['main', 'flexi-design'] as BoardType[]) {
+        if (prev[board]) {
+          next[board] = prev[board]!.filter((project) => project.id !== projectId)
+        }
+      }
+      return next
+    })
+    setSelectedProject((current) => (current?.id === projectId ? null : current))
+    setSelectedTask(null)
+    setExistingTimeEntry(null)
+  }
+
   const handleQuickSync = async () => {
     setSyncing(true)
     setSyncProgress(0)
@@ -497,6 +512,8 @@ export function TimeTrackingClient({ initial }: { initial: TimeTrackingInitialDa
             loading={projectsLoading}
             boardType={boardType}
             onBoardTypeChange={setBoardType}
+            canRemoveProjects={isAdmin}
+            onProjectRemoved={handleProjectRemoved}
           />
         ) : (
           <CalendarView
@@ -515,6 +532,8 @@ export function TimeTrackingClient({ initial }: { initial: TimeTrackingInitialDa
             onBoardTypeChange={setBoardType}
             onTimeEntrySuccess={handleTimeEntrySuccess}
             targetUserId={selectedUserId}
+            canRemoveProjects={isAdmin}
+            onProjectRemoved={handleProjectRemoved}
           />
         )}
       </div>
@@ -573,6 +592,8 @@ function DailyView({
   loading,
   boardType,
   onBoardTypeChange,
+  canRemoveProjects = false,
+  onProjectRemoved,
 }: {
   selectedDate: Date
   onDateChange: (days: number) => void
@@ -588,6 +609,8 @@ function DailyView({
   loading: boolean
   boardType: 'main' | 'flexi-design'
   onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
+  canRemoveProjects?: boolean
+  onProjectRemoved?: (projectId: string) => void
 }) {
   return (
     <div className="space-y-6">
@@ -735,6 +758,8 @@ function DailyView({
         boardType={boardType}
         onBoardTypeChange={onBoardTypeChange}
         loading={loading}
+        canRemoveProjects={canRemoveProjects}
+        onProjectRemoved={onProjectRemoved}
       />
     </div>
   )
@@ -756,6 +781,8 @@ function CalendarView({
   onBoardTypeChange,
   onTimeEntrySuccess,
   targetUserId,
+  canRemoveProjects = false,
+  onProjectRemoved,
 }: {
   selectedDate: Date
   onDateSelect: (date: Date) => void
@@ -775,6 +802,8 @@ function CalendarView({
   onBoardTypeChange: (boardType: 'main' | 'flexi-design') => void
   onTimeEntrySuccess: () => void
   targetUserId?: string
+  canRemoveProjects?: boolean
+  onProjectRemoved?: (projectId: string) => void
 }) {
   const [showLogTimeDialog, setShowLogTimeDialog] = useState(false)
   const [calendarTask, setCalendarTask] = useState<Task | null>(null)
@@ -1114,6 +1143,8 @@ function CalendarView({
             onBoardTypeChange={onBoardTypeChange}
             hideClientFilters={true}
             loading={projectsLoading}
+            canRemoveProjects={canRemoveProjects}
+            onProjectRemoved={onProjectRemoved}
           />
         </DialogContent>
       </Dialog>

@@ -746,3 +746,69 @@ export async function toggleFavoriteTask(taskId: string) {
   }
 }
 
+/**
+ * Remove a leftover active project from timesheets. Admin only.
+ *
+ * Projects with time entries are archived (hidden from timesheets, kept for reporting).
+ * Projects with no time are deleted. Locked/completed projects cannot be removed here.
+ */
+export async function removeTimesheetProject(projectId: string) {
+  const { isAdmin } = await checkIsAdmin()
+  if (!isAdmin) {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const admin = await createAdminClient()
+  if (!admin) {
+    return { error: 'Admin client not available' }
+  }
+
+  try {
+    const { data: project, error: projectError } = await admin
+      .from('monday_projects')
+      .select('id, name, status')
+      .eq('id', projectId)
+      .maybeSingle()
+
+    if (projectError) throw projectError
+    if (!project) {
+      return { error: 'Project not found' }
+    }
+    if (project.status === 'locked') {
+      return { error: 'Completed projects cannot be removed from timesheets' }
+    }
+    if (project.status === 'archived') {
+      return { error: 'This project is already archived' }
+    }
+
+    const { data: timeEntries, error: timeError } = await admin
+      .from('time_entries')
+      .select('id')
+      .eq('project_id', projectId)
+      .limit(1)
+
+    if (timeError) throw timeError
+
+    if (timeEntries && timeEntries.length > 0) {
+      const { error: archiveError } = await admin
+        .from('monday_projects')
+        .update({ status: 'archived', updated_at: new Date().toISOString() })
+        .eq('id', projectId)
+
+      if (archiveError) throw archiveError
+      return { success: true, action: 'archived' as const, name: project.name }
+    }
+
+    const { error: deleteError } = await admin
+      .from('monday_projects')
+      .delete()
+      .eq('id', projectId)
+
+    if (deleteError) throw deleteError
+    return { success: true, action: 'deleted' as const, name: project.name }
+  } catch (error) {
+    console.error('Error removing timesheet project:', error)
+    return { error: toErrorMessage(error) }
+  }
+}
+

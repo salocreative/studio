@@ -5,9 +5,18 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { CheckCircle2, Search, Star, StarOff } from 'lucide-react'
-import { toggleFavoriteTask } from '@/app/actions/time-tracking'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { CheckCircle2, Search, Star, StarOff, Trash2 } from 'lucide-react'
+import { removeTimesheetProject, toggleFavoriteTask } from '@/app/actions/time-tracking'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 
 interface Task {
   id: string
@@ -38,6 +47,9 @@ interface ProjectTaskSelectorProps {
   hideClientFilters?: boolean
   /** Skeleton the project rows while `projects` is still being fetched. */
   loading?: boolean
+  /** Admin-only: show a control to archive or delete leftover projects. */
+  canRemoveProjects?: boolean
+  onProjectRemoved?: (projectId: string) => void
 }
 
 /** Widths vary per row so the placeholder reads as a list rather than a repeated stamp. */
@@ -51,11 +63,15 @@ export function ProjectTaskSelector({
   onBoardTypeChange,
   hideClientFilters = false,
   loading = false,
+  canRemoveProjects = false,
+  onProjectRemoved,
 }: ProjectTaskSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [favoritesOnly, setFavoritesOnly] = useState(showFavoritesOnly)
+  const [projectToRemove, setProjectToRemove] = useState<Project | null>(null)
+  const [removing, setRemoving] = useState(false)
 
   // Filter projects based on search query (but not client filter yet, for getting available clients)
   const searchFilteredProjects = useMemo(() => {
@@ -122,6 +138,29 @@ export function ProjectTaskSelector({
     event.stopPropagation()
     await toggleFavoriteTask(taskId)
     // Refresh will be handled by parent component
+  }
+
+  const handleConfirmRemove = async () => {
+    if (!projectToRemove) return
+    setRemoving(true)
+    try {
+      const result = await removeTimesheetProject(projectToRemove.id)
+      if ('error' in result && result.error) {
+        toast.error(result.error)
+        return
+      }
+      if ('action' in result && result.action === 'archived') {
+        toast.success(`Archived ${result.name}. It is hidden from timesheets but kept for reporting.`)
+      } else if ('action' in result) {
+        toast.success(`Deleted ${result.name} from admin.`)
+      }
+      onProjectRemoved?.(projectToRemove.id)
+      setProjectToRemove(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove project')
+    } finally {
+      setRemoving(false)
+    }
   }
 
   const uniqueClients = getUniqueClients()
@@ -245,29 +284,44 @@ export function ProjectTaskSelector({
                 key={project.id}
                 className="border rounded-lg overflow-hidden"
               >
-                <button
-                  onClick={() => toggleProject(project.id)}
-                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-accent transition-colors text-left"
-                >
-                  <div className="flex-1">
-                    <div className="font-medium">{project.name}</div>
-                    {project.client_name && (
-                      <div className="text-sm text-muted-foreground">
-                        {project.client_name}
-                      </div>
-                    )}
-                    {projectHoursById[project.id]?.estimatedHours > 0 && (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {projectHoursById[project.id].remainingHours === projectHoursById[project.id].estimatedHours
-                          ? `${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`
-                          : `${projectHoursById[project.id].remainingHours.toFixed(1)}h remaining / ${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`}
-                      </div>
-                    )}
-                  </div>
-                  <Badge variant="secondary">
-                    {project.tasks.length} task{project.tasks.length !== 1 ? 's' : ''}
-                  </Badge>
-                </button>
+                <div className="flex items-stretch">
+                  <button
+                    onClick={() => toggleProject(project.id)}
+                    className="flex-1 px-4 py-3 flex items-center justify-between hover:bg-accent transition-colors text-left min-w-0"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium">{project.name}</div>
+                      {project.client_name && (
+                        <div className="text-sm text-muted-foreground">
+                          {project.client_name}
+                        </div>
+                      )}
+                      {projectHoursById[project.id]?.estimatedHours > 0 && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {projectHoursById[project.id].remainingHours === projectHoursById[project.id].estimatedHours
+                            ? `${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`
+                            : `${projectHoursById[project.id].remainingHours.toFixed(1)}h remaining / ${projectHoursById[project.id].estimatedHours.toFixed(1)}h estimated`}
+                        </div>
+                      )}
+                    </div>
+                    <Badge variant="secondary">
+                      {project.tasks.length} task{project.tasks.length !== 1 ? 's' : ''}
+                    </Badge>
+                  </button>
+                  {canRemoveProjects && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-auto w-10 shrink-0 rounded-none text-muted-foreground hover:text-destructive"
+                      title="Remove leftover project from timesheets"
+                      onClick={() => setProjectToRemove(project)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      <span className="sr-only">Remove {project.name}</span>
+                    </Button>
+                  )}
+                </div>
 
                 {expandedProjects.has(project.id) && (
                   <div className="border-t bg-muted/30">
@@ -326,6 +380,37 @@ export function ProjectTaskSelector({
           )}
         </div>
       </div>
+
+      <Dialog open={projectToRemove != null} onOpenChange={(open) => { if (!open && !removing) setProjectToRemove(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove from timesheets?</DialogTitle>
+            <DialogDescription>
+              {projectToRemove
+                ? `Remove "${projectToRemove.name}"${projectToRemove.client_name ? ` (${projectToRemove.client_name})` : ''} from timesheets. If anyone has logged time it will be archived for reporting; otherwise it will be deleted from admin. A later sync will only bring it back if the job still exists on Monday.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setProjectToRemove(null)}
+              disabled={removing}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmRemove()}
+              disabled={removing}
+            >
+              {removing ? 'Removing...' : 'Remove'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
