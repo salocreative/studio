@@ -13,6 +13,7 @@ import {
 } from '@/lib/monday/column-extract'
 import { findMappingColumnId, type ColumnMappingRow } from '@/lib/monday/mapping-resolver'
 import { getTaskCompletionFromStatus } from '@/lib/monday/task-completion'
+import { parseMondayPersonIds } from '@/lib/monday/people'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 
@@ -962,15 +963,9 @@ function parseSubitemsForItem(
       // Try to find assigned users (people column)
       for (const col of subitem.column_values) {
         if (col.type === 'people' && col.value) {
-          try {
-            const value = JSON.parse(col.value)
-            if (Array.isArray(value.personIds)) {
-              assigned_user_ids = value.personIds
-            } else if (Array.isArray(value)) {
-              assigned_user_ids = value.map((v: any) => v.personId || v.id || v).filter(Boolean)
-            }
-          } catch {
-            // Ignore parsing errors
+          const ids = parseMondayPersonIds(col.value)
+          if (ids.length > 0) {
+            assigned_user_ids = [...new Set([...(assigned_user_ids || []), ...ids])]
           }
         }
       }

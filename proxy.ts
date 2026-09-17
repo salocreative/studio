@@ -66,6 +66,7 @@ export async function proxy(request: NextRequest) {
     if (!authError) {
       // Protect dashboard routes (but not public share routes)
       if ((request.nextUrl.pathname.startsWith('/time-tracking') ||
+          request.nextUrl.pathname.startsWith('/workload') ||
           request.nextUrl.pathname.startsWith('/projects') ||
           request.nextUrl.pathname.startsWith('/flexi-design') ||
           request.nextUrl.pathname.startsWith('/performance') ||

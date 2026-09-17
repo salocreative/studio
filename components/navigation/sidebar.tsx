@@ -16,7 +16,8 @@ import {
   Calculator,
   Target,
   FileText,
-  ScrollText
+  ScrollText,
+  Layers
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -42,6 +43,12 @@ export const navigation: NavItem[] = [
     title: 'Time Tracking',
     href: '/time-tracking',
     icon: Clock,
+    roles: ['admin', 'designer', 'manager'],
+  },
+  {
+    title: 'Workload',
+    href: '/workload',
+    icon: Layers,
     roles: ['admin', 'designer', 'manager'],
   },
   {
