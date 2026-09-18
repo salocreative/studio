@@ -35,7 +35,14 @@ function CompletedRow({ item }: { item: WorkloadCompletedItem }) {
 
   return (
     <li className="flex gap-3 border-b py-3 last:border-b-0 last:pb-0">
-      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+      <Check
+        className={
+          item.is_internal
+            ? 'mt-0.5 h-4 w-4 shrink-0 text-[#6405FF]'
+            : 'mt-0.5 h-4 w-4 shrink-0 text-[rgb(80,140,196)]'
+        }
+        aria-hidden="true"
+      />
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="truncate font-medium leading-tight">{item.name}</div>
         {detail ? <div className="truncate text-xs text-muted-foreground">{detail}</div> : null}
