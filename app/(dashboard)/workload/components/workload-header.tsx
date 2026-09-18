@@ -7,8 +7,8 @@ export function WorkloadHeader({ children }: { children?: ReactNode }) {
         <div>
           <h1 className="text-2xl font-semibold">Workload</h1>
           <p className="text-sm text-muted-foreground">
-            Live projects on each person&apos;s plate. Size is remaining hours; opacity is
-            progress. Ranked priorities sit below.
+            Live projects on each person&apos;s plate. Size is remaining hours on their
+            assigned subitems; opacity is progress. Ranked priorities sit below.
           </p>
         </div>
         {children}

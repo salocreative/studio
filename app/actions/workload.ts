@@ -4,7 +4,7 @@ import { addDays, format, parseISO } from 'date-fns'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getMondayBoardConfig } from '@/lib/monday/board-helpers'
 import { isSpeculativeProject } from '@/lib/flexi-design/speculative'
-import { peopleFromMondayData, normalisePersonName } from '@/lib/monday/people'
+import { peopleFromMondayData, normalisePersonName, mondayAssigneeCount } from '@/lib/monday/people'
 import { scoreWorkloadPriority, sortPriorityItems, type WorkloadPriorityItem } from '@/lib/workload/priority'
 
 const SALO_CREATIVE = 'salo creative'
@@ -212,9 +212,11 @@ function leadStatusAllowed(
  *
  * A project is on someone's plate if they are assigned to an open Monday subitem.
  * Leads appear when a teammate is named on the lead (or its subitems). Completed tasks,
- * speculative Flexi jobs, and Stuck projects are excluded. Bubble size is project remaining
- * hours (quoted minus logged), matching the timesheet; lead bubbles use quoted hours.
- * Recently completed covers shipped projects and finished subitems from the last two weeks.
+ * speculative Flexi jobs, and Stuck projects are excluded. Bubble size is remaining hours
+ * on that person's assigned subitems, not the whole job. Shared subitems split quoted
+ * hours equally across everyone named on the task. Lead bubbles use the same subitem split
+ * when the lead has quoted subitems. Recently completed covers shipped projects and finished
+ * subitems from the last two weeks.
  */
 export async function getTeamWorkload(): Promise<
   { success: true; members: WorkloadMember[] } | { error: string }
@@ -333,16 +335,19 @@ export async function getTeamWorkload(): Promise<
           .range(from, to)
     )
 
+    const hoursProjectIds = [...new Set([...liveProjectIds, ...leadProjectIds])]
     const timeEntries =
-      liveProjectIds.length === 0
+      hoursProjectIds.length === 0
         ? []
         : await fetchByIdChunks<{
+            task_id: string
+            user_id: string
             project_id: string
             hours: number
-          }>(liveProjectIds, (idChunk, from, to) =>
+          }>(hoursProjectIds, (idChunk, from, to) =>
             supabase
               .from('time_entries')
-              .select('project_id, hours')
+              .select('task_id, user_id, project_id, hours')
               .in('project_id', idChunk)
               .range(from, to)
           )
@@ -375,6 +380,7 @@ export async function getTeamWorkload(): Promise<
     }
 
     const assignedTaskIdsByUserProject = new Map<string, Set<string>>()
+    const allocatedByUserProject = new Map<string, number>()
     const completedByMember = new Map<string, WorkloadCompletedItem[]>()
     const leadAssignees = new Map<string, Set<string>>()
 
@@ -397,16 +403,39 @@ export async function getTeamWorkload(): Promise<
         const assigned = leadAssignees.get(task.project_id) ?? new Set<string>()
         for (const studioId of studioIds) assigned.add(studioId)
         leadAssignees.set(task.project_id, assigned)
+        if (isOpenTask(task)) {
+          const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : 0
+          const headcount = Math.max(
+            studioIds.length,
+            mondayAssigneeCount(task.monday_data, task.assigned_user_ids)
+          )
+          const share = quotedHours / headcount
+          for (const studioId of studioIds) {
+            const key = `${studioId}:${task.project_id}`
+            if (!assignedTaskIdsByUserProject.has(key)) {
+              assignedTaskIdsByUserProject.set(key, new Set())
+            }
+            assignedTaskIdsByUserProject.get(key)!.add(task.id)
+            allocatedByUserProject.set(key, (allocatedByUserProject.get(key) || 0) + share)
+          }
+        }
         continue
       }
 
       if (isOpenTask(task) && liveProjectIdSet.has(task.project_id)) {
+        const quotedHours = task.quoted_hours ? Number(task.quoted_hours) : 0
+        const headcount = Math.max(
+          studioIds.length,
+          mondayAssigneeCount(task.monday_data, task.assigned_user_ids)
+        )
+        const share = quotedHours / headcount
         for (const studioId of studioIds) {
           const key = `${studioId}:${task.project_id}`
           if (!assignedTaskIdsByUserProject.has(key)) {
             assignedTaskIdsByUserProject.set(key, new Set())
           }
           assignedTaskIdsByUserProject.get(key)!.add(task.id)
+          allocatedByUserProject.set(key, (allocatedByUserProject.get(key) || 0) + share)
         }
       }
 
@@ -452,6 +481,14 @@ export async function getTeamWorkload(): Promise<
       }
     }
 
+    const loggedByUserProject = new Map<string, number>()
+    for (const entry of timeEntries) {
+      const key = `${entry.user_id}:${entry.project_id}`
+      const assignedTaskIds = assignedTaskIdsByUserProject.get(key)
+      if (!assignedTaskIds || !assignedTaskIds.has(entry.task_id)) continue
+      loggedByUserProject.set(key, (loggedByUserProject.get(key) || 0) + (Number(entry.hours) || 0))
+    }
+
     const taskById = new Map(tasks.map((task) => [task.id, task]))
     const timelinesByProject = new Map<string, Array<{ start: string | null; end: string | null }>>()
     for (const task of tasks) {
@@ -469,14 +506,9 @@ export async function getTeamWorkload(): Promise<
         const assignedTaskIds = assignedTaskIdsByUserProject.get(`${member.id}:${project.id}`)
         if (!assignedTaskIds || assignedTaskIds.size === 0) continue
 
-        const taskQuoted = quotedByProject[project.id] || 0
-        const quotedHours =
-          taskQuoted > 0
-            ? taskQuoted
-            : project.quoted_hours
-              ? Number(project.quoted_hours)
-              : 0
-        const loggedHours = loggedByProject[project.id] || 0
+        const allocationKey = `${member.id}:${project.id}`
+        const quotedHours = allocatedByUserProject.get(allocationKey) || 0
+        const loggedHours = loggedByUserProject.get(allocationKey) || 0
         const hours = quotedHours > 0 ? Math.max(0, quotedHours - loggedHours) : 0
         const progress =
           quotedHours > 0
@@ -484,6 +516,9 @@ export async function getTeamWorkload(): Promise<
             : loggedHours > 0
               ? 1
               : 0
+
+        const projectQuoted = quotedByProject[project.id] || (project.quoted_hours ? Number(project.quoted_hours) : 0)
+        const projectLogged = loggedByProject[project.id] || 0
 
         projectsOnPlate.push({
           id: project.id,
@@ -508,8 +543,8 @@ export async function getTeamWorkload(): Promise<
             name: project.name,
             client_name: project.client_name,
             hours,
-            quotedHours,
-            loggedHours,
+            quotedHours: projectQuoted,
+            loggedHours: projectLogged,
             isInternal: isInternalJob(project),
             mondayStatus: project.monday_status,
             mondayData: project.monday_data,
@@ -529,15 +564,31 @@ export async function getTeamWorkload(): Promise<
         }
         if (!assigned.has(member.id)) continue
 
-        const quotedHours = lead.quoted_hours ? Number(lead.quoted_hours) : 0
+        const allocationKey = `${member.id}:${lead.id}`
+        const fromSubitems = allocatedByUserProject.get(allocationKey) || 0
+        const quotedHours =
+          fromSubitems > 0
+            ? fromSubitems
+            : lead.quoted_hours
+              ? Number(lead.quoted_hours) / Math.max(assigned.size, 1)
+              : 0
+        const loggedHours = loggedByUserProject.get(allocationKey) || 0
+        const hours = quotedHours > 0 ? Math.max(0, quotedHours - loggedHours) : 0
+        const progress =
+          quotedHours > 0
+            ? Math.min(1, Math.max(0, loggedHours / quotedHours))
+            : loggedHours > 0
+              ? 1
+              : 0
+
         projectsOnPlate.push({
           id: lead.id,
           name: lead.name,
           client_name: lead.client_name,
-          hours: quotedHours,
+          hours,
           quoted_hours: quotedHours,
-          logged_hours: 0,
-          progress: 0,
+          logged_hours: loggedHours,
+          progress,
           is_internal: isInternalJob(lead),
           is_lead: true,
         })

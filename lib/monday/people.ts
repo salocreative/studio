@@ -72,6 +72,17 @@ export function peopleFromMondayData(mondayData: Record<string, unknown> | null 
   return { ids: uniqueIds(ids), names: [...new Set(names)] }
 }
 
+/** How many people Monday lists on the item; used to split quoted hours on shared subitems. */
+export function mondayAssigneeCount(
+  mondayData: Record<string, unknown> | null | undefined,
+  assignedUserIds?: string[] | null
+): number {
+  const fromData = peopleFromMondayData(mondayData)
+  const storedIds = (assignedUserIds || []).map(String).filter(Boolean)
+  const mondayIds = fromData.ids.length > 0 ? fromData.ids : storedIds
+  return Math.max(mondayIds.length, fromData.names.length, 1)
+}
+
 function personIdFromUnknown(entry: unknown): string | null {
   if (entry == null) return null
   if (typeof entry === 'string' || typeof entry === 'number') return String(entry)

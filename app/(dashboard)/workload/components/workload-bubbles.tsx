@@ -166,15 +166,17 @@ export function WorkloadBubbles({
           {hovered.is_lead ? (
             <div className="mt-1 text-slate-300">
               {hovered.quoted_hours > 0
-                ? `${formatHours(hovered.quoted_hours)} quoted`
-                : 'No hours quoted'}
+                ? `${formatHours(hovered.hours)} remaining of ${formatHours(hovered.quoted_hours)} allocated`
+                : hovered.hours > 0
+                  ? `${formatHours(hovered.hours)} logged`
+                  : 'No hours quoted'}
               {' · Lead'}
             </div>
           ) : (
             <>
               <div className="mt-1 text-slate-300">
                 {hovered.quoted_hours > 0
-                  ? `${formatHours(hovered.hours)} remaining of ${formatHours(hovered.quoted_hours)}`
+                  ? `${formatHours(hovered.hours)} remaining of ${formatHours(hovered.quoted_hours)} allocated`
                   : `${formatHours(hovered.hours)} logged`}
                 {hovered.is_internal ? ' · Internal' : ''}
               </div>
