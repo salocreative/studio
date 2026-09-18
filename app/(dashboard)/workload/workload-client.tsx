@@ -2,6 +2,8 @@
 
 import { Card } from '@/components/ui/card'
 import { WorkloadBubbles } from './components/workload-bubbles'
+import { WorkloadCompleted } from './components/workload-completed'
+import { WorkloadPriorities } from './components/workload-priorities'
 import type { WorkloadMember } from '@/app/actions/workload'
 
 function formatHours(hours: number) {
@@ -29,32 +31,36 @@ export function WorkloadClient({ members }: { members: WorkloadMember[] }) {
   )
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      {members.map((member) => {
-        const projectCount = member.projects.length
-        return (
-          <Card
-            key={member.id}
-            className="relative overflow-hidden rounded-xl border-slate-800 bg-slate-950 py-0 text-white shadow-sm"
-          >
-            <div className="pointer-events-none absolute left-6 top-6 z-10">
-              <h2 className="text-base font-semibold tracking-tight">{memberName(member)}</h2>
-              <p className="text-sm text-slate-400">
-                {projectCount} project{projectCount === 1 ? '' : 's'} · {formatHours(member.total_hours)}
-              </p>
-            </div>
-            <div className="h-[320px] w-full">
-              {projectCount === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                  Nothing on their plate
-                </div>
-              ) : (
-                <WorkloadBubbles projects={member.projects} valueScaleMax={valueScaleMax} />
-              )}
-            </div>
-          </Card>
-        )
-      })}
+    <div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {members.map((member) => {
+          const projectCount = member.projects.length
+          return (
+            <Card
+              key={member.id}
+              className="relative overflow-hidden rounded-xl border-slate-800 bg-slate-950 py-0 text-white shadow-sm"
+            >
+              <div className="pointer-events-none absolute left-6 top-6 z-10">
+                <h2 className="text-base font-semibold tracking-tight">{memberName(member)}</h2>
+                <p className="text-sm text-slate-400">
+                  {projectCount} project{projectCount === 1 ? '' : 's'} · {formatHours(member.total_hours)}
+                </p>
+              </div>
+              <div className="h-[320px] w-full">
+                {projectCount === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                    Nothing on their plate
+                  </div>
+                ) : (
+                  <WorkloadBubbles projects={member.projects} valueScaleMax={valueScaleMax} />
+                )}
+              </div>
+            </Card>
+          )
+        })}
+      </div>
+      <WorkloadPriorities members={members} />
+      <WorkloadCompleted members={members} />
     </div>
   )
 }
