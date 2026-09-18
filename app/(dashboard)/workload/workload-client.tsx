@@ -23,13 +23,12 @@ function memberName(member: WorkloadMember) {
 }
 
 function withLeadVisibility(members: WorkloadMember[], showLeads: boolean): WorkloadMember[] {
-  if (showLeads) return members
   return members.map((member) => {
-    const projects = member.projects.filter((project) => !project.is_lead)
+    const projects = showLeads ? member.projects : member.projects.filter((project) => !project.is_lead)
     return {
       ...member,
       projects,
-      weeks: visibleWeekPeaks(member.weeks, false),
+      weeks: visibleWeekPeaks(member.weeks, showLeads),
       total_hours: projects.reduce((sum, project) => sum + project.hours, 0),
     }
   })

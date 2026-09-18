@@ -9,6 +9,7 @@ export function WorkloadHeader({ children }: { children?: ReactNode }) {
           <p className="text-sm text-muted-foreground">
             Live projects on each person&apos;s plate. Size is remaining hours on their
             assigned subitems; bars are how busy they are this week and the next two.
+            Leads add three more weeks.
           </p>
         </div>
         {children}

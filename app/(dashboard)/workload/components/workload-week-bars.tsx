@@ -34,7 +34,15 @@ export function WorkloadWeekBars({ weeks }: { weeks: WorkloadWeekPeak[] }) {
 
   return (
     <div className="absolute bottom-5 left-6 z-10">
-      <div className="flex items-end gap-1.5" role="img" aria-label="Workload this week and the next two">
+      <div
+        className="flex items-end gap-1.5"
+        role="img"
+        aria-label={
+          weeks.length > 3
+            ? 'Workload this week and the next five'
+            : 'Workload this week and the next two'
+        }
+      >
         {weeks.map((week) => {
           const load = loadRatio(week)
           const fillPct = Math.min(100, load * 100)

@@ -231,8 +231,8 @@ function leadStatusAllowed(
  * on that person's assigned subitems, not the whole job. Shared subitems split quoted
  * hours equally across everyone named on the task. Lead bubbles use the same subitem split
  * when the lead has quoted subitems. Weekly bars spread remaining dated hours across this week
- * and the next two, against each person's capacity. Recently completed covers shipped projects
- * and finished subitems from the last two weeks.
+ * and the next two, against each person's capacity; turning leads on adds three further weeks.
+ * Recently completed covers shipped projects and finished subitems from the last two weeks.
  */
 export async function getTeamWorkload(): Promise<
   { success: true; members: WorkloadMember[] } | { error: string }

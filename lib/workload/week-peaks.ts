@@ -3,6 +3,7 @@ import { weekdayDatesInRange } from '@/lib/holidays/working-days'
 import { expectedHoursPerDay } from '@/lib/time-tracking/status'
 
 export const WEEK_PEAK_COUNT = 3
+export const WEEK_PEAK_COUNT_WITH_LEADS = 6
 
 export type WorkloadWeekPeak = {
   weekStart: string
@@ -16,7 +17,7 @@ export type WorkloadWeekPeak = {
 
 export function workloadWeekStarts(today: string): string[] {
   const monday = startOfWeek(parseISO(today), { weekStartsOn: 1 })
-  return Array.from({ length: WEEK_PEAK_COUNT }, (_, offset) =>
+  return Array.from({ length: WEEK_PEAK_COUNT_WITH_LEADS }, (_, offset) =>
     format(addDays(monday, offset * 7), 'yyyy-MM-dd')
   )
 }
@@ -107,7 +108,8 @@ export function emptyWeekPeaks(
 }
 
 export function visibleWeekPeaks(weeks: WorkloadWeekPeak[], showLeads: boolean): WorkloadWeekPeak[] {
-  return weeks.map((week) => ({
+  const visible = showLeads ? weeks : weeks.slice(0, WEEK_PEAK_COUNT)
+  return visible.map((week) => ({
     ...week,
     hours: showLeads ? week.liveHours + week.leadHours : week.liveHours,
   }))
