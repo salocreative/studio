@@ -8,7 +8,9 @@ import { WorkloadCompleted } from './components/workload-completed'
 import { WorkloadHeader } from './components/workload-header'
 import { WorkloadLegend } from './components/workload-legend'
 import { WorkloadPriorities } from './components/workload-priorities'
+import { WorkloadWeekBars } from './components/workload-week-bars'
 import type { WorkloadMember } from '@/app/actions/workload'
+import { visibleWeekPeaks } from '@/lib/workload/week-peaks'
 
 function formatHours(hours: number) {
   const rounded = Math.round(hours)
@@ -27,6 +29,7 @@ function withLeadVisibility(members: WorkloadMember[], showLeads: boolean): Work
     return {
       ...member,
       projects,
+      weeks: visibleWeekPeaks(member.weeks, false),
       total_hours: projects.reduce((sum, project) => sum + project.hours, 0),
     }
   })
@@ -76,6 +79,7 @@ export function WorkloadClient({ members }: { members: WorkloadMember[] }) {
                         {projectCount} project{projectCount === 1 ? '' : 's'} · {formatHours(member.total_hours)}
                       </p>
                     </div>
+                    <WorkloadWeekBars weeks={member.weeks} />
                     <div className="h-[320px] w-full">
                       {projectCount === 0 ? (
                         <div className="flex h-full items-center justify-center text-sm text-slate-500">

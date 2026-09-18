@@ -6,6 +6,15 @@ import { getMondayBoardConfig } from '@/lib/monday/board-helpers'
 import { isSpeculativeProject } from '@/lib/flexi-design/speculative'
 import { peopleFromMondayData, normalisePersonName, mondayAssigneeCount } from '@/lib/monday/people'
 import { scoreWorkloadPriority, sortPriorityItems, type WorkloadPriorityItem } from '@/lib/workload/priority'
+import { buildLeaveFractionByUserDate, loadCapacityReducingLeave } from '@/lib/holidays/working-days'
+import {
+  allocateHoursToWeeks,
+  emptyWeekPeaks,
+  remainingTimelineDays,
+  workloadHorizonEnd,
+  workloadWeekStarts,
+  type WorkloadWeekPeak,
+} from '@/lib/workload/week-peaks'
 
 const SALO_CREATIVE = 'salo creative'
 
@@ -43,6 +52,7 @@ function isInternalJob(project: { client_name: string | null; agency: string | n
 }
 
 export type { WorkloadPriorityItem, WorkloadPriorityFlag, WorkloadPace } from '@/lib/workload/priority'
+export type { WorkloadWeekPeak } from '@/lib/workload/week-peaks'
 
 export type WorkloadProject = {
   id: string
@@ -74,6 +84,7 @@ export type WorkloadMember = {
   projects: WorkloadProject[]
   priorities: WorkloadPriorityItem[]
   completed: WorkloadCompletedItem[]
+  weeks: WorkloadWeekPeak[]
   total_hours: number
 }
 
@@ -153,7 +164,10 @@ function inDateWindow(value: string | null | undefined, since: string, until: st
   return Boolean(day && day >= since && day <= until)
 }
 
-function emptyMember(member: { id: string; full_name: string | null; email: string }): WorkloadMember {
+function emptyMember(
+  member: { id: string; full_name: string | null; email: string },
+  weeks: WorkloadWeekPeak[] = []
+): WorkloadMember {
   return {
     id: member.id,
     full_name: member.full_name,
@@ -161,6 +175,7 @@ function emptyMember(member: { id: string; full_name: string | null; email: stri
     projects: [],
     priorities: [],
     completed: [],
+    weeks,
     total_hours: 0,
   }
 }
@@ -215,8 +230,9 @@ function leadStatusAllowed(
  * speculative Flexi jobs, and Stuck projects are excluded. Bubble size is remaining hours
  * on that person's assigned subitems, not the whole job. Shared subitems split quoted
  * hours equally across everyone named on the task. Lead bubbles use the same subitem split
- * when the lead has quoted subitems. Recently completed covers shipped projects and finished
- * subitems from the last two weeks.
+ * when the lead has quoted subitems. Weekly bars spread remaining dated hours across this week
+ * and the next two, against each person's capacity. Recently completed covers shipped projects
+ * and finished subitems from the last two weeks.
  */
 export async function getTeamWorkload(): Promise<
   { success: true; members: WorkloadMember[] } | { error: string }
@@ -240,7 +256,7 @@ export async function getTeamWorkload(): Promise<
 
     const { data: users, error: usersError } = await adminClient
       .from('users')
-      .select('id, full_name, email, monday_user_id')
+      .select('id, full_name, email, monday_user_id, expected_utilization_percentage')
       .eq('exclude_from_utilization', false)
       .is('deleted_at', null)
       .order('full_name', { ascending: true, nullsFirst: false })
@@ -255,6 +271,21 @@ export async function getTeamWorkload(): Promise<
     const today = todayInUk()
     const completedSince = shiftIsoDate(today, -COMPLETED_LOOKBACK_DAYS)
     const completedTaskUntil = shiftIsoDate(today, COMPLETED_TASK_AHEAD_DAYS)
+    const weekStarts = workloadWeekStarts(today)
+    const leaveByUserDate = buildLeaveFractionByUserDate(
+      await loadCapacityReducingLeave(adminClient, today, workloadHorizonEnd(weekStarts))
+    )
+    const weeksByMember = new Map(
+      team.map((member) => [
+        member.id,
+        emptyWeekPeaks(
+          weekStarts,
+          today,
+          member.expected_utilization_percentage,
+          leaveByUserDate[member.id] || {}
+        ),
+      ])
+    )
 
     const projects = boardIds.length
       ? await fetchByIdChunks<LiveProject>(
@@ -319,7 +350,10 @@ export async function getTeamWorkload(): Promise<
     const taskProjectIds = [...new Set([...liveProjectIds, ...completedProjectIds, ...leadProjectIds])]
 
     if (taskProjectIds.length === 0) {
-      return { success: true, members: team.map(emptyMember) }
+      return {
+        success: true,
+        members: team.map((member) => emptyMember(member, weeksByMember.get(member.id))),
+      }
     }
 
     const tasks = await fetchByIdChunks<LiveTask>(
@@ -383,6 +417,14 @@ export async function getTeamWorkload(): Promise<
     const allocatedByUserProject = new Map<string, number>()
     const completedByMember = new Map<string, WorkloadCompletedItem[]>()
     const leadAssignees = new Map<string, Set<string>>()
+    const peakAssignments: Array<{
+      studioId: string
+      taskId: string
+      share: number
+      isLead: boolean
+      timelineStart: string | null
+      timelineEnd: string | null
+    }> = []
 
     const pushCompleted = (memberId: string, item: WorkloadCompletedItem) => {
       const list = completedByMember.get(memberId) ?? []
@@ -417,6 +459,14 @@ export async function getTeamWorkload(): Promise<
             }
             assignedTaskIdsByUserProject.get(key)!.add(task.id)
             allocatedByUserProject.set(key, (allocatedByUserProject.get(key) || 0) + share)
+            peakAssignments.push({
+              studioId,
+              taskId: task.id,
+              share,
+              isLead: true,
+              timelineStart: task.timeline_start,
+              timelineEnd: task.timeline_end,
+            })
           }
         }
         continue
@@ -436,6 +486,14 @@ export async function getTeamWorkload(): Promise<
           }
           assignedTaskIdsByUserProject.get(key)!.add(task.id)
           allocatedByUserProject.set(key, (allocatedByUserProject.get(key) || 0) + share)
+          peakAssignments.push({
+            studioId,
+            taskId: task.id,
+            share,
+            isLead: false,
+            timelineStart: task.timeline_start,
+            timelineEnd: task.timeline_end,
+          })
         }
       }
 
@@ -482,11 +540,35 @@ export async function getTeamWorkload(): Promise<
     }
 
     const loggedByUserProject = new Map<string, number>()
+    const loggedByUserTask = new Map<string, number>()
     for (const entry of timeEntries) {
-      const key = `${entry.user_id}:${entry.project_id}`
-      const assignedTaskIds = assignedTaskIdsByUserProject.get(key)
+      const projectKey = `${entry.user_id}:${entry.project_id}`
+      const assignedTaskIds = assignedTaskIdsByUserProject.get(projectKey)
       if (!assignedTaskIds || !assignedTaskIds.has(entry.task_id)) continue
-      loggedByUserProject.set(key, (loggedByUserProject.get(key) || 0) + (Number(entry.hours) || 0))
+      const hours = Number(entry.hours) || 0
+      loggedByUserProject.set(projectKey, (loggedByUserProject.get(projectKey) || 0) + hours)
+      const taskKey = `${entry.user_id}:${entry.task_id}`
+      loggedByUserTask.set(taskKey, (loggedByUserTask.get(taskKey) || 0) + hours)
+    }
+
+    for (const assignment of peakAssignments) {
+      if (!assignment.timelineStart && !assignment.timelineEnd) continue
+      const logged = loggedByUserTask.get(`${assignment.studioId}:${assignment.taskId}`) || 0
+      const remaining = assignment.share > 0 ? Math.max(0, assignment.share - logged) : 0
+      if (remaining <= 0) continue
+
+      const days = remainingTimelineDays(assignment.timelineStart, assignment.timelineEnd, today)
+      const buckets = allocateHoursToWeeks(remaining, days, weekStarts)
+      const weeks = weeksByMember.get(assignment.studioId)
+      if (!weeks) continue
+      for (let index = 0; index < buckets.length; index++) {
+        if (assignment.isLead) {
+          weeks[index].leadHours += buckets[index]
+        } else {
+          weeks[index].liveHours += buckets[index]
+        }
+        weeks[index].hours = weeks[index].liveHours + weeks[index].leadHours
+      }
     }
 
     const taskById = new Map(tasks.map((task) => [task.id, task]))
@@ -604,6 +686,7 @@ export async function getTeamWorkload(): Promise<
         projects: projectsOnPlate,
         priorities: sortPriorityItems(priorityItems),
         completed: sortCompletedItems(completedByMember.get(member.id) ?? []),
+        weeks: weeksByMember.get(member.id) ?? emptyWeekPeaks(weekStarts, today, null, {}),
         total_hours: totalHours,
       }
     })
