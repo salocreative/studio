@@ -6,6 +6,7 @@ import type { WorkloadProject } from '@/app/actions/workload'
 
 const CLIENT_FILL = '80, 140, 196'
 const INTERNAL_FILL = '100, 5, 255'
+const LEAD_FILL = '212, 168, 55'
 
 function formatHours(hours: number) {
   const rounded = Math.round(hours)
@@ -88,7 +89,11 @@ export function WorkloadBubbles({
           {packed.map((circle) => {
             const project = projectById.get(circle.id)
             if (!project) return null
-            const fill = project.is_internal ? INTERNAL_FILL : CLIENT_FILL
+            const fill = project.is_lead
+              ? LEAD_FILL
+              : project.is_internal
+                ? INTERNAL_FILL
+                : CLIENT_FILL
             const opacity = bubbleOpacity(project.progress)
             const showName = circle.r >= 28
             const showHours = circle.r >= 18
@@ -158,13 +163,24 @@ export function WorkloadBubbles({
         >
           <div className="font-medium">{hovered.name}</div>
           {hovered.client_name && <div className="text-slate-400">{hovered.client_name}</div>}
-          <div className="mt-1 text-slate-300">
-            {hovered.quoted_hours > 0
-              ? `${formatHours(hovered.hours)} remaining of ${formatHours(hovered.quoted_hours)}`
-              : `${formatHours(hovered.hours)} logged`}
-            {hovered.is_internal ? ' · Internal' : ''}
-          </div>
-          <div className="text-slate-400">{Math.round(hovered.progress * 100)}% progressed</div>
+          {hovered.is_lead ? (
+            <div className="mt-1 text-slate-300">
+              {hovered.quoted_hours > 0
+                ? `${formatHours(hovered.quoted_hours)} quoted`
+                : 'No hours quoted'}
+              {' · Lead'}
+            </div>
+          ) : (
+            <>
+              <div className="mt-1 text-slate-300">
+                {hovered.quoted_hours > 0
+                  ? `${formatHours(hovered.hours)} remaining of ${formatHours(hovered.quoted_hours)}`
+                  : `${formatHours(hovered.hours)} logged`}
+                {hovered.is_internal ? ' · Internal' : ''}
+              </div>
+              <div className="text-slate-400">{Math.round(hovered.progress * 100)}% progressed</div>
+            </>
+          )}
         </div>
       )}
     </div>

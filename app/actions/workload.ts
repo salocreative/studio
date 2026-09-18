@@ -53,6 +53,7 @@ export type WorkloadProject = {
   logged_hours: number
   progress: number
   is_internal: boolean
+  is_lead: boolean
 }
 
 export type WorkloadCompletedItem = {
@@ -98,6 +99,16 @@ type LiveTask = {
   monday_data: Record<string, unknown> | null
   timeline_start: string | null
   timeline_end: string | null
+}
+
+type LeadProject = {
+  id: string
+  name: string
+  client_name: string | null
+  agency: string | null
+  quoted_hours: number | null
+  monday_status: string | null
+  monday_data: Record<string, unknown> | null
 }
 
 type CompletedProject = {
@@ -154,13 +165,13 @@ function emptyMember(member: { id: string; full_name: string | null; email: stri
   }
 }
 
-function studioIdsFromTask(
-  task: { assigned_user_ids: string[] | null; monday_data: Record<string, unknown> | null },
+function studioIdsFromPeople(
+  input: { assigned_user_ids?: string[] | null; monday_data: Record<string, unknown> | null },
   studioByMondayId: Map<string, string>,
   studioByName: Map<string, string>
 ): string[] {
-  const fromData = peopleFromMondayData(task.monday_data)
-  const storedIds = (task.assigned_user_ids || []).map(String).filter(Boolean)
+  const fromData = peopleFromMondayData(input.monday_data)
+  const storedIds = (input.assigned_user_ids || []).map(String).filter(Boolean)
   const mondayIds = fromData.ids.length > 0 ? fromData.ids : storedIds
   const studioIds = new Set<string>()
 
@@ -185,13 +196,25 @@ function sortCompletedItems(items: WorkloadCompletedItem[]): WorkloadCompletedIt
     .slice(0, COMPLETED_LIST_CAP)
 }
 
+function leadStatusAllowed(
+  status: string | null,
+  included: string[],
+  excluded: string[]
+) {
+  if (!status) return true
+  if (included.length > 0) return included.includes(status)
+  if (excluded.length > 0) return !excluded.includes(status)
+  return true
+}
+
 /**
  * Live-project workload per teammate, plus recently completed work.
  *
  * A project is on someone's plate if they are assigned to an open Monday subitem.
- * Completed tasks, speculative Flexi jobs, and Stuck projects are excluded. Bubble size
- * is project remaining hours (quoted minus logged), matching the timesheet. Recently
- * completed covers shipped projects and finished subitems from the last two weeks.
+ * Leads appear when a teammate is named on the lead (or its subitems). Completed tasks,
+ * speculative Flexi jobs, and Stuck projects are excluded. Bubble size is project remaining
+ * hours (quoted minus logged), matching the timesheet; lead bubbles use quoted hours.
+ * Recently completed covers shipped projects and finished subitems from the last two weeks.
  */
 export async function getTeamWorkload(): Promise<
   { success: true; members: WorkloadMember[] } | { error: string }
@@ -263,9 +286,35 @@ export async function getTeamWorkload(): Promise<
       (project) => !isSpeculativeProject(project) && Boolean(dateOnly(project.completed_date))
     )
 
+    const [{ data: leadRows, error: leadsError }, { data: leadStatusConfig }] = await Promise.all([
+      supabase
+        .from('monday_projects')
+        .select('id, name, client_name, agency, quoted_hours, monday_status, monday_data')
+        .eq('status', 'lead')
+        .order('name', { ascending: true }),
+      supabase
+        .from('leads_status_config')
+        .select('included_statuses, excluded_statuses')
+        .limit(1)
+        .maybeSingle(),
+    ])
+
+    if (leadsError && leadsError.code !== '42P01' && !leadsError.message?.includes('schema cache')) {
+      throw leadsError
+    }
+
+    const includedLeadStatuses = (leadStatusConfig?.included_statuses as string[] | null) ?? []
+    const excludedLeadStatuses = (leadStatusConfig?.excluded_statuses as string[] | null) ?? []
+    const leadProjects = ((leadRows ?? []) as LeadProject[]).filter(
+      (project) =>
+        !isSpeculativeProject(project) &&
+        leadStatusAllowed(project.monday_status, includedLeadStatuses, excludedLeadStatuses)
+    )
+
     const liveProjectIds = liveProjects.map((project) => project.id)
     const completedProjectIds = recentCompletedProjects.map((project) => project.id)
-    const taskProjectIds = [...new Set([...liveProjectIds, ...completedProjectIds])]
+    const leadProjectIds = leadProjects.map((project) => project.id)
+    const taskProjectIds = [...new Set([...liveProjectIds, ...completedProjectIds, ...leadProjectIds])]
 
     if (taskProjectIds.length === 0) {
       return { success: true, members: team.map(emptyMember) }
@@ -327,6 +376,7 @@ export async function getTeamWorkload(): Promise<
 
     const assignedTaskIdsByUserProject = new Map<string, Set<string>>()
     const completedByMember = new Map<string, WorkloadCompletedItem[]>()
+    const leadAssignees = new Map<string, Set<string>>()
 
     const pushCompleted = (memberId: string, item: WorkloadCompletedItem) => {
       const list = completedByMember.get(memberId) ?? []
@@ -337,10 +387,18 @@ export async function getTeamWorkload(): Promise<
 
     const liveProjectById = new Map(liveProjects.map((project) => [project.id, project]))
     const completedProjectById = new Map(recentCompletedProjects.map((project) => [project.id, project]))
+    const leadIdSet = new Set(leadProjectIds)
 
     for (const task of tasks) {
-      const studioIds = studioIdsFromTask(task, studioByMondayId, studioByName)
+      const studioIds = studioIdsFromPeople(task, studioByMondayId, studioByName)
       if (studioIds.length === 0) continue
+
+      if (leadIdSet.has(task.project_id)) {
+        const assigned = leadAssignees.get(task.project_id) ?? new Set<string>()
+        for (const studioId of studioIds) assigned.add(studioId)
+        leadAssignees.set(task.project_id, assigned)
+        continue
+      }
 
       if (isOpenTask(task) && liveProjectIdSet.has(task.project_id)) {
         for (const studioId of studioIds) {
@@ -436,6 +494,7 @@ export async function getTeamWorkload(): Promise<
           logged_hours: loggedHours,
           progress,
           is_internal: isInternalJob(project),
+          is_lead: false,
         })
 
         const assignedTimelines = [...assignedTaskIds].map((taskId) => {
@@ -461,6 +520,27 @@ export async function getTeamWorkload(): Promise<
             today,
           })
         )
+      }
+
+      for (const lead of leadProjects) {
+        const assigned = new Set(leadAssignees.get(lead.id) ?? [])
+        for (const studioId of studioIdsFromPeople(lead, studioByMondayId, studioByName)) {
+          assigned.add(studioId)
+        }
+        if (!assigned.has(member.id)) continue
+
+        const quotedHours = lead.quoted_hours ? Number(lead.quoted_hours) : 0
+        projectsOnPlate.push({
+          id: lead.id,
+          name: lead.name,
+          client_name: lead.client_name,
+          hours: quotedHours,
+          quoted_hours: quotedHours,
+          logged_hours: 0,
+          progress: 0,
+          is_internal: isInternalJob(lead),
+          is_lead: true,
+        })
       }
 
       projectsOnPlate.sort((a, b) => b.hours - a.hours || a.name.localeCompare(b.name))
