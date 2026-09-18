@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import type { WorkloadWeekPeak } from '@/app/actions/workload'
 
-const FILL = '80, 140, 196'
-const OVER_FILL = '232, 168, 90'
+const FILL_RED = '232, 72, 80'
+const FILL_ORANGE = '245, 140, 48'
+const FILL_GREEN = '52, 196, 120'
 
 function formatHours(hours: number) {
   const rounded = Math.round(hours)
@@ -15,6 +16,14 @@ function formatHours(hours: number) {
 function loadRatio(week: WorkloadWeekPeak) {
   if (week.capacity > 0) return week.hours / week.capacity
   return week.hours > 0 ? 2 : 0
+}
+
+/** Booked % of capacity: quiet and overloaded are red; healthy is green. */
+function loadFill(load: number) {
+  const pct = load * 100
+  if (pct < 25 || pct >= 150) return FILL_RED
+  if (pct < 50 || pct >= 100) return FILL_ORANGE
+  return FILL_GREEN
 }
 
 export function WorkloadWeekBars({ weeks }: { weeks: WorkloadWeekPeak[] }) {
@@ -29,8 +38,8 @@ export function WorkloadWeekBars({ weeks }: { weeks: WorkloadWeekPeak[] }) {
         {weeks.map((week) => {
           const load = loadRatio(week)
           const fillPct = Math.min(100, load * 100)
-          const over = load > 1.02
           const isHovered = hoveredStart === week.weekStart
+          const fill = loadFill(load)
 
           return (
             <div
@@ -44,7 +53,7 @@ export function WorkloadWeekBars({ weeks }: { weeks: WorkloadWeekPeak[] }) {
                   className="absolute bottom-0 w-full rounded-full"
                   style={{
                     height: `${fillPct}%`,
-                    background: `rgba(${over ? OVER_FILL : FILL}, ${isHovered ? 1 : 0.92})`,
+                    background: `rgba(${fill}, ${isHovered ? 1 : 0.92})`,
                   }}
                 />
               </div>
@@ -58,9 +67,7 @@ export function WorkloadWeekBars({ weeks }: { weeks: WorkloadWeekPeak[] }) {
           <div className="mt-1 text-slate-300">
             {formatHours(hovered.hours)} scheduled of {formatHours(hovered.capacity)} capacity
           </div>
-          {loadRatio(hovered) > 1.02 && (
-            <div className="text-slate-400">{Math.round(loadRatio(hovered) * 100)}% booked</div>
-          )}
+          <div className="text-slate-400">{Math.round(loadRatio(hovered) * 100)}% booked</div>
         </div>
       )}
     </div>
