@@ -90,14 +90,15 @@ export const navigation: NavItem[] = [
     roles: ['admin', 'designer', 'manager'], // Admins, designers, and managers can see performance
   },
   {
-    title: 'Billing',
+    title: 'Finance',
     href: '/billing',
     icon: Receipt,
     roles: ['admin'],
     children: [
       { title: 'Invoices', href: '/billing' },
-      { title: 'Reconcile', href: '/billing/reconcile' },
       { title: 'Forecast', href: '/forecast' },
+      { title: 'Reconcile', href: '/billing/reconcile' },
+      { title: 'Expenses', href: '/billing/expenses' },
     ],
   },
   {
