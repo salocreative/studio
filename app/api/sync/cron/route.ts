@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSyncSettingsAdmin, markSyncCompleteAdmin } from '@/lib/monday/sync-settings-admin'
+import { cronRequestAuthorized, unauthorizedCronResponse } from '@/lib/cron/auth'
 
 /**
  * API route for cron jobs to trigger automatic sync
@@ -11,19 +12,8 @@ import { getSyncSettingsAdmin, markSyncCompleteAdmin } from '@/lib/monday/sync-s
  */
 export async function GET(request: NextRequest) {
   try {
-    // Verify cron secret if configured
-    const cronSecret = process.env.CRON_SECRET
-
-    if (cronSecret) {
-      const bearer = request.headers.get('authorization')?.replace(/^Bearer /i, '')
-      const headerSecret = request.headers.get('X-Cron-Secret')
-
-      if (bearer !== cronSecret && headerSecret !== cronSecret) {
-        return NextResponse.json(
-          { error: 'Unauthorized: Invalid cron secret' },
-          { status: 401 }
-        )
-      }
+    if (!cronRequestAuthorized(request)) {
+      return unauthorizedCronResponse()
     }
 
     // Check if sync is enabled. Read with the service-role client: a cron request

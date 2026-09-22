@@ -5,7 +5,6 @@ import { usePathname, useRouter } from 'next/navigation'
 import { 
   Clock, 
   FolderKanban, 
-  Calendar, 
   Users,
   Settings,
   LogOut,
@@ -17,7 +16,8 @@ import {
   Target,
   FileText,
   ScrollText,
-  Layers
+  Layers,
+  Receipt
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -90,10 +90,15 @@ export const navigation: NavItem[] = [
     roles: ['admin', 'designer', 'manager'], // Admins, designers, and managers can see performance
   },
   {
-    title: 'Forecast',
-    href: '/forecast',
-    icon: Calendar,
-    roles: ['admin'], // Admin only
+    title: 'Billing',
+    href: '/billing',
+    icon: Receipt,
+    roles: ['admin'],
+    children: [
+      { title: 'Invoices', href: '/billing' },
+      { title: 'Reconcile', href: '/billing/reconcile' },
+      { title: 'Forecast', href: '/forecast' },
+    ],
   },
   {
     title: 'Leads',
@@ -137,8 +142,27 @@ interface SidebarProps {
   userRole?: 'admin' | 'designer' | 'manager'
 }
 
-function isNavItemActive(pathname: string | null, href: string) {
-  return pathname === href || (href !== '/' && pathname?.startsWith(href + '/'))
+function pathMatches(pathname: string | null, href: string) {
+  return pathname === href || (href !== '/' && Boolean(pathname?.startsWith(href + '/')))
+}
+
+function isNavItemActive(pathname: string | null, item: NavItem) {
+  if (pathMatches(pathname, item.href)) return true
+  return item.children?.some((child) => pathMatches(pathname, child.href)) ?? false
+}
+
+function isChildNavActive(
+  pathname: string | null,
+  child: NavChildItem,
+  siblings: NavChildItem[]
+) {
+  if (!pathMatches(pathname, child.href)) return false
+  return !siblings.some(
+    (sibling) =>
+      sibling.href !== child.href &&
+      pathMatches(pathname, sibling.href) &&
+      sibling.href.length > child.href.length
+  )
 }
 
 function NavLinks({
@@ -154,7 +178,7 @@ function NavLinks({
     <>
       {items.map((item) => {
         const Icon = item.icon
-        const isActive = isNavItemActive(pathname, item.href)
+        const isActive = isNavItemActive(pathname, item)
         const showChildren = item.children && isActive
 
         return (
@@ -175,10 +199,7 @@ function NavLinks({
             {showChildren && (
               <div className="ml-8 mt-1 space-y-1">
                 {item.children!.map((child) => {
-                  const childActive =
-                    child.href === '/projects' || child.href === '/flexi-design'
-                      ? pathname === child.href
-                      : pathname === child.href
+                  const childActive = isChildNavActive(pathname, child, item.children!)
 
                   return (
                     <Link

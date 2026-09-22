@@ -13,10 +13,21 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { FolderKanban, AlertCircle, CheckCircle2, Search, X, Loader2, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react'
-import { getProjectsWithTimeTracking, getProjectDetails } from '@/app/actions/projects'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { FolderKanban, AlertCircle, CheckCircle2, Search, X, Loader2, AlertTriangle, TrendingUp, TrendingDown, Trash2 } from 'lucide-react'
+import { getProjectsWithTimeTracking, getProjectDetails, deleteCompletedProject } from '@/app/actions/projects'
+import { ReviewVsMondayButton } from './completed-monday-review'
 import { cn } from '@/lib/utils'
+import { formatGbp } from '@/lib/billing/invoices'
 import { format, parseISO, compareDesc } from 'date-fns'
+import { toast } from 'sonner'
 import {
   Select,
   SelectContent,
@@ -86,9 +97,10 @@ interface Project {
 
 interface ProjectsClientProps {
   statusFilter: ProjectsStatusFilter
+  canDelete?: boolean
 }
 
-export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
+export function ProjectsClient({ statusFilter, canDelete = false }: ProjectsClientProps) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -99,11 +111,21 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [projectDetails, setProjectDetails] = useState<any>(null)
   const [loadingDetails, setLoadingDetails] = useState(false)
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     loadProjects()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter])
+
+  useEffect(() => {
+    const projectId = new URLSearchParams(window.location.search).get('project')
+    if (projectId) {
+      void handleProjectClick(projectId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function loadProjects() {
     setLoading(true)
@@ -148,6 +170,45 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
   const handleCloseSheet = () => {
     setSelectedProjectId(null)
     setProjectDetails(null)
+    const url = new URL(window.location.href)
+    if (url.searchParams.has('project')) {
+      url.searchParams.delete('project')
+      const next = `${url.pathname}${url.search}${url.hash}`
+      window.history.replaceState({}, '', next)
+    }
+  }
+
+  const canDeleteCompleted = statusFilter === 'locked' && canDelete
+
+  const requestDeleteProject = (project: Project) => {
+    if (selectedProjectId === project.id) {
+      handleCloseSheet()
+    }
+    setProjectToDelete(project)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!projectToDelete) return
+    setDeleting(true)
+    try {
+      const result = await deleteCompletedProject(projectToDelete.id)
+      if (result.error) {
+        toast.error('Could not delete project', { description: result.error })
+        return
+      }
+      toast.success(`Deleted ${result.name || projectToDelete.name}`)
+      setProjects((current) => current.filter((p) => p.id !== projectToDelete.id))
+      if (selectedProjectId === projectToDelete.id) {
+        handleCloseSheet()
+      }
+      setProjectToDelete(null)
+    } catch (error) {
+      toast.error('Could not delete project', {
+        description: error instanceof Error ? error.message : 'Something went wrong',
+      })
+    } finally {
+      setDeleting(false)
+    }
   }
 
   // Filter projects based on search query (but not client/designer filter yet)
@@ -313,24 +374,33 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                       </SelectContent>
                     </Select>
                 </div>
-                <div className="relative w-full sm:w-56 shrink-0">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Search..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-9 pl-8 pr-8 text-sm"
-                  />
-                  {searchQuery && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-                      onClick={() => setSearchQuery('')}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
+                <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
+                  {canDeleteCompleted && (
+                    <ReviewVsMondayButton
+                      onDeleted={(ids) =>
+                        setProjects((current) => current.filter((p) => !ids.includes(p.id)))
+                      }
+                    />
                   )}
+                  <div className="relative w-full sm:w-56 shrink-0">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="h-9 pl-8 pr-8 text-sm"
+                    />
+                    {searchQuery && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                        onClick={() => setSearchQuery('')}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -446,6 +516,7 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                                     key={project.id}
                                     project={project}
                                     onClick={() => handleProjectClick(project.id)}
+                                    onDelete={canDeleteCompleted ? () => requestDeleteProject(project) : undefined}
                                   />
                                 ))}
                               </div>
@@ -469,9 +540,10 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
               <SheetTitle className="text-lg">
                 {loadingDetails ? 'Loading...' : projectDetails?.project.name || 'Project Details'}
               </SheetTitle>
-              {!loadingDetails && projectDetails?.project.client_name && (
+              {!loadingDetails && projectDetails?.project && (
                 <SheetDescription className="text-sm">
-                  {projectDetails.project.client_name}
+                  {projectDetails.project.client_name || 'No client'}
+                  {projectDetails.project.agency ? ` · ${projectDetails.project.agency}` : ''}
                 </SheetDescription>
               )}
             </SheetHeader>
@@ -495,6 +567,50 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
 
                   return (
                     <>
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Project details</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <dl className="grid grid-cols-2 gap-3 text-sm">
+                      <DetailStat
+                        label="Quote value"
+                        value={
+                          Number.isFinite(projectDetails.project.quote_value)
+                            ? formatGbp(projectDetails.project.quote_value)
+                            : '—'
+                        }
+                      />
+                      <DetailStat
+                        label="Quoted hours"
+                        value={
+                          projectQuotedHours
+                            ? `${Number(projectQuotedHours).toFixed(1)}h`
+                            : '—'
+                        }
+                      />
+                      <DetailStat
+                        label="Timeline"
+                        value={formatProjectTimeline(projectDetails)}
+                      />
+                      <DetailStat
+                        label={projectDetails.project.status === 'locked' ? 'Completed' : 'Due'}
+                        value={formatProjectDate(
+                          projectDetails.project.status === 'locked'
+                            ? projectDetails.project.completed_date
+                            : projectDetails.project.due_date
+                        )}
+                      />
+                      {projectDetails.project.status === 'locked' && projectDetails.project.due_date ? (
+                        <DetailStat label="Due" value={formatProjectDate(projectDetails.project.due_date)} />
+                      ) : null}
+                      {projectDetails.project.monday_status ? (
+                        <DetailStat label="Monday status" value={projectDetails.project.monday_status} />
+                      ) : null}
+                    </dl>
+                  </CardContent>
+                </Card>
+
                 {/* Tasks Breakdown */}
                 <Card>
                   <CardHeader className="pb-3">
@@ -521,6 +637,11 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                                     </>
                                   )}
                                 </div>
+                                {(task.timelineStart || task.timelineEnd) && (
+                                  <div className="mt-0.5 text-xs text-muted-foreground">
+                                    {formatDateRange(task.timelineStart, task.timelineEnd)}
+                                  </div>
+                                )}
                               </div>
                               <div className="flex items-center gap-2">
                                 {task.percentage !== null && (
@@ -641,11 +762,61 @@ export function ProjectsClient({ statusFilter }: ProjectsClientProps) {
                     </>
                   )
                 })()}
+                {canDeleteCompleted && projectDetails.project.status === 'locked' && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="w-full"
+                    onClick={() => {
+                      const project = projects.find((p) => p.id === projectDetails.project.id)
+                      if (project) requestDeleteProject(project)
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete project
+                  </Button>
+                )}
                 </div>
             ) : null}
             </div>
           </SheetContent>
         </Sheet>
+
+        <Dialog
+          open={projectToDelete != null}
+          onOpenChange={(open) => {
+            if (!open && !deleting) setProjectToDelete(null)
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete completed project?</DialogTitle>
+              <DialogDescription>
+                {projectToDelete
+                  ? `Delete “${projectToDelete.name}” from Studio? Logged time and invoices for this job will be removed. This cannot be undone. The Monday.com item is not deleted, and a full Monday sync could bring it back.`
+                  : ''}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setProjectToDelete(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => void handleConfirmDelete()}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </>
   )
 }
@@ -761,10 +932,12 @@ function ProjectListItem({
   project,
   onClick,
   showHealth = false,
+  onDelete,
 }: {
   project: Project
   onClick: () => void
   showHealth?: boolean
+  onDelete?: () => void
 }) {
   const stats = getProjectStats(project)
   const health = showHealth ? getProjectHealth(project) : null
@@ -778,11 +951,8 @@ function ProjectListItem({
     ? completedBudgetProgressBarClass(percentage)
     : budgetProgressBarClass(percentage)
 
-  return (
-    <button
-      onClick={onClick}
-      className="w-full px-4 py-2.5 flex items-center gap-4 hover:bg-accent transition-colors text-left"
-    >
+  const body = (
+    <>
       <div className="flex-1 min-w-0 space-y-0.5">
         {clientLine && (
           <div className="text-xs text-muted-foreground truncate">{clientLine}</div>
@@ -808,6 +978,41 @@ function ProjectListItem({
           className={cn('h-1.5 w-16', progressClass)}
         />
       </div>
+    </>
+  )
+
+  if (onDelete) {
+    return (
+      <div className="flex items-stretch hover:bg-accent">
+        <button
+          type="button"
+          onClick={onClick}
+          className="flex-1 min-w-0 px-4 py-2.5 flex items-center gap-4 transition-colors text-left"
+        >
+          {body}
+        </button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-auto w-10 shrink-0 rounded-none text-muted-foreground hover:bg-transparent hover:text-destructive"
+          title={`Delete ${project.name}`}
+          onClick={onDelete}
+        >
+          <Trash2 className="h-4 w-4" />
+          <span className="sr-only">Delete {project.name}</span>
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full px-4 py-2.5 flex items-center gap-4 hover:bg-accent transition-colors text-left"
+    >
+      {body}
     </button>
   )
 }
@@ -855,6 +1060,60 @@ function getStatus(percentage: number): 'over' | 'on-track' | 'under' {
   if (percentage >= 100) return 'over'
   if (percentage >= 80) return 'on-track'
   return 'under'
+}
+
+function formatProjectDate(value: string | null | undefined): string {
+  if (!value) return '—'
+  try {
+    return format(parseISO(value.slice(0, 10)), 'd MMM yyyy')
+  } catch {
+    return value
+  }
+}
+
+function formatDateRange(start: string | null | undefined, end: string | null | undefined): string {
+  const from = start ? formatProjectDate(start) : null
+  const to = end ? formatProjectDate(end) : null
+  if (from && to) return from === to ? from : `${from} – ${to}`
+  return from || to || '—'
+}
+
+function formatProjectTimeline(details: {
+  project: {
+    due_date?: string | null
+    completed_date?: string | null
+    created_at?: string | null
+    status?: string
+  }
+  tasksBreakdown: Array<{ timelineStart?: string | null; timelineEnd?: string | null }>
+}): string {
+  const starts = details.tasksBreakdown
+    .map((task) => task.timelineStart)
+    .filter((value): value is string => Boolean(value))
+  const ends = details.tasksBreakdown
+    .map((task) => task.timelineEnd)
+    .filter((value): value is string => Boolean(value))
+
+  const start =
+    starts.sort()[0] ||
+    details.project.created_at ||
+    null
+  const end =
+    ends.sort().at(-1) ||
+    (details.project.status === 'locked' ? details.project.completed_date : details.project.due_date) ||
+    details.project.due_date ||
+    null
+
+  return formatDateRange(start, end)
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-muted/50 px-3 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 font-medium">{value}</dd>
+    </div>
+  )
 }
 
 function formatBudgetPercentage(percentage: number) {

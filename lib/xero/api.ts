@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient, createClient } from '@/lib/supabase/server'
 
 /**
  * Xero API base URL
@@ -8,11 +8,26 @@ import { createClient } from '@/lib/supabase/server'
 const XERO_API_BASE = 'https://api.xero.com/api.xro/2.0'
 const XERO_AUTH_BASE = 'https://login.xero.com/identity/connect'
 
+async function getXeroDbClient(useAdmin?: boolean) {
+  if (useAdmin) {
+    const admin = await createAdminClient()
+    if (!admin) {
+      return { error: 'Service role is not configured' as const }
+    }
+    return { supabase: admin }
+  }
+  return { supabase: await createClient() }
+}
+
 /**
  * Get Xero connection from database
  */
-export async function getXeroConnection() {
-  const supabase = await createClient()
+export async function getXeroConnection(options?: { useAdmin?: boolean }) {
+  const db = await getXeroDbClient(options?.useAdmin)
+  if ('error' in db) {
+    return { error: db.error }
+  }
+  const supabase = db.supabase
   
   try {
     const { data, error } = await supabase
@@ -58,7 +73,7 @@ export async function getXeroConnection() {
 /**
  * Get valid access token (refresh if needed)
  */
-async function getValidAccessToken(connection: any): Promise<string | null> {
+async function getValidAccessToken(connection: any, useAdmin?: boolean): Promise<string | null> {
   if (!connection) {
     console.error('getValidAccessToken: No connection provided')
     return null
@@ -77,7 +92,11 @@ async function getValidAccessToken(connection: any): Promise<string | null> {
     console.error('getValidAccessToken: Invalid expires_at date:', connection.token_expires_at || connection.expires_at)
     // If we can't determine expiration, try to refresh
     if (connection.refresh_token) {
-      const refreshed = await refreshXeroToken(connection.refresh_token, connection.tenant_id)
+      const refreshed = await refreshXeroToken(
+        connection.refresh_token,
+        connection.tenant_id,
+        useAdmin
+      )
       if (refreshed.error || !refreshed.accessToken) {
         console.error('getValidAccessToken: Failed to refresh token:', refreshed.error)
         return null
@@ -98,7 +117,11 @@ async function getValidAccessToken(connection: any): Promise<string | null> {
       return null
     }
     
-    const refreshed = await refreshXeroToken(connection.refresh_token, connection.tenant_id)
+    const refreshed = await refreshXeroToken(
+      connection.refresh_token,
+      connection.tenant_id,
+      useAdmin
+    )
     if (refreshed.error || !refreshed.accessToken) {
       console.error('getValidAccessToken: Failed to refresh token:', refreshed.error)
       return null
@@ -112,7 +135,7 @@ async function getValidAccessToken(connection: any): Promise<string | null> {
 /**
  * Refresh Xero access token
  */
-async function refreshXeroToken(refreshToken: string, tenantId: string) {
+async function refreshXeroToken(refreshToken: string, tenantId: string, useAdmin?: boolean) {
   const clientId = process.env.XERO_CLIENT_ID
   const clientSecret = process.env.XERO_CLIENT_SECRET
   
@@ -165,7 +188,15 @@ async function refreshXeroToken(refreshToken: string, tenantId: string) {
     }
     
     // Update token in database
-    const supabase = await createClient()
+    const db = await getXeroDbClient(useAdmin)
+    if ('error' in db) {
+      return {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || refreshToken,
+        expiresIn: data.expires_in,
+      }
+    }
+    const supabase = db.supabase
     const expiresAt = new Date(Date.now() + (data.expires_in || 1800) * 1000)
     
     const updateData: any = {
@@ -203,6 +234,36 @@ async function refreshXeroToken(refreshToken: string, tenantId: string) {
   } catch (error) {
     console.error('Error refreshing Xero token:', error)
     return { error: error instanceof Error ? error.message : 'Failed to refresh token' }
+  }
+}
+
+/**
+ * Access token + tenant for Xero API calls. Prompts reconnect when the token cannot be refreshed.
+ */
+export async function getXeroAccessContext(options?: { useAdmin?: boolean }): Promise<
+  | { error: string }
+  | { accessToken: string; tenantId: string; tenantName: string | null }
+> {
+  const connectionResult = await getXeroConnection(options)
+  if (connectionResult.error) {
+    return { error: connectionResult.error }
+  }
+  if (!connectionResult.connection) {
+    return { error: 'Xero not connected. Please connect in Settings.' }
+  }
+
+  const accessToken = await getValidAccessToken(connectionResult.connection, options?.useAdmin)
+  if (!accessToken) {
+    return {
+      error:
+        'Failed to get a valid Xero access token. The token may have expired — reconnect Xero in Settings.',
+    }
+  }
+
+  return {
+    accessToken,
+    tenantId: connectionResult.connection.tenant_id as string,
+    tenantName: (connectionResult.connection.tenant_name as string | null) ?? null,
   }
 }
 

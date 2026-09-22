@@ -1,5 +1,6 @@
 {
   "crons": [
-    { "path": "/api/sync/cron", "schedule": "0 6 * * *" }
+    { "path": "/api/sync/cron", "schedule": "0 6 * * *" },
+    { "path": "/api/sync/xero-invoices", "schedule": "0 7 * * *" }
   ]
 }

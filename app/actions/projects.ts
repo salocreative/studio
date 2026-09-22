@@ -2,6 +2,12 @@
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getMondayBoardConfig } from '@/lib/monday/board-helpers'
+import { checkIsAdmin } from '@/app/actions/auth'
+import {
+  fetchMondayBoardItemsLite,
+  fetchMondayItemsById,
+  namesDiffer,
+} from '@/lib/monday/completed-review'
 
 export interface ProjectDesigner {
   id: string
@@ -295,7 +301,7 @@ export async function getProjectDetails(projectId: string) {
     // Get all tasks for this project
     const { data: tasks, error: tasksError } = await supabase
       .from('monday_tasks')
-      .select('id, name, quoted_hours')
+      .select('id, name, quoted_hours, timeline_start, timeline_end')
       .eq('project_id', projectId)
       .eq('is_subtask', true)
 
@@ -385,6 +391,8 @@ export async function getProjectDetails(projectId: string) {
         loggedHours,
         quotedHours,
         percentage,
+        timelineStart: task.timeline_start || null,
+        timelineEnd: task.timeline_end || null,
       }
     }).sort((a, b) => b.loggedHours - a.loggedHours) // Sort by logged hours descending
 
@@ -412,8 +420,17 @@ export async function getProjectDetails(projectId: string) {
         id: project.id,
         name: project.name,
         client_name: project.client_name,
+        agency: project.agency || null,
         status: project.status,
+        monday_status: project.monday_status || null,
         quoted_hours: project.quoted_hours ? Number(project.quoted_hours) : null,
+        quote_value:
+          project.quote_value != null && project.quote_value !== ''
+            ? Number(project.quote_value)
+            : null,
+        due_date: project.due_date || null,
+        completed_date: project.completed_date || null,
+        created_at: project.created_at || null,
       },
       tasksBreakdown,
       userTotals,
@@ -422,6 +439,336 @@ export async function getProjectDetails(projectId: string) {
   } catch (error) {
     console.error('Error fetching project details:', error)
     return { error: error instanceof Error ? error.message : 'Failed to fetch project details' }
+  }
+}
+
+export type CompletedReviewLeftover = {
+  id: string
+  mondayItemId: string
+  name: string
+  clientName: string | null
+  agency: string | null
+  completedDate: string | null
+  loggedHours: number
+}
+
+export type CompletedReviewRenamed = {
+  id: string
+  mondayItemId: string
+  studioName: string
+  mondayName: string
+  clientName: string | null
+}
+
+export type CompletedReviewMissing = {
+  mondayItemId: string
+  mondayName: string
+  boardName: string
+}
+
+export type CompletedReviewElsewhere = {
+  id: string
+  mondayItemId: string
+  name: string
+  mondayName: string
+  boardName: string
+  loggedHours: number
+}
+
+export type CompletedMondayReview = {
+  leftovers: CompletedReviewLeftover[]
+  renamed: CompletedReviewRenamed[]
+  missing: CompletedReviewMissing[]
+  elsewhere: CompletedReviewElsewhere[]
+  mondayItemCount: number
+  studioCount: number
+}
+
+type StudioCompletedRow = {
+  id: string
+  monday_item_id: string
+  name: string
+  client_name: string | null
+  agency: string | null
+  completed_date: string | null
+}
+
+async function loadLoggedHoursByProject(
+  admin: NonNullable<Awaited<ReturnType<typeof createAdminClient>>>,
+  projectIds: string[]
+): Promise<Record<string, number>> {
+  const hours: Record<string, number> = {}
+  if (projectIds.length === 0) return hours
+
+  for (let i = 0; i < projectIds.length; i += IN_FILTER_CHUNK_SIZE) {
+    const chunk = projectIds.slice(i, i + IN_FILTER_CHUNK_SIZE)
+    const { data, error } = await admin.rpc('time_entry_totals', { p_project_ids: chunk })
+    if (!error) {
+      for (const row of (data ?? []) as Array<{
+        project_id: string | null
+        task_id: string | null
+        total_hours: number | string | null
+      }>) {
+        if (row.task_id || !row.project_id) continue
+        hours[row.project_id] = Number(row.total_hours) || 0
+      }
+      continue
+    }
+
+    const { data: rows, error: rowsError } = await admin
+      .from('time_entries')
+      .select('project_id, hours')
+      .in('project_id', chunk)
+    if (rowsError) throw rowsError
+    for (const row of rows || []) {
+      hours[row.project_id] = (hours[row.project_id] || 0) + Number(row.hours)
+    }
+  }
+
+  return hours
+}
+
+/**
+ * Compare Studio's completed jobs with the items currently on Monday completed boards.
+ * Admin only. Does not write anything — leftovers can then be deleted in Studio.
+ */
+export async function reviewCompletedProjectsVsMonday() {
+  const { isAdmin } = await checkIsAdmin()
+  if (!isAdmin) {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const accessToken = process.env.MONDAY_API_TOKEN
+  if (!accessToken) {
+    return { error: 'Monday.com API token not configured' }
+  }
+
+  const admin = await createAdminClient()
+  if (!admin) {
+    return { error: 'Admin client not available' }
+  }
+
+  try {
+    const {
+      mainBoardIds,
+      completedBoardIds,
+      flexiBoardIds,
+      flexiCompletedBoardId,
+    } = await getMondayBoardConfig()
+
+    const flexiIds = new Set(flexiBoardIds)
+    if (flexiCompletedBoardId) flexiIds.add(flexiCompletedBoardId)
+
+    const studioBoardIds = [...mainBoardIds, ...completedBoardIds].filter((id) => !flexiIds.has(id))
+    const mondayCompletedBoardIds = completedBoardIds.filter((id) => !flexiIds.has(id))
+
+    if (studioBoardIds.length === 0) {
+      return {
+        success: true,
+        review: {
+          leftovers: [],
+          renamed: [],
+          missing: [],
+          elsewhere: [],
+          mondayItemCount: 0,
+          studioCount: 0,
+        } satisfies CompletedMondayReview,
+      }
+    }
+
+    const studioProjects = await fetchByIdChunks<StudioCompletedRow>(
+      studioBoardIds,
+      (boardChunk, from, to) =>
+        admin
+          .from('monday_projects')
+          .select('id, monday_item_id, name, client_name, agency, completed_date')
+          .eq('status', 'locked')
+          .in('monday_board_id', boardChunk)
+          .order('name', { ascending: true })
+          .range(from, to)
+    )
+
+    const mondayItems = await fetchMondayBoardItemsLite(accessToken, mondayCompletedBoardIds)
+    const mondayById = new Map(mondayItems.map((item) => [item.id, item]))
+    const studioByMondayId = new Map(
+      studioProjects.map((project) => [project.monday_item_id, project])
+    )
+
+    const leftoversUnconfirmed: StudioCompletedRow[] = []
+    const renamed: CompletedReviewRenamed[] = []
+
+    for (const project of studioProjects) {
+      const mondayItem = mondayById.get(project.monday_item_id)
+      if (!mondayItem) {
+        leftoversUnconfirmed.push(project)
+        continue
+      }
+      if (namesDiffer(project.name, mondayItem.name)) {
+        renamed.push({
+          id: project.id,
+          mondayItemId: project.monday_item_id,
+          studioName: project.name,
+          mondayName: mondayItem.name,
+          clientName: project.client_name,
+        })
+      }
+    }
+
+    const missing: CompletedReviewMissing[] = mondayItems
+      .filter((item) => !studioByMondayId.has(item.id))
+      .map((item) => ({
+        mondayItemId: item.id,
+        mondayName: item.name,
+        boardName: item.boardName,
+      }))
+      .sort((a, b) => a.mondayName.localeCompare(b.mondayName))
+
+    const foundElsewhere = await fetchMondayItemsById(
+      accessToken,
+      leftoversUnconfirmed.map((project) => project.monday_item_id)
+    )
+    const elsewhereById = new Map(foundElsewhere.map((item) => [item.id, item]))
+
+    const leftoversRows: StudioCompletedRow[] = []
+    const elsewhereRows: Array<StudioCompletedRow & { mondayName: string; boardName: string }> = []
+
+    for (const project of leftoversUnconfirmed) {
+      const stillOnMonday = elsewhereById.get(project.monday_item_id)
+      if (stillOnMonday) {
+        elsewhereRows.push({
+          ...project,
+          mondayName: stillOnMonday.name,
+          boardName: stillOnMonday.boardName || 'Another board',
+        })
+      } else {
+        leftoversRows.push(project)
+      }
+    }
+
+    const hours = await loadLoggedHoursByProject(
+      admin,
+      [...leftoversRows, ...elsewhereRows].map((project) => project.id)
+    )
+
+    const leftovers: CompletedReviewLeftover[] = leftoversRows
+      .map((project) => ({
+        id: project.id,
+        mondayItemId: project.monday_item_id,
+        name: project.name,
+        clientName: project.client_name,
+        agency: project.agency,
+        completedDate: project.completed_date,
+        loggedHours: hours[project.id] || 0,
+      }))
+      .sort((a, b) => {
+        if (a.loggedHours !== b.loggedHours) return b.loggedHours - a.loggedHours
+        return a.name.localeCompare(b.name)
+      })
+
+    const elsewhere: CompletedReviewElsewhere[] = elsewhereRows
+      .map((project) => ({
+        id: project.id,
+        mondayItemId: project.monday_item_id,
+        name: project.name,
+        mondayName: project.mondayName,
+        boardName: project.boardName,
+        loggedHours: hours[project.id] || 0,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    renamed.sort((a, b) => a.studioName.localeCompare(b.studioName))
+
+    return {
+      success: true,
+      review: {
+        leftovers,
+        renamed,
+        missing,
+        elsewhere,
+        mondayItemCount: mondayItems.length,
+        studioCount: studioProjects.length,
+      } satisfies CompletedMondayReview,
+    }
+  } catch (error) {
+    console.error('Error reviewing completed projects vs Monday:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to review completed projects' }
+  }
+}
+
+/**
+ * Permanently delete a completed (locked) project from Studio. Admin only.
+ *
+ * Time entries must go first: `time_entries.project_id` is ON DELETE RESTRICT.
+ * Tasks and invoices then cascade with the project. Daily Monday sync only
+ * re-fetches completed-board items by known IDs, so the job stays gone unless
+ * a full board sync runs and the item still exists on Monday.
+ */
+export async function deleteCompletedProject(projectId: string) {
+  const result = await deleteCompletedProjects([projectId])
+  if (result.error) return { error: result.error }
+  return { success: true, name: result.names?.[0] }
+}
+
+export async function deleteCompletedProjects(projectIds: string[]) {
+  const { isAdmin } = await checkIsAdmin()
+  if (!isAdmin) {
+    return { error: 'Unauthorized: Admin access required' }
+  }
+
+  const ids = Array.from(new Set(projectIds.filter(Boolean)))
+  if (ids.length === 0) {
+    return { error: 'No projects selected' }
+  }
+
+  const admin = await createAdminClient()
+  if (!admin) {
+    return { error: 'Admin client not available' }
+  }
+
+  try {
+    const projects = await fetchByIdChunks<{ id: string; name: string; status: string }>(
+      ids,
+      (idChunk, from, to) =>
+        admin
+          .from('monday_projects')
+          .select('id, name, status')
+          .in('id', idChunk)
+          .range(from, to)
+    )
+
+    const lockedIds = projects.filter((project) => project.status === 'locked').map((project) => project.id)
+    if (lockedIds.length === 0) {
+      return { error: 'Only completed projects can be deleted from here' }
+    }
+
+    for (let i = 0; i < lockedIds.length; i += IN_FILTER_CHUNK_SIZE) {
+      const chunk = lockedIds.slice(i, i + IN_FILTER_CHUNK_SIZE)
+      const { error: timeError } = await admin
+        .from('time_entries')
+        .delete()
+        .in('project_id', chunk)
+      if (timeError) throw timeError
+
+      const { error: deleteError } = await admin
+        .from('monday_projects')
+        .delete()
+        .in('id', chunk)
+      if (deleteError) throw deleteError
+    }
+
+    const names = projects
+      .filter((project) => lockedIds.includes(project.id))
+      .map((project) => project.name)
+
+    return {
+      success: true,
+      deleted: lockedIds.length,
+      skipped: ids.length - lockedIds.length,
+      names,
+    }
+  } catch (error) {
+    console.error('Error deleting completed projects:', error)
+    return { error: error instanceof Error ? error.message : 'Failed to delete projects' }
   }
 }
 

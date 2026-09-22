@@ -522,7 +522,60 @@ Holds the active OAuth connection (one row per tenant).
 
 ---
 
-## 12. Relationships (high level)
+## 12. Project invoices (billing)
+
+Studio-side tracker for raising and collecting payment against Monday jobs. Multiple invoices per project (deposit, monthly, final). Not synced from Xero.
+
+### `project_invoices`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `project_id` | `uuid` not null | FK → `monday_projects.id` (cascade) |
+| `label` | `text` not null | e.g. 50% deposit, April 2026 |
+| `amount` | `numeric(10,2)` not null | `check (> 0)` |
+| `status` | `text` not null default `'need_invoicing'` | `need_invoicing`, `waiting_payment`, `overdue`, `paid` |
+| `invoice_number` | `text` | Optional reference |
+| `invoice_date` / `due_date` / `paid_date` | `date` | |
+| `notes` | `text` | |
+| `sort_order` | `integer` not null default `0` | |
+| `xero_invoice_id` | `text` | Unique when set; Xero InvoiceID from reconcile |
+| `created_by` | `uuid` | FK → `users.id` (set null) |
+| `created_at` / `updated_at` | `timestamptz` | |
+
+**Indexes:** `project_id`, `status`, `due_date`, unique `xero_invoice_id` (partial).
+**RLS:** Admin all.
+
+### `xero_invoice_dismissals`
+
+Xero invoices hidden from Reconcile. Not deleted in Xero.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `xero_invoice_id` | `text` PK | |
+| `dismissed_by` | `uuid` | FK → `users.id` (set null) |
+| `dismissed_at` | `timestamptz` | |
+
+**RLS:** Admin all.
+
+### `xero_invoice_status_sync_runs`
+
+Log of linked Studio invoices updated from Xero.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `source` | `text` | `reconcile` or `cron` |
+| `ran_at` | `timestamptz` | |
+| `updated_count` / `checked_count` | `integer` | |
+| `changes` | `jsonb` | |
+| `created_by` | `uuid` | FK → `users.id` (set null) |
+
+**RLS:** Admin all.
+
+---
+
+## 13. Relationships (high level)
 
 ```
 auth.users 1───1 users
@@ -541,6 +594,9 @@ auth.users 1───1 users
                 └──< time_report_share_links
 
 monday_tasks (parent_task_id self-ref)
+monday_projects ──< project_invoices
+xero_invoice_dismissals (Xero InvoiceIDs hidden from Reconcile)
+xero_invoice_status_sync_runs (Xero→Studio paid/status refresh log)
 monday_column_mappings (config table, no FKs)
 monday_completed_boards / monday_leads_board / monday_holidays_board / flexi_design_completed_board (config)
 monday_sync_settings / leads_status_config / quote_rates / lifetime_value_brackets (singleton config)
@@ -549,7 +605,7 @@ xero_connection >── xero_financial_cache (by tenant_id, no FK)
 
 ---
 
-## 13. Recommended access patterns for an external platform
+## 14. Recommended access patterns for an external platform
 
 1. **Read-only consumption:** Use a Supabase **service-role key** server-side (bypasses RLS). Never ship the service-role key to a browser.
 2. **Per-user scoped reads:** Use the Supabase **anon key** with a signed-in JWT — RLS will enforce role-based filtering.

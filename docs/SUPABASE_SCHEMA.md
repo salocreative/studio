@@ -18,11 +18,12 @@ Reference for external tools that read or write data in this app's Supabase inst
 8. [Scorecards](#scorecards)
 9. [Customer relationship scores](#customer-relationship-scores)
 10. [Quoting & rates](#quoting--rates)
-11. [Xero integration](#xero-integration)
-12. [Share links (time report, etc.)](#share-links-time-report-etc)
-13. [Legacy tables](#legacy-tables)
-14. [Monday.com sync — what is synced and how](#mondaycom-sync--what-is-synced-and-how)
-15. [Access patterns for an external tool](#access-patterns-for-an-external-tool)
+11. [Project invoices (billing)](#project-invoices-billing)
+12. [Xero integration](#xero-integration)
+13. [Share links (time report, etc.)](#share-links-time-report-etc)
+14. [Legacy tables](#legacy-tables)
+15. [Monday.com sync — what is synced and how](#mondaycom-sync--what-is-synced-and-how)
+16. [Access patterns for an external tool](#access-patterns-for-an-external-tool)
 
 ---
 
@@ -540,6 +541,63 @@ Seeded: `partner` £670/day, `client` £720/day. RLS: Auth read; Admin all.
 
 ---
 
+## Project invoices (billing)
+
+Studio-side billing tracker for Monday jobs. One project can have many invoices (50% deposit, monthly amounts, final delivery). This is not a Xero invoice store — it tracks what still needs raising and collecting. Billing → Reconcile can link existing Xero ACCREC invoices onto these rows.
+
+### `public.project_invoices`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `project_id` | `uuid` not null | FK → `monday_projects.id` (`on delete cascade`). |
+| `label` | `text` not null | e.g. `50% deposit`, `April 2026`, `Final delivery`. |
+| `amount` | `numeric(10,2)` not null | `check (> 0)`. GBP. |
+| `status` | `text` not null default `'need_invoicing'` | `need_invoicing`, `waiting_payment`, `overdue`, `paid`. Waiting-payment invoices past `due_date` display as overdue. |
+| `invoice_number` | `text` | Optional Xero/reference number. |
+| `invoice_date` | `date` | When the invoice was raised. |
+| `due_date` | `date` | |
+| `paid_date` | `date` | |
+| `notes` | `text` | |
+| `sort_order` | `integer` not null default `0` | Display order within a project. |
+| `xero_invoice_id` | `text` | Xero `InvoiceID` when matched from Billing → Reconcile. Unique when set. |
+| `created_by` | `uuid` | FK → `users.id` (`on delete set null`). |
+| `created_at`, `updated_at` | `timestamptz` | Trigger maintained. |
+
+Indexes: `idx_project_invoices_project_id`, `idx_project_invoices_status`, `idx_project_invoices_due_date`, unique `idx_project_invoices_xero_invoice_id` (partial, where set).
+RLS: Admin all (with both `USING` and `WITH CHECK`). Designers and managers cannot read this table.
+
+### `public.xero_invoice_dismissals`
+
+Xero ACCREC invoices hidden from Billing → Reconcile. Does not change Xero or Studio invoice rows.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `xero_invoice_id` | `text` PK | Xero `InvoiceID`. |
+| `dismissed_by` | `uuid` | FK → `users.id` (`on delete set null`). |
+| `dismissed_at` | `timestamptz` | |
+
+RLS: Admin all.
+
+### `public.xero_invoice_status_sync_runs`
+
+Log of linked Studio invoices updated from Xero (Reconcile fetch or daily cron). Does not change Xero.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `source` | `text` | `reconcile` or `cron`. |
+| `ran_at` | `timestamptz` | |
+| `updated_count` | `integer` | |
+| `checked_count` | `integer` | Linked invoices compared. |
+| `changes` | `jsonb` | Invoice number, job, from/to status. |
+| `created_by` | `uuid` | FK → `users.id` (`on delete set null`). |
+
+Index: `idx_xero_invoice_status_sync_runs_ran_at`.
+RLS: Admin all.
+
+---
+
 ## Xero integration
 
 ### `public.xero_connection`
@@ -814,3 +872,8 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | `20260113085747` | `add_cover_image_to_cupboard` | `cupboard_items.cover_image_path`. |
 | 073 | `holiday_leave` | `monday_holidays_board`, `holiday_requests`, `users.monday_user_id`. |
 | 074 | `flexi_design_credit_value` | `flexi_design_credit_transactions.value_gbp`, `value_is_estimated`; backfill standard packs. |
+| 075 | `sow_complete_and_white_label` | SoW `complete` status; optional white-label rates on partner shares. |
+| 076 | `project_invoices` | `project_invoices` billing tracker (multiple invoices per Monday job). |
+| 077 | `project_invoices_xero_id` | `project_invoices.xero_invoice_id` unique link to Xero. |
+| 078 | `xero_invoice_dismissals` | Hide unmatched Xero invoices from Billing → Reconcile. |
+| 079 | `xero_invoice_status_sync_runs` | Log of Studio invoices updated from Xero status refresh. |

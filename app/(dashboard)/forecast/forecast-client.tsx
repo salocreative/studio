@@ -1,757 +1,424 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Loader2, TrendingUp, DollarSign, AlertCircle, Link2, ExternalLink } from 'lucide-react'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { startOfMonth, endOfMonth, format, subMonths, addMonths, parseISO } from 'date-fns'
-import { toast } from 'sonner'
-import { getXeroStatus, getFinancialData } from '@/app/actions/xero'
-import { getMonthlySummary } from '@/app/actions/monthly-summary'
-import { getLeads } from '@/app/actions/leads'
-import { getYearlyFinancialData } from '@/app/actions/xero-yearly'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { getBillingJobs, type BillingJob } from '@/app/actions/invoices'
+import { JobInvoiceSummarySheet } from '@/components/billing/job-invoice-summary-sheet'
+import {
+  buildCashflowGrid,
+  formatMonthLabel,
+  type CashflowItem,
+} from '@/lib/billing/cashflow'
+import {
+  INVOICE_STATUS_LABELS,
+  formatGbp,
+  londonToday,
+  type InvoiceStatus,
+} from '@/lib/billing/invoices'
 import { cn } from '@/lib/utils'
 
-interface FinancialData {
-  revenue: number
-  expenses: number
-  profit: number
-  period: {
-    start: string
-    end: string
-  }
-  fromCache?: boolean
+const STATUS_CHIP_CLASS: Record<InvoiceStatus, string> = {
+  need_invoicing:
+    'border-amber-200 bg-amber-50/90 text-amber-950 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-100',
+  waiting_payment:
+    'border-sky-200 bg-sky-50/90 text-sky-950 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-100',
+  overdue:
+    'border-red-200 bg-red-50/90 text-red-950 dark:border-red-900 dark:bg-red-950/50 dark:text-red-100',
+  paid:
+    'border-emerald-200 bg-emerald-50/90 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100',
+}
+
+function InvoiceChip({
+  item,
+  onSelect,
+}: {
+  item: CashflowItem
+  onSelect: (item: CashflowItem) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(item)}
+      className={cn(
+        'block w-full rounded-md border px-2 py-1.5 text-left transition-colors hover:brightness-95 dark:hover:brightness-110',
+        STATUS_CHIP_CLASS[item.status]
+      )}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-medium tabular-nums">{formatGbp(item.amount)}</span>
+        {item.source === 'unbilled' ? (
+          <span className="text-[10px] font-medium uppercase tracking-wide opacity-70">Unbilled</span>
+        ) : item.status === 'paid' ? (
+          <span className="text-[10px] font-medium uppercase tracking-wide opacity-70">Paid</span>
+        ) : null}
+      </div>
+      <div className="mt-0.5 truncate text-xs opacity-80">{item.projectName}</div>
+      <div className="truncate text-[11px] opacity-70">{item.label}</div>
+    </button>
+  )
+}
+
+function SummaryCard({
+  title,
+  amount,
+  hint,
+}: {
+  title: string
+  amount: number
+  hint: string
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-2xl font-semibold tabular-nums">{formatGbp(amount)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function ForecastPageClient() {
   const [loading, setLoading] = useState(true)
-  const [xeroConnected, setXeroConnected] = useState(false)
-  const [period, setPeriod] = useState<'current' | 'last' | 'next'>('current')
-  const [financialData, setFinancialData] = useState<FinancialData | null>(null)
-  const [loadingFinancial, setLoadingFinancial] = useState(false)
-  const [leads, setLeads] = useState<any[]>([])
-  const [monthlySummary, setMonthlySummary] = useState<{
-    months: Array<{
-      month: string
-      totalValue: number
-      totalQuotedHours: number
-      projectCount: number
-      clientBreakdown: Array<{
-        clientName: string
-        value: number
-      }>
-    }>
-  } | null>(null)
-  const [yearlyFinancialData, setYearlyFinancialData] = useState<{
-    monthlyData: Array<{
-      month: string
-      revenue: number
-      expenses: number
-      profit: number
-      cumulativeRevenue: number
-      cumulativeExpenses: number
-      cumulativeProfit: number
-    }>
-    totalRevenue: number
-    totalExpenses: number
-    totalProfit: number
-  } | null>(null)
-  const tableScrollRef = useRef<HTMLDivElement>(null)
+  const [jobs, setJobs] = useState<BillingJob[]>([])
+  const [summaryJobId, setSummaryJobId] = useState<string | null>(null)
+  const [highlightedInvoiceId, setHighlightedInvoiceId] = useState<string | null>(null)
+  const [showPaid, setShowPaid] = useState(true)
 
   useEffect(() => {
-    loadData()
-  }, [period])
+    void load()
+  }, [])
 
-  // Scroll table to the right when monthly summary data loads to show latest month first
-  useEffect(() => {
-    if (monthlySummary && monthlySummary.months.length > 0 && tableScrollRef.current) {
-      // Small delay to ensure table is rendered
-      setTimeout(() => {
-        if (tableScrollRef.current) {
-          tableScrollRef.current.scrollLeft = tableScrollRef.current.scrollWidth
-        }
-      }, 100)
-    }
-  }, [monthlySummary])
-
-  async function loadData() {
-    setLoading(true)
+  async function load(options?: { silent?: boolean }) {
+    if (!options?.silent) setLoading(true)
     try {
-      // Check Xero connection status
-      const xeroStatus = await getXeroStatus()
-      
-      // Determine connection status
-      let isConnected = false
-      if (xeroStatus.error) {
-        console.error('Error checking Xero status:', xeroStatus.error)
-        // Only show error toast for non-table-missing errors
-        if (!xeroStatus.error.includes('table not found') && !xeroStatus.error.includes('migration')) {
-          toast.error('Error checking Xero connection', { description: xeroStatus.error })
-        }
+      const result = await getBillingJobs()
+      if (result.error) {
+        toast.error('Could not load forecast', { description: result.error })
+        setJobs([])
       } else {
-        // Use the same logic as Settings page: result.connected || false
-        isConnected = xeroStatus.connected || false
-        setXeroConnected(isConnected)
-        
-        // Load financial data if Xero is connected
-        if (isConnected) {
-          await loadFinancialData()
-        }
-      }
-
-      // Load leads data for future projections
-      const leadsResult = await getLeads()
-      if (leadsResult.error) {
-        console.error('Error loading leads:', leadsResult.error)
-      } else {
-        setLeads(leadsResult.leads || [])
-      }
-
-      // Load yearly financial data for chart
-      if (isConnected) {
-        const yearlyResult = await getYearlyFinancialData()
-        if (yearlyResult.error) {
-          console.error('Error loading yearly financial data:', yearlyResult.error)
-        } else if (yearlyResult.success) {
-          setYearlyFinancialData(yearlyResult)
-        }
-      }
-
-      // Load monthly summary data
-      const monthlySummaryResult = await getMonthlySummary(12)
-      if (monthlySummaryResult.error) {
-        console.error('Error loading monthly summary:', monthlySummaryResult.error)
-      } else if (monthlySummaryResult.success) {
-        setMonthlySummary({
-          months: monthlySummaryResult.months || [],
-        })
-        // Scroll table to the right after data loads to show latest month
-        setTimeout(() => {
-          if (tableScrollRef.current) {
-            tableScrollRef.current.scrollLeft = tableScrollRef.current.scrollWidth
-          }
-        }, 100)
+        setJobs(result.jobs ?? [])
       }
     } catch (error) {
-      console.error('Error loading forecast data:', error)
-      toast.error('Error loading forecast data')
+      console.error('Error loading cashflow forecast:', error)
+      toast.error('Could not load forecast')
     } finally {
-      setLoading(false)
+      if (!options?.silent) setLoading(false)
     }
   }
 
-  async function loadFinancialData() {
-    setLoadingFinancial(true)
-    try {
-      const dates = getDateRange()
-      const result = await getFinancialData(dates.start, dates.end)
-      
-      if ('error' in result && result.error) {
-        console.error('Error loading financial data:', result.error)
-        toast.error('Error loading financial data', { description: result.error })
-        // Still set data to 0 so UI doesn't break
-        setFinancialData({
-          revenue: 0,
-          expenses: 0,
-          profit: 0,
-          period: { start: dates.start, end: dates.end },
-        })
-      } else if ('success' in result && result.success) {
-        console.log('Financial data loaded:', {
-          revenue: result.revenue,
-          expenses: result.expenses,
-          profit: result.profit,
-          period: result.period,
-          fromCache: result.fromCache
-        })
-        
-        // Show info toast if using cached data
-        if (result.fromCache) {
-          toast.info('Showing cached financial data', { 
-            description: 'Xero connection unavailable. Displaying last cached data.' 
-          })
-        }
-        
-        setFinancialData({
-          revenue: result.revenue || 0,
-          expenses: result.expenses || 0,
-          profit: result.profit || 0,
-          period: result.period || { start: dates.start, end: dates.end },
-          fromCache: result.fromCache,
-        })
-      } else {
-        console.warn('Unexpected result format:', result)
-      }
-    } catch (error) {
-      console.error('Error loading financial data:', error)
-      toast.error('Error loading financial data')
-    } finally {
-      setLoadingFinancial(false)
-    }
+  function openItem(item: CashflowItem) {
+    setSummaryJobId(item.projectId)
+    setHighlightedInvoiceId(item.id)
   }
 
-  const getDateRange = () => {
-    if (period === 'current') {
-      const start = startOfMonth(new Date())
-      const end = endOfMonth(new Date())
-      return {
-        start: format(start, 'yyyy-MM-dd'),
-        end: format(end, 'yyyy-MM-dd'),
-      }
-    } else if (period === 'last') {
-      const start = startOfMonth(subMonths(new Date(), 1))
-      const end = endOfMonth(subMonths(new Date(), 1))
-      return {
-        start: format(start, 'yyyy-MM-dd'),
-        end: format(end, 'yyyy-MM-dd'),
-      }
-    } else {
-      const start = startOfMonth(addMonths(new Date(), 1))
-      const end = endOfMonth(addMonths(new Date(), 1))
-      return {
-        start: format(start, 'yyyy-MM-dd'),
-        end: format(end, 'yyyy-MM-dd'),
-      }
-    }
-  }
+  const grid = useMemo(
+    () => buildCashflowGrid(jobs, londonToday(), { includePaid: showPaid }),
+    [jobs, showPaid]
+  )
+  const currentIndex = grid.months.indexOf(grid.currentMonth)
+  const pastMonths = grid.months.slice(0, Math.max(currentIndex, 0))
+  const futureMonths = grid.months.slice(currentIndex + 1)
 
+  const thisMonthTotal = grid.totalsByMonth[grid.currentMonth] ?? 0
+  const thisMonthToSend = grid.toSendByMonth[grid.currentMonth] ?? 0
+  const pastToSend = pastMonths.reduce((sum, month) => sum + (grid.toSendByMonth[month] ?? 0), 0)
+  const nextToSend = futureMonths.reduce((sum, month) => sum + (grid.toSendByMonth[month] ?? 0), 0)
+  const unscheduledTotal = grid.unscheduled.reduce((sum, item) => sum + item.amount, 0)
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full">
+      <div className="flex h-full flex-col">
         <div className="border-b bg-background">
           <div className="flex h-16 items-center px-6">
             <div>
               <h1 className="text-2xl font-semibold">Forecast</h1>
-              <p className="text-sm text-muted-foreground">
-                Project forecasting and planning
-              </p>
+              <p className="text-sm text-muted-foreground">Cashflow by client and month</p>
             </div>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col">
       <div className="border-b bg-background">
-        <div className="flex h-16 items-center px-6">
-          <div>
-            <h1 className="text-2xl font-semibold">Forecast</h1>
-            <p className="text-sm text-muted-foreground">
-              Project forecasting and planning
-            </p>
+        <div className="flex min-h-16 items-center justify-between gap-3 px-6 py-3">
+            <div>
+              <h1 className="text-2xl font-semibold">Forecast</h1>
+              <p className="text-sm text-muted-foreground">
+                Invoices by client and month, three months either side of this month. Paid only
+                when linked to Xero.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Label htmlFor="show-paid" className="text-sm font-medium">
+                Show paid
+              </Label>
+              <Switch id="show-paid" checked={showPaid} onCheckedChange={setShowPaid} />
+            </div>
           </div>
-        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-7xl space-y-6">
-          {/* Xero Connection Status */}
-          {!xeroConnected && (
-            <Card className="border-orange-200 bg-orange-50 dark:bg-orange-950 dark:border-orange-900">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-                  <CardTitle>Xero Not Connected</CardTitle>
-                </div>
-                <CardDescription>
-                  Connect your Xero account to see real financial data and accurate forecasts.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild>
-                  <Link href="/settings">
-                    <Link2 className="mr-2 h-4 w-4" />
-                    Connect Xero in Settings
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <SummaryCard
+              title="Late to send"
+              amount={pastToSend}
+              hint="Need invoicing in the past three months"
+            />
+            <SummaryCard
+              title="This month"
+              amount={thisMonthTotal}
+              hint={`${formatGbp(thisMonthToSend)} still to send`}
+            />
+            <SummaryCard
+              title="Next three months"
+              amount={nextToSend}
+              hint="Invoices still due to be sent"
+            />
+            <SummaryCard
+              title="Unscheduled"
+              amount={unscheduledTotal}
+              hint="No invoice or due date yet"
+            />
+          </div>
 
-          {/* Year-to-Date Financial Chart */}
-          {xeroConnected && yearlyFinancialData && yearlyFinancialData.monthlyData.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Year-to-Date Financial Overview</CardTitle>
-                <CardDescription>
-                  Revenue and expenses trend over the last 12 months. Solid lines show monthly values, dashed lines show cumulative year-to-date totals.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={350}>
-                  <LineChart data={yearlyFinancialData.monthlyData.map(data => ({
-                    month: format(parseISO(`${data.month}-01`), 'MMM yyyy'),
-                    revenue: data.revenue,
-                    expenses: data.expenses,
-                    profit: data.profit,
-                    cumulativeRevenue: data.cumulativeRevenue,
-                    cumulativeExpenses: data.cumulativeExpenses,
-                  }))}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="month" 
-                      tick={{ fontSize: 12 }}
-                      angle={-45}
-                      textAnchor="end"
-                      height={80}
-                    />
-                    <YAxis 
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `£${(value / 1000).toFixed(0)}k`}
-                    />
-                    <RechartsTooltip 
-                      formatter={(value: number) => `£${value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                      labelStyle={{ color: '#000', fontWeight: 'bold' }}
-                      contentStyle={{ 
-                        backgroundColor: '#fff',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '6px',
-                        padding: '8px 12px',
-                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                      }}
-                      itemStyle={{ color: '#000' }}
-                    />
-                    <Legend />
-                    <Line 
-                      type="monotone" 
-                      dataKey="revenue" 
-                      stroke="#8884d8" 
-                      strokeWidth={2}
-                      name="Monthly Revenue"
-                      dot={{ r: 4 }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="expenses" 
-                      stroke="#82ca9d" 
-                      strokeWidth={2}
-                      name="Monthly Expenses"
-                      dot={{ r: 4 }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="cumulativeRevenue" 
-                      stroke="#8884d8" 
-                      strokeWidth={2}
-                      strokeDasharray="5 5"
-                      name="YTD Revenue"
-                      dot={false}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="cumulativeExpenses" 
-                      stroke="#82ca9d" 
-                      strokeWidth={2}
-                      strokeDasharray="5 5"
-                      name="YTD Expenses"
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Financial Overview - Period Selector */}
-          {xeroConnected && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Financial Overview</CardTitle>
-                    <CardDescription>
-                      Revenue, expenses, and profit for the selected period
-                    </CardDescription>
-                  </div>
-                  <Select value={period} onValueChange={(value: 'current' | 'last' | 'next') => setPeriod(value)}>
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="last">Last Month</SelectItem>
-                      <SelectItem value="current">Current Month</SelectItem>
-                      <SelectItem value="next">Next Month</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {financialData?.fromCache && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                      <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                      <span>Showing cached financial data. Xero connection unavailable.</span>
-                    </div>
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            {(
+              (showPaid
+                ? ['need_invoicing', 'waiting_payment', 'overdue', 'paid']
+                : ['need_invoicing', 'waiting_payment', 'overdue']) as InvoiceStatus[]
+            ).map((status) => (
+              <span key={status} className="inline-flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    'inline-block size-2.5 rounded-sm border',
+                    STATUS_CHIP_CLASS[status]
                   )}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Revenue
-                    </CardTitle>
-                  </CardHeader>
-                <CardContent>
-                  {loadingFinancial ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <div className="text-3xl font-bold">
-                      £{financialData?.revenue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                />
+                {INVOICE_STATUS_LABELS[status]}
+              </span>
+            ))}
+          </div>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Expenses
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loadingFinancial ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <div className="text-3xl font-bold">
-                      £{financialData?.expenses.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Profit
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loadingFinancial ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <div className={cn(
-                      "text-3xl font-bold",
-                      (financialData?.profit || 0) >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
-                    )}>
-                      £{financialData?.profit.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Monthly Summary Table */}
           <Card>
             <CardHeader>
-              <CardTitle>Monthly Summary</CardTitle>
+              <CardTitle>Cashflow</CardTitle>
               <CardDescription>
-                Completed project work and projected future work from leads. Historical data shows completed projects, projected data (in italics) shows leads by their timeline.
+                Clients down the side, months across. Open an invoice for a summary before going
+                to full details. Use Show paid for Xero-linked invoices on their paid date. Unbilled
+                quote remainder is included where the job has a due or completed date.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {(() => {
-                // Combine completed months with future months from leads
-                const completedMonths = monthlySummary?.months || []
-                const now = new Date()
-                const currentMonth = format(now, 'yyyy-MM')
-                
-                // Process leads to group by month
-                const futureMonthsMap = new Map<string, {
-                  totalValue: number
-                  totalQuotedHours: number
-                  projectCount: number
-                  clientBreakdown: Record<string, number>
-                  isProjected: boolean
-                }>()
-                
-                leads.forEach((lead) => {
-                  // Use due_date instead of timeline
-                  if (!lead.due_date) return
-                  
-                  const dueDate = new Date(lead.due_date)
-                  if (isNaN(dueDate.getTime())) return
-                  
-                  // Get the month of the due date
-                  const monthKey = format(startOfMonth(dueDate), 'yyyy-MM')
-                  
-                  // Only include future months (including current month)
-                  if (monthKey < currentMonth) return
-                  
-                  // Assign lead to its due date month
-                  if (!futureMonthsMap.has(monthKey)) {
-                    futureMonthsMap.set(monthKey, {
-                      totalValue: 0,
-                      totalQuotedHours: 0,
-                      projectCount: 0,
-                      clientBreakdown: {},
-                      isProjected: true,
-                    })
-                  }
-                  
-                  const monthData = futureMonthsMap.get(monthKey)!
-                  const value = lead.quote_value || 0
-                  const hours = lead.quoted_hours || 0
-                  const clientName = lead.client_name || 'Unknown'
-                  
-                  monthData.totalValue += value
-                  monthData.totalQuotedHours += hours
-                  monthData.projectCount += 1
-                  
-                  if (!monthData.clientBreakdown[clientName]) {
-                    monthData.clientBreakdown[clientName] = 0
-                  }
-                  monthData.clientBreakdown[clientName] += value
-                })
-                
-                // Combine completed and future months
-                const allMonthsMap = new Map<string, {
-                  totalValue: number
-                  totalQuotedHours: number
-                  projectCount: number
-                  clientBreakdown: Array<{ clientName: string; value: number }> | Record<string, number>
-                  isProjected: boolean
-                }>()
-                
-                // Add completed months
-                completedMonths.forEach((month) => {
-                  allMonthsMap.set(month.month, {
-                    ...month,
-                    isProjected: false,
-                  })
-                })
-                
-                // Add future months (merge if month already exists)
-                futureMonthsMap.forEach((futureData, monthKey) => {
-                  if (allMonthsMap.has(monthKey)) {
-                    // Merge with existing completed data
-                    const existing = allMonthsMap.get(monthKey)!
-                    existing.totalValue += futureData.totalValue
-                    existing.totalQuotedHours += futureData.totalQuotedHours
-                    existing.projectCount += futureData.projectCount
-                    // Merge client breakdown
-                    if (Array.isArray(existing.clientBreakdown)) {
-                      const breakdownMap: Record<string, number> = {}
-                      existing.clientBreakdown.forEach(c => {
-                        breakdownMap[c.clientName] = c.value
-                      })
-                      Object.entries(futureData.clientBreakdown).forEach(([client, value]) => {
-                        breakdownMap[client] = (breakdownMap[client] || 0) + value
-                      })
-                      existing.clientBreakdown = Object.entries(breakdownMap).map(([clientName, value]) => ({
-                        clientName,
-                        value,
-                      }))
-                    }
-                  } else {
-                    // New future month
-                    allMonthsMap.set(monthKey, {
-                      ...futureData,
-                      clientBreakdown: Object.entries(futureData.clientBreakdown).map(([clientName, value]) => ({
-                        clientName,
-                        value,
-                      })),
-                    })
-                  }
-                })
-                
-                // Sort months chronologically
-                const allMonths = Array.from(allMonthsMap.entries())
-                  .map(([month, data]) => ({
-                    month,
-                    ...data,
-                  }))
-                  .sort((a, b) => a.month.localeCompare(b.month))
-                
-                // Filter out months with no data
-                const monthsWithData = allMonths.filter(
-                  m => m.totalValue > 0 || m.totalQuotedHours > 0 || m.projectCount > 0
-                )
-                
-                if (monthsWithData.length === 0) {
-                  return (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <p className="mb-2">No monthly summary data available</p>
-                      <p className="text-sm">
-                        This could be because:
-                      </p>
-                      <ul className="text-sm mt-2 space-y-1 list-disc list-inside">
-                        <li>No completed projects have quote_value set</li>
-                        <li>Completed projects don't have completed_date configured</li>
-                        <li>No leads have timeline dates configured</li>
-                        <li>All projects are from Flexi-Design boards (excluded from this table)</li>
-                      </ul>
-                    </div>
-                  )
-                }
-                
-                return (
-                  <TooltipProvider>
-                    <div className="rounded-lg border overflow-hidden">
-                      <div ref={tableScrollRef} className="overflow-x-auto relative">
-                        <table className="w-full caption-bottom text-sm border-collapse">
-                          <thead className="[&_tr]:border-b">
-                            <tr className="hover:bg-muted/50 border-b transition-colors">
-                              <th className="sticky left-0 z-30 bg-background border-r text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Metric
-                              </th>
-                              {monthsWithData.map((monthData) => {
-                                const monthDate = parseISO(`${monthData.month}-01`)
-                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
-                                return (
-                                  <th key={monthData.month} className={cn(
-                                    "text-right text-foreground h-10 px-2 align-middle font-medium whitespace-nowrap min-w-[130px]",
-                                    isFuture && "italic text-muted-foreground"
-                                  )}>
-                                    {format(monthDate, 'MMM yyyy')}
-                                    {isFuture && <span className="text-xs ml-1">(proj.)</span>}
-                                  </th>
-                                )
-                              })}
-                            </tr>
-                          </thead>
-                          <tbody className="[&_tr:last-child]:border-0">
-                            {/* Total Billable Work Row */}
-                            <tr className="hover:bg-muted/50 border-b transition-colors">
-                              <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Total Billable Work
+            <CardContent className="px-0 pb-0 sm:px-0">
+              {grid.rows.length === 0 ? (
+                <p className="px-6 pb-6 text-sm text-muted-foreground">
+                  No invoices fall in this window. Add invoices on the{' '}
+                  <Link href="/billing" className="underline underline-offset-2">
+                    Invoices
+                  </Link>{' '}
+                  page to see them here.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[960px] border-collapse text-sm">
+                    <thead>
+                      <tr className="border-y">
+                        <th className="sticky left-0 z-20 min-w-[180px] bg-background px-4 py-2.5 text-left font-medium shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                          Client
+                        </th>
+                        {grid.months.map((month) => {
+                          const isCurrent = month === grid.currentMonth
+                          return (
+                            <th
+                              key={month}
+                              className={cn(
+                                'min-w-[160px] px-2 py-2.5 text-right font-medium',
+                                isCurrent && 'bg-[#6405FF]/10 text-[#6405FF]'
+                              )}
+                            >
+                              {formatMonthLabel(month)}
+                              {isCurrent ? (
+                                <span className="ml-1 text-[10px] font-normal uppercase tracking-wide">
+                                  Now
+                                </span>
+                              ) : null}
+                            </th>
+                          )
+                        })}
+                        <th className="min-w-[120px] px-4 py-2.5 text-right font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {grid.rows.map((row) => (
+                        <tr key={row.clientName} className="border-b align-top">
+                          <td className="sticky left-0 z-10 bg-background px-4 py-3 font-medium shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                            {row.clientName}
+                          </td>
+                          {grid.months.map((month) => {
+                            const items = row.itemsByMonth[month] ?? []
+                            const monthTotal = items.reduce((sum, item) => sum + item.amount, 0)
+                            const isCurrent = month === grid.currentMonth
+                            return (
+                              <td
+                                key={month}
+                                className={cn('px-2 py-2', isCurrent && 'bg-[#6405FF]/5')}
+                              >
+                                {items.length === 0 ? (
+                                  <span className="block py-1 text-right text-muted-foreground">—</span>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {items.map((item) => (
+                                      <InvoiceChip key={item.id} item={item} onSelect={openItem} />
+                                    ))}
+                                    {items.length > 1 ? (
+                                      <p className="px-1 text-right text-[11px] font-medium tabular-nums text-muted-foreground">
+                                        {formatGbp(monthTotal)}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                )}
                               </td>
-                              {monthsWithData.map((monthData) => {
-                                const clientBreakdown = Array.isArray(monthData.clientBreakdown) 
-                                  ? monthData.clientBreakdown 
-                                  : Object.entries(monthData.clientBreakdown).map(([clientName, value]) => ({
-                                      clientName,
-                                      value: typeof value === 'number' ? value : 0,
-                                    }))
-                                const hasData = clientBreakdown.length > 0 || monthData.totalValue > 0
-                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
-                                
-                                return (
-                                  <td key={monthData.month} className={cn(
-                                    "text-right p-2 align-middle whitespace-nowrap",
-                                    isFuture && "italic"
-                                  )}>
-                                    {hasData ? (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span className={cn(
-                                            "cursor-help underline decoration-dotted",
-                                            isFuture && "text-muted-foreground"
-                                          )}>
-                                            £{monthData.totalValue.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                          </span>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" className="max-w-[300px]">
-                                          <div className="space-y-1">
-                                            <div className="font-semibold mb-2">
-                                              {isFuture ? 'Projected Client Breakdown:' : 'Client Breakdown:'}
-                                            </div>
-                                            {clientBreakdown.map((client) => (
-                                              <div key={client.clientName} className="flex justify-between gap-4 text-sm">
-                                                <span>{client.clientName}:</span>
-                                                <span className="font-medium">£{client.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    ) : (
-                                      <span className="text-muted-foreground">—</span>
-                                    )}
-                                  </td>
+                            )
+                          })}
+                          <td className="px-4 py-3 text-right font-medium tabular-nums">
+                            {row.total > 0 ? formatGbp(row.total) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/40 font-medium">
+                        <td className="sticky left-0 z-10 bg-muted/40 px-4 py-3 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                          Total
+                        </td>
+                        {grid.months.map((month) => (
+                          <td
+                            key={month}
+                            className={cn(
+                              'px-2 py-3 text-right tabular-nums',
+                              month === grid.currentMonth && 'bg-[#6405FF]/10'
+                            )}
+                          >
+                            {(grid.totalsByMonth[month] ?? 0) > 0
+                              ? formatGbp(grid.totalsByMonth[month] ?? 0)
+                              : '—'}
+                          </td>
+                        ))}
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {grid.grandTotal > 0 ? formatGbp(grid.grandTotal) : '—'}
+                        </td>
+                      </tr>
+                      {showPaid ? (
+                      <tr className="border-t text-muted-foreground">
+                        <td className="sticky left-0 z-10 bg-background px-4 py-2 text-xs shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                          Of which paid
+                        </td>
+                        {grid.months.map((month) => (
+                          <td
+                            key={month}
+                            className={cn(
+                              'px-2 py-2 text-right text-xs tabular-nums',
+                              month === grid.currentMonth && 'bg-[#6405FF]/5'
+                            )}
+                          >
+                            {(grid.paidByMonth[month] ?? 0) > 0
+                              ? formatGbp(grid.paidByMonth[month] ?? 0)
+                              : '—'}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">
+                          {Object.values(grid.paidByMonth).some((value) => value > 0)
+                            ? formatGbp(
+                                Object.values(grid.paidByMonth).reduce(
+                                  (sum, value) => sum + value,
+                                  0
                                 )
-                              })}
-                            </tr>
-                            {/* Hours Quoted Row */}
-                            <tr className="hover:bg-muted/50 border-b transition-colors">
-                              <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Hours Quoted
-                              </td>
-                              {monthsWithData.map((monthData) => {
-                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
-                                return (
-                                  <td key={monthData.month} className={cn(
-                                    "text-right p-2 align-middle whitespace-nowrap",
-                                    isFuture && "italic text-muted-foreground"
-                                  )}>
-                                    {monthData.totalQuotedHours > 0 ? (
-                                      `${monthData.totalQuotedHours.toFixed(1)}h`
-                                    ) : (
-                                      <span className="text-muted-foreground">—</span>
-                                    )}
-                                  </td>
+                              )
+                            : '—'}
+                        </td>
+                      </tr>
+                      ) : null}
+                      <tr className="border-t text-muted-foreground">
+                        <td className="sticky left-0 z-10 bg-background px-4 py-2 text-xs shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                          Of which to send
+                        </td>
+                        {grid.months.map((month) => (
+                          <td
+                            key={month}
+                            className={cn(
+                              'px-2 py-2 text-right text-xs tabular-nums',
+                              month === grid.currentMonth && 'bg-[#6405FF]/5'
+                            )}
+                          >
+                            {(grid.toSendByMonth[month] ?? 0) > 0
+                              ? formatGbp(grid.toSendByMonth[month] ?? 0)
+                              : '—'}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">
+                          {Object.values(grid.toSendByMonth).some((value) => value > 0)
+                            ? formatGbp(
+                                Object.values(grid.toSendByMonth).reduce(
+                                  (sum, value) => sum + value,
+                                  0
                                 )
-                              })}
-                            </tr>
-                            {/* Number of Projects Row */}
-                            <tr className="hover:bg-muted/50 border-b transition-colors">
-                              <td className="sticky left-0 z-20 bg-background border-r font-medium p-2 align-middle whitespace-nowrap min-w-[150px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
-                                Number of Projects
-                              </td>
-                              {monthsWithData.map((monthData) => {
-                                const isFuture = monthData.month >= currentMonth && monthData.isProjected
-                                return (
-                                  <td key={monthData.month} className={cn(
-                                    "text-right p-2 align-middle whitespace-nowrap",
-                                    isFuture && "italic text-muted-foreground"
-                                  )}>
-                                    {Math.round(monthData.projectCount) > 0 ? (
-                                      Math.round(monthData.projectCount)
-                                    ) : (
-                                      <span className="text-muted-foreground">—</span>
-                                    )}
-                                  </td>
-                                )
-                              })}
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </TooltipProvider>
-                )
-              })()}
+                              )
+                            : '—'}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          {!xeroConnected && (
+          {grid.unscheduled.length > 0 ? (
             <Card>
-              <CardContent className="py-12">
-                <div className="text-center text-muted-foreground">
-                  <p className="mb-2">Connect Xero to see detailed forecasts</p>
-                  <p className="text-sm">
-                    Financial forecasting requires Xero integration to access real revenue and expense data.
-                  </p>
+              <CardHeader>
+                <CardTitle>Unscheduled</CardTitle>
+                <CardDescription>
+                  Need invoicing, but no invoice date or due date to place on the grid.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {grid.unscheduled.map((item) => (
+                    <InvoiceChip key={item.id} item={item} onSelect={openItem} />
+                  ))}
                 </div>
               </CardContent>
             </Card>
-          )}
-
+          ) : null}
         </div>
       </div>
+
+      <JobInvoiceSummarySheet
+        job={jobs.find((job) => job.id === summaryJobId) ?? null}
+        open={summaryJobId !== null}
+        highlightedInvoiceId={highlightedInvoiceId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSummaryJobId(null)
+            setHighlightedInvoiceId(null)
+          }
+        }}
+        onChanged={() => load({ silent: true })}
+      />
     </div>
   )
 }
-

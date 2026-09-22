@@ -212,7 +212,7 @@ export function AutomaticSyncForm() {
               <strong>Vercel Hobby (once per day):</strong> Use an external cron for more frequent syncs. Free options: cron-job.org, EasyCron, or Uptime Robot. Call this URL with GET and header <code className="bg-background border rounded px-1">X-Cron-Secret: your_secret_key</code>. Set <code className="bg-background border rounded px-1">CRON_SECRET</code> in your environment to match.
             </p>
             <code className="text-xs bg-background border rounded px-2 py-1 block break-all mt-1">
-              {typeof window !== 'undefined' ? `${window.location.origin}/api/sync/cron` : 'https://your-domain.com/api/sync/cron'}
+              {`${(process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '')}/api/sync/cron`}
             </code>
           </div>
         </div>
