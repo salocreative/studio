@@ -17,6 +17,7 @@ function XeroConnectionFormContent() {
     connected: boolean
     tenantName?: string
     isExpired?: boolean
+    canAttachFiles?: boolean
   } | null>(null)
   const searchParams = useSearchParams()
 
@@ -73,6 +74,7 @@ function XeroConnectionFormContent() {
           connected: result.connected || false,
           tenantName: result.tenantName,
           isExpired: result.isExpired,
+          canAttachFiles: result.canAttachFiles,
         })
       }
     } catch (error) {
@@ -171,6 +173,17 @@ function XeroConnectionFormContent() {
                 <div className="flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
                   <AlertCircle className="h-4 w-4" />
                   <span>Connection expired. Please reconnect.</span>
+                </div>
+              )}
+              {status.canAttachFiles === false && (
+                <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    File uploads to bills need a reconnect so Xero can grant the attachments permission.
+                  </p>
+                  <Button type="button" size="sm" onClick={() => void handleConnect()} disabled={connecting}>
+                    {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Reconnect
+                  </Button>
                 </div>
               )}
             </div>

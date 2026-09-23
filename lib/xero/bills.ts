@@ -1,5 +1,7 @@
 import { roundGbp } from '@/lib/billing/invoices'
+import { filenameFromContentDisposition } from '@/lib/expenses/parse-document'
 import { getXeroAccessContext } from '@/lib/xero/api'
+import { xeroTokenCanAttachFiles } from '@/lib/xero/token'
 
 const XERO_API_BASE = 'https://api.xero.com/api.xro/2.0'
 
@@ -39,6 +41,7 @@ export interface XeroBillSetup {
   tracking: XeroTrackingCategory[]
   contacts: XeroContactOption[]
   defaultTaxType: string | null
+  canAttachFiles: boolean
 }
 
 interface XeroAccess {
@@ -82,7 +85,15 @@ function formatXeroError(data: Record<string, unknown>, status: number): string 
   }
   if (messages.length > 0) return messages.join(' ')
   if (typeof data.Message === 'string' && data.Message) return data.Message
-  if (status === 401 || status === 403) return 'Xero refused the request. Reconnect Xero in Settings.'
+  if (typeof data.Detail === 'string' && data.Detail) {
+    if (status === 401 || status === 403) {
+      return 'Xero refused the document upload. Reconnect Xero in Settings so Studio can attach files.'
+    }
+    return data.Detail
+  }
+  if (status === 401 || status === 403) {
+    return 'Xero refused the request. Reconnect Xero in Settings.'
+  }
   return 'Xero request failed'
 }
 
@@ -137,7 +148,14 @@ export async function getXeroBillSetup(): Promise<{ error: string } | { success:
   if ('error' in access) {
     return {
       success: true,
-      setup: { connected: false, accounts: [], tracking: [], contacts: [], defaultTaxType: null },
+      setup: {
+        connected: false,
+        accounts: [],
+        tracking: [],
+        contacts: [],
+        defaultTaxType: null,
+        canAttachFiles: false,
+      },
     }
   }
 
@@ -188,6 +206,7 @@ export async function getXeroBillSetup(): Promise<{ error: string } | { success:
         tracking,
         contacts,
         defaultTaxType: pickExpenseTax((taxResult.data.TaxRates as Array<Record<string, unknown>>) || []),
+        canAttachFiles: xeroTokenCanAttachFiles(access.accessToken),
       },
     }
   } catch (error) {
@@ -245,7 +264,10 @@ export async function createXeroBill(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ Invoices: [invoice] }),
   })
-  if (!created.ok) return { error: created.error }
+  if (!created.ok) {
+    console.error('Xero bill create failed:', created.error)
+    return { error: created.error }
+  }
 
   const bill = ((created.data.Invoices as Array<Record<string, unknown>>) || [])[0]
   const xeroBillId = typeof bill?.InvoiceID === 'string' ? bill.InvoiceID : null
@@ -262,7 +284,7 @@ function driveFileId(fileUrl: string): string | null {
 
 export async function downloadCaptureFile(
   fileUrl: string
-): Promise<{ error: string } | { bytes: ArrayBuffer; contentType: string }> {
+): Promise<{ error: string } | { bytes: ArrayBuffer; contentType: string; fileName: string | null }> {
   const fileId = driveFileId(fileUrl)
   const url = fileId ? `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}` : fileUrl
   try {
@@ -271,6 +293,7 @@ export async function downloadCaptureFile(
       return { error: 'Could not download the document from Drive.' }
     }
     const contentType = response.headers.get('content-type') || ''
+    const fileName = filenameFromContentDisposition(response.headers.get('content-disposition'))
     const bytes = await response.arrayBuffer()
     if (bytes.byteLength < 100) {
       return { error: 'The downloaded document was empty.' }
@@ -288,7 +311,7 @@ export async function downloadCaptureFile(
         }
       }
     }
-    return { bytes, contentType: contentType || 'application/octet-stream' }
+    return { bytes, contentType: contentType || 'application/octet-stream', fileName }
   } catch (error) {
     console.error('Error downloading capture file:', error)
     return { error: 'Could not download the document from Drive.' }
@@ -305,17 +328,19 @@ export async function attachFileToXeroBill(input: {
   if ('error' in access) return { error: access.error }
 
   const safeName = input.fileName.replace(/[^\w.\- ()]+/g, '_') || 'invoice.pdf'
+  const body = Buffer.from(input.bytes)
   const response = await fetch(
     `${XERO_API_BASE}/Invoices/${input.xeroBillId}/Attachments/${encodeURIComponent(safeName)}`,
     {
-      method: 'POST',
+      method: 'PUT',
       headers: {
         Authorization: `Bearer ${access.accessToken}`,
         'Xero-tenant-id': access.tenantId,
         Accept: 'application/json',
-        'Content-Type': input.contentType.includes('pdf') ? 'application/pdf' : input.contentType,
+        'Content-Type': input.contentType.includes('pdf') ? 'application/pdf' : 'application/octet-stream',
+        'Content-Length': String(body.byteLength),
       },
-      body: input.bytes,
+      body,
     }
   )
   if (!response.ok) {
@@ -327,6 +352,7 @@ export async function attachFileToXeroBill(input: {
     } catch {
       if (text) message = text.slice(0, 300)
     }
+    console.error('Xero attachment failed:', response.status, message)
     return { error: message }
   }
   return { success: true }

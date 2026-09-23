@@ -56,6 +56,7 @@ supabase migration up
    - **Redirect URI**: `http://localhost:3000/api/xero/callback` (local dev)
    - **Scopes**: 
      - `accounting.transactions`
+     - `accounting.attachments`
      - `accounting.reports.read`
      - `accounting.contacts`
      - `accounting.settings`

@@ -1,3 +1,5 @@
+import type { ExpenseDocumentKind } from '@/lib/expenses/parse-document'
+
 export const EXPENSE_CAPTURE_STATUSES = [
   'new',
   'flagged_manual',
@@ -6,6 +8,8 @@ export const EXPENSE_CAPTURE_STATUSES = [
   'rejected',
   'push_failed',
 ] as const
+
+export type { ExpenseDocumentKind }
 
 export type ExpenseCaptureStatus = (typeof EXPENSE_CAPTURE_STATUSES)[number]
 
@@ -21,9 +25,14 @@ export interface ExpenseCapture {
   amount: number | null
   currency: string
   file_url: string
+  file_name: string | null
   file_type: 'pdf' | 'html'
   source_mode: VendorMode
   status: ExpenseCaptureStatus
+  document_kind: ExpenseDocumentKind
+  email_subject: string | null
+  gmail_message_id: string | null
+  same_email_count: number
   suggested_account_code: string | null
   account_code: string | null
   suggested_tracking_option_id: string | null

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { getXeroAuthUrl, getXeroConnection, fetchXeroFinancialData } from '@/lib/xero/api'
+import { xeroTokenCanAttachFiles } from '@/lib/xero/token'
 
 /**
  * Get Xero connection status
@@ -32,12 +33,16 @@ export async function getXeroStatus() {
     const now = new Date()
     const isExpired = expiresAt <= now
 
+    const accessToken =
+      typeof connection.access_token === 'string' ? connection.access_token : ''
+
     return {
       success: true,
       connected: true,
       tenantName: connection.tenant_name,
       expiresAt: connection.token_expires_at,
       isExpired,
+      canAttachFiles: accessToken ? xeroTokenCanAttachFiles(accessToken) : false,
     }
   } catch (error) {
     console.error('Error getting Xero status:', error)

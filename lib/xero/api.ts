@@ -841,6 +841,7 @@ export async function getXeroAuthUrl() {
   const scopes = [
     'offline_access', // Required for refresh_token
     'accounting.transactions',
+    'accounting.attachments',
     'accounting.reports.read',
     'accounting.contacts',
     'accounting.settings',

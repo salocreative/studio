@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { enrichExpenseCapture } from '@/lib/expenses/enrich-capture'
+import { cleanFileName } from '@/lib/expenses/parse-document'
+import { roundGbp } from '@/lib/billing/invoices'
 import { createAdminClient } from '@/lib/supabase/server'
 
 const MODES = new Set(['attachment', 'link', 'snapshot', 'flag'])
@@ -9,6 +12,16 @@ function authorized(request: NextRequest) {
   if (!secret) return false
   const bearer = request.headers.get('authorization')?.replace(/^Bearer /i, '')
   return bearer === secret
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function optionalAmount(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/,/g, '')) : NaN
+  if (!Number.isFinite(n) || n <= 0) return null
+  return roundGbp(n)
 }
 
 export async function POST(request: NextRequest) {
@@ -44,21 +57,58 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid file type or source mode.' }, { status: 400 })
   }
 
-  const { error } = await supabase.from('expense_captures').insert({
+  const fileName = cleanFileName(optionalString(body.file_name) || optionalString(body.filename))
+  const emailSubject = optionalString(body.email_subject)
+  const amount = optionalAmount(body.amount)
+  const invoiceDate = optionalString(body.invoice_date)
+  const row = {
     vendor_key: vendorKey,
     vendor_name: vendorName,
     gmail_message_id: gmailMessageId,
-    gmail_thread_id: typeof body.gmail_thread_id === 'string' ? body.gmail_thread_id : null,
-    email_date: typeof body.email_date === 'string' ? body.email_date : null,
+    gmail_thread_id: optionalString(body.gmail_thread_id),
+    email_date: optionalString(body.email_date),
+    invoice_date: invoiceDate,
+    amount,
     file_url: fileUrl,
     file_type: fileType,
     source_mode: sourceMode,
+    file_name: fileName,
+    email_subject: emailSubject,
     status: 'new',
-  })
+  }
 
-  if (error) {
-    if (error.code === '23505') return NextResponse.json({ success: true, duplicate: true })
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  let inserted = await supabase.from('expense_captures').insert(row).select('id').maybeSingle()
+  if (inserted.error && /file_name|email_subject|schema cache/i.test(inserted.error.message)) {
+    const { file_name: _ignoredName, email_subject: _ignoredSubject, ...legacy } = row
+    void _ignoredName
+    void _ignoredSubject
+    inserted = await supabase.from('expense_captures').insert(legacy).select('id').maybeSingle()
+  }
+
+  if (inserted.error) {
+    if (inserted.error.code === '23505') return NextResponse.json({ success: true, duplicate: true })
+    return NextResponse.json({ error: inserted.error.message }, { status: 500 })
+  }
+
+  const id = inserted.data && typeof inserted.data.id === 'string' ? inserted.data.id : null
+  if (id && (fileName == null || amount == null)) {
+    try {
+      const enriched = await enrichExpenseCapture({
+        fileUrl,
+        fileType: fileType === 'html' ? 'html' : 'pdf',
+        fileName,
+        emailSubject,
+        amount,
+      })
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+      if (!fileName && enriched.fileName) patch.file_name = enriched.fileName
+      if (amount == null && enriched.amount != null) patch.amount = enriched.amount
+      if (Object.keys(patch).length > 1) {
+        await supabase.from('expense_captures').update(patch).eq('id', id)
+      }
+    } catch (error) {
+      console.error('Error enriching expense capture:', error)
+    }
   }
 
   return NextResponse.json({ success: true })

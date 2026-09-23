@@ -26,6 +26,7 @@ The Forecast page integrates with Xero to provide real-time financial data and f
 
 Your Xero app needs the following scopes:
 - `accounting.transactions`
+- `accounting.attachments`
 - `accounting.reports.read`
 - `accounting.contacts`
 - `accounting.settings`

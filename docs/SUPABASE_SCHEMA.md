@@ -596,6 +596,32 @@ Log of linked Studio invoices updated from Xero (Reconcile fetch or daily cron).
 Index: `idx_xero_invoice_status_sync_runs_ran_at`.
 RLS: Admin all.
 
+### `public.expense_captures`
+
+Vendor invoices saved by the Gmail filer for admin review, then pushed to Xero as bills. One email can produce several rows (invoice plus statement).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `vendor_key` | `text` not null | FK → `vendor_rules.vendor_key`. |
+| `vendor_name` | `text` not null | |
+| `gmail_message_id` | `text` not null | Unique with `file_url`. |
+| `gmail_thread_id` | `text` | |
+| `email_date` / `invoice_date` | `date` | |
+| `amount` | `numeric(10,2)` | Filled by the filer, PDF extract, or reviewer. |
+| `currency` | `text` not null default `'GBP'` | |
+| `file_url` | `text` not null | Google Drive share link. |
+| `file_name` | `text` | Original attachment name (invoice vs statement). |
+| `email_subject` | `text` | Gmail subject. |
+| `file_type` | `text` | `pdf` or `html`. |
+| `source_mode` | `text` | `attachment`, `link`, `snapshot`, `flag`. |
+| `status` | `text` | `new`, `flagged_manual`, `approved`, `pushed`, `rejected`, `push_failed`. |
+| `chosen_account_code` / `chosen_tracking_option_id` | `text` | Set on review. |
+| `xero_bill_id` / `xero_pushed_at` | | After a successful push. |
+| `notes` | `text` | |
+
+Unique `(gmail_message_id, file_url)`. RLS: Admin all.
+
 ---
 
 ## Xero integration
@@ -877,3 +903,5 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | 077 | `project_invoices_xero_id` | `project_invoices.xero_invoice_id` unique link to Xero. |
 | 078 | `xero_invoice_dismissals` | Hide unmatched Xero invoices from Billing → Reconcile. |
 | 079 | `xero_invoice_status_sync_runs` | Log of Studio invoices updated from Xero status refresh. |
+| 080 | `expense_captures` | Vendor invoice captures, vendor rules, Xero bill push log. |
+| 081 | `expense_capture_file_name` | `expense_captures.file_name` and `email_subject`. |

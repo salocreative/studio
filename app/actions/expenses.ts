@@ -1,6 +1,11 @@
 'use server'
 
 import { checkIsAdmin } from '@/app/actions/auth'
+import { enrichExpenseCapture } from '@/lib/expenses/enrich-capture'
+import {
+  inferExpenseDocumentKind,
+  type ExpenseDocumentKind,
+} from '@/lib/expenses/parse-document'
 import {
   VENDOR_MODES,
   type ExpenseCapture,
@@ -39,6 +44,31 @@ function isMissingTable(error: { code?: string; message?: string } | null): bool
     message.includes('does not exist') ||
     message.includes('schema cache')
   )
+}
+
+function isMissingCaptureColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  const message = error.message ?? ''
+  return (
+    error.code === 'PGRST204' ||
+    message.includes('file_name') ||
+    message.includes('email_subject') ||
+    message.includes('schema cache')
+  )
+}
+
+const CAPTURE_SELECT =
+  'id, vendor_key, vendor_name, email_date, invoice_date, amount, currency, file_url, file_name, email_subject, gmail_message_id, file_type, source_mode, status, chosen_account_code, chosen_tracking_option_id, xero_bill_id, notes'
+
+const CAPTURE_SELECT_LEGACY =
+  'id, vendor_key, vendor_name, email_date, invoice_date, amount, currency, file_url, file_type, source_mode, status, chosen_account_code, chosen_tracking_option_id, xero_bill_id, notes'
+
+const REVIEW_STATUSES = new Set(['new', 'flagged_manual', 'push_failed'])
+const KIND_ORDER: Record<ExpenseDocumentKind, number> = {
+  invoice: 0,
+  receipt: 1,
+  other: 2,
+  statement: 3,
 }
 
 const MIGRATION_ERROR =
@@ -114,14 +144,20 @@ async function loadXeroCoding() {
     contacts: XeroContactOption[]
     tracking: XeroTrackingCategory[]
     error: string | null
+    canAttachFiles: boolean
   } = 'error' in setup
-    ? { connected: false, accounts: [], contacts: [], tracking: [], error: setup.error }
+    ? { connected: false, accounts: [], contacts: [], tracking: [], error: setup.error, canAttachFiles: false }
     : {
         connected: setup.setup.connected,
         accounts: setup.setup.accounts,
         contacts: setup.setup.contacts,
         tracking: setup.setup.tracking,
-        error: setup.setup.connected ? null : 'Xero is not connected. Connect it in Settings before pushing bills.',
+        canAttachFiles: setup.setup.canAttachFiles,
+        error: setup.setup.connected
+          ? setup.setup.canAttachFiles
+            ? null
+            : 'Xero can create bills, but not attach files yet. Reconnect Xero to grant file uploads, then approve again.'
+          : 'Xero is not connected. Connect it in Settings before pushing bills.',
       }
   return xero
 }
@@ -137,18 +173,66 @@ export async function getVendorRulesPage() {
   return { success: true as const, vendorRules: loaded.vendorRules, xero }
 }
 
+async function enrichIncompleteCaptures(
+  supabase: NonNullable<Awaited<ReturnType<typeof requireAdminClient>>['supabase']>,
+  rows: Record<string, unknown>[]
+) {
+  const candidates = rows
+    .filter((row) => REVIEW_STATUSES.has(String(row.status)))
+    .filter((row) => !row.file_name)
+    .slice(0, 6)
+
+  await Promise.all(
+    candidates.map(async (row) => {
+      try {
+        const enriched = await enrichExpenseCapture({
+          fileUrl: String(row.file_url),
+          fileType: row.file_type === 'html' ? 'html' : 'pdf',
+          fileName: typeof row.file_name === 'string' ? row.file_name : null,
+          emailSubject: typeof row.email_subject === 'string' ? row.email_subject : null,
+          amount: row.amount == null ? null : toGbpNumber(row.amount),
+        })
+        const patch: Record<string, unknown> = {}
+        if (!row.file_name && enriched.fileName) {
+          row.file_name = enriched.fileName
+          patch.file_name = enriched.fileName
+        }
+        if (row.amount == null && enriched.amount != null) {
+          row.amount = enriched.amount
+          patch.amount = enriched.amount
+        }
+        if (Object.keys(patch).length === 0) return
+        await supabase
+          .from('expense_captures')
+          .update({ ...patch, updated_at: new Date().toISOString() })
+          .eq('id', String(row.id))
+      } catch (error) {
+        console.error('Error enriching expense capture:', error)
+      }
+    })
+  )
+}
+
 export async function getExpensesPage() {
   const auth = await requireAdminClient()
   if (!auth.supabase) return { error: auth.error }
 
-  const { data, error } = await auth.supabase
+  const full = await auth.supabase
     .from('expense_captures')
-    .select(
-      'id, vendor_key, vendor_name, email_date, invoice_date, amount, currency, file_url, file_type, source_mode, status, chosen_account_code, chosen_tracking_option_id, xero_bill_id, notes'
-    )
+    .select(CAPTURE_SELECT)
     .order('email_date', { ascending: false, nullsFirst: false })
     .limit(500)
 
+  const query =
+    full.error && isMissingCaptureColumn(full.error) && !isMissingTable(full.error)
+      ? await auth.supabase
+          .from('expense_captures')
+          .select(CAPTURE_SELECT_LEGACY)
+          .order('email_date', { ascending: false, nullsFirst: false })
+          .limit(500)
+      : full
+
+  const { data, error } = query
   if (error) {
     if (isMissingTable(error)) return { error: MIGRATION_ERROR }
     return { error: error.message }
@@ -159,6 +243,8 @@ export async function getExpensesPage() {
   const { vendorRules, ruleByKey } = loaded
 
   const rows = (data || []) as Record<string, unknown>[]
+  await enrichIncompleteCaptures(auth.supabase, rows)
+
   const failedIds = rows
     .filter((row) => row.status === 'push_failed')
     .map((row) => String(row.id))
@@ -185,10 +271,21 @@ export async function getExpensesPage() {
     lastAmount.set(key, roundGbp(toGbpNumber(row.amount)))
   }
 
+  const sameEmailCount = new Map<string, number>()
+  for (const row of rows) {
+    const messageId = typeof row.gmail_message_id === 'string' ? row.gmail_message_id : ''
+    if (!messageId) continue
+    sameEmailCount.set(messageId, (sameEmailCount.get(messageId) || 0) + 1)
+  }
+
   const captures: ExpenseCapture[] = rows.map((row) => {
     const rule = ruleByKey.get(String(row.vendor_key))
     const amount = row.amount == null ? null : roundGbp(toGbpNumber(row.amount))
     const status = String(row.status) as ExpenseCaptureStatus
+    const fileName = typeof row.file_name === 'string' ? row.file_name : null
+    const emailSubject = typeof row.email_subject === 'string' ? row.email_subject : null
+    const gmailMessageId = typeof row.gmail_message_id === 'string' ? row.gmail_message_id : null
+    const documentKind = inferExpenseDocumentKind(fileName, emailSubject)
     return {
       id: String(row.id),
       vendor_key: String(row.vendor_key),
@@ -198,11 +295,16 @@ export async function getExpensesPage() {
       amount,
       currency: typeof row.currency === 'string' ? row.currency : 'GBP',
       file_url: String(row.file_url),
+      file_name: fileName,
       file_type: row.file_type === 'html' ? 'html' : 'pdf',
       source_mode: (VENDOR_MODES as readonly string[]).includes(String(row.source_mode))
         ? (String(row.source_mode) as VendorMode)
         : 'attachment',
       status,
+      document_kind: documentKind,
+      email_subject: emailSubject,
+      gmail_message_id: gmailMessageId,
+      same_email_count: gmailMessageId ? sameEmailCount.get(gmailMessageId) || 1 : 1,
       suggested_account_code: rule?.default_account_code ?? null,
       account_code:
         (typeof row.chosen_account_code === 'string' ? row.chosen_account_code : null) ||
@@ -219,6 +321,15 @@ export async function getExpensesPage() {
       push_error: pushErrors.get(String(row.id)) ?? null,
       last_approved_amount: lastAmount.get(String(row.vendor_key)) ?? null,
     }
+  })
+
+  captures.sort((a, b) => {
+    const dateCmp = (b.email_date || '').localeCompare(a.email_date || '')
+    if (dateCmp !== 0) return dateCmp
+    if (a.gmail_message_id && a.gmail_message_id === b.gmail_message_id) {
+      return KIND_ORDER[a.document_kind] - KIND_ORDER[b.document_kind]
+    }
+    return a.vendor_name.localeCompare(b.vendor_name)
   })
 
   const xero = await loadXeroCoding()
@@ -364,7 +475,7 @@ export async function approveExpenseCapture(input: {
   const { data, error } = await supabase
     .from('expense_captures')
     .select(
-      'id, vendor_key, vendor_name, email_date, file_url, file_type, status, xero_bill_id, currency'
+      'id, vendor_key, vendor_name, email_date, file_url, file_name, file_type, status, xero_bill_id, currency'
     )
     .eq('id', input.id)
     .maybeSingle()
@@ -456,16 +567,20 @@ export async function approveExpenseCapture(input: {
   }
 
   const extension = data.file_type === 'html' ? 'html' : 'pdf'
+  const originalName = typeof data.file_name === 'string' ? data.file_name : ''
+  const fileName = originalName || `${data.vendor_name} ${invoiceDate}.${extension}`
   const attached = await attachFileToXeroBill({
     xeroBillId,
-    fileName: `${data.vendor_name} ${invoiceDate}.${extension}`,
+    fileName,
     bytes: file.bytes,
     contentType: file.contentType,
   })
   if ('error' in attached) {
     await logPush('error', xeroBillId, attached.error)
     await updateCapture(input.id, { status: 'push_failed', xero_bill_id: xeroBillId })
-    return { error: attached.error }
+    return {
+      error: `The bill was created in Xero, but the document was not attached. ${attached.error}`,
+    }
   }
 
   await logPush('success', xeroBillId, null)

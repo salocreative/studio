@@ -573,6 +573,27 @@ Log of linked Studio invoices updated from Xero.
 
 **RLS:** Admin all.
 
+### `expense_captures`
+
+Vendor invoices captured from Gmail for review, then pushed to Xero as ACCPAY bills. Multiple attachments from one email become multiple rows.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `vendor_key` | `text` not null | FK → `vendor_rules.vendor_key` |
+| `vendor_name` | `text` not null | |
+| `gmail_message_id` | `text` not null | Unique with `file_url` |
+| `email_date` / `invoice_date` | `date` | |
+| `amount` | `numeric(10,2)` | Optional until review |
+| `file_url` | `text` not null | Drive share link |
+| `file_name` | `text` | Original attachment name |
+| `email_subject` | `text` | |
+| `file_type` | `text` | `pdf` or `html` |
+| `status` | `text` | `new` → review → `pushed` / `rejected` |
+| `xero_bill_id` | `text` | |
+
+**RLS:** Admin all.
+
 ---
 
 ## 13. Relationships (high level)
@@ -595,6 +616,7 @@ auth.users 1───1 users
 
 monday_tasks (parent_task_id self-ref)
 monday_projects ──< project_invoices
+vendor_rules ──< expense_captures
 xero_invoice_dismissals (Xero InvoiceIDs hidden from Reconcile)
 xero_invoice_status_sync_runs (Xero→Studio paid/status refresh log)
 monday_column_mappings (config table, no FKs)
