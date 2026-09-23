@@ -46,6 +46,7 @@ import { LifetimeValueBracketsForm } from './lifetime-value-brackets-form'
 import { RetainersForm } from './retainers-form'
 import { ThankYouClientsForm } from './thank-you-clients-form'
 import { StudioApiTokensForm } from './studio-api-tokens-form'
+import { VendorRulesForm } from './vendor-rules-form'
 import { deleteAllMondayData } from '@/app/actions/monday'
 import { getUsers, createUser, linkExistingUserByEmail, updateUserRole, deleteUser, updateUserUtilizationExclusion, updateUserExpectedUtilization, updateUserMondayUserId, getFormerUsers } from '@/app/actions/users'
 import { getMondayPeople, type MondayPerson } from '@/app/actions/holidays-board'
@@ -307,11 +308,22 @@ export default function SettingsPageClient() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl">
           <Tabs defaultValue="team" className="w-full">
-            <TabsList className="grid w-full max-w-2xl grid-cols-4">
-              <TabsTrigger value="team">Team</TabsTrigger>
-              <TabsTrigger value="data-sync">Data Sync</TabsTrigger>
-              <TabsTrigger value="integrations">Integrations</TabsTrigger>
-              <TabsTrigger value="thank-you-pages">Thank You Pages</TabsTrigger>
+            <TabsList className="h-auto w-full max-w-4xl flex-wrap justify-start">
+              <TabsTrigger value="team" className="flex-none px-3">
+                Team
+              </TabsTrigger>
+              <TabsTrigger value="data-sync" className="flex-none px-3">
+                Data Sync
+              </TabsTrigger>
+              <TabsTrigger value="integrations" className="flex-none px-3">
+                Integrations
+              </TabsTrigger>
+              <TabsTrigger value="thank-you-pages" className="flex-none px-3">
+                Thank You Pages
+              </TabsTrigger>
+              <TabsTrigger value="vendor-rules" className="flex-none px-3">
+                Vendor rules
+              </TabsTrigger>
             </TabsList>
 
             {/* Team Tab */}
@@ -905,6 +917,10 @@ export default function SettingsPageClient() {
             {/* Thank You Pages Tab */}
             <TabsContent value="thank-you-pages" className="mt-6 space-y-6">
               <ThankYouClientsForm />
+            </TabsContent>
+
+            <TabsContent value="vendor-rules" className="mt-6 space-y-6">
+              <VendorRulesForm />
             </TabsContent>
           </Tabs>
         </div>

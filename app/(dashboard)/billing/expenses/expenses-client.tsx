@@ -2,34 +2,19 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { format, parseISO } from 'date-fns'
-import { ExternalLink, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { ExternalLink, Loader2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   approveExpenseCapture,
   flagExpenseCapture,
   getExpensesPage,
   rejectExpenseCapture,
-  saveVendorRule,
 } from '@/app/actions/expenses'
-import type {
-  ExpenseCapture,
-  ExpenseCaptureStatus,
-  VendorMode,
-  VendorRule,
-  VendorRuleInput,
-} from '@/lib/expenses/types'
+import type { ExpenseCapture, ExpenseCaptureStatus, VendorRule } from '@/lib/expenses/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -46,9 +31,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { formatGbp } from '@/lib/billing/invoices'
-import type { XeroAccountOption, XeroTrackingCategory } from '@/lib/xero/bills'
+import type { XeroAccountOption, XeroContactOption, XeroTrackingCategory } from '@/lib/xero/bills'
 import { xeroBillUrl } from '@/lib/xero/urls'
 
 const NONE = '__none__'
@@ -71,6 +55,7 @@ interface PageData {
   xero: {
     connected: boolean
     accounts: XeroAccountOption[]
+    contacts: XeroContactOption[]
     tracking: XeroTrackingCategory[]
     error: string | null
   }
@@ -103,13 +88,6 @@ function draftFromCapture(capture: ExpenseCapture): Draft {
   }
 }
 
-function splitList(value: string): string[] {
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 export function ExpensesPageClient() {
   const [data, setData] = useState<PageData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -118,8 +96,6 @@ export function ExpensesPageClient() {
   const [vendorFilter, setVendorFilter] = useState(NONE)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [ruleOpen, setRuleOpen] = useState(false)
-  const [editingRule, setEditingRule] = useState<VendorRule | null>(null)
 
   useEffect(() => {
     void load()
@@ -216,12 +192,13 @@ export function ExpensesPageClient() {
         ) : loadError ? (
           <p className="text-sm text-muted-foreground">{loadError}</p>
         ) : data ? (
-          <Tabs defaultValue="captures" className="mx-auto max-w-7xl">
+          <Tabs defaultValue="subscriptions" className="mx-auto max-w-7xl">
             <TabsList>
-              <TabsTrigger value="captures">To review</TabsTrigger>
-              <TabsTrigger value="vendors">Vendor rules</TabsTrigger>
+              <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+              <TabsTrigger value="xero-review">Xero Review</TabsTrigger>
             </TabsList>
-            <TabsContent value="captures" className="mt-4">
+            <TabsContent value="subscriptions" className="mt-4" />
+            <TabsContent value="xero-review" className="mt-4">
               {data.xero.error && (
                 <p className="mb-4 text-sm text-muted-foreground">{data.xero.error}</p>
               )}
@@ -443,356 +420,9 @@ export function ExpensesPageClient() {
                 </CardContent>
               </Card>
             </TabsContent>
-            <TabsContent value="vendors" className="mt-4">
-              <VendorRules
-                rules={data.vendorRules}
-                onAdd={() => {
-                  setEditingRule(null)
-                  setRuleOpen(true)
-                }}
-                onEdit={(rule) => {
-                  setEditingRule(rule)
-                  setRuleOpen(true)
-                }}
-              />
-            </TabsContent>
           </Tabs>
         ) : null}
       </div>
-
-      <VendorRuleDialog
-        open={ruleOpen}
-        rule={editingRule}
-        accounts={data?.xero.accounts || []}
-        tracking={data?.xero.tracking || []}
-        onOpenChange={setRuleOpen}
-        onSaved={() => void load()}
-      />
     </div>
-  )
-}
-
-function VendorRules({
-  rules,
-  onAdd,
-  onEdit,
-}: {
-  rules: VendorRule[]
-  onAdd: () => void
-  onEdit: (rule: VendorRule) => void
-}) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle>Vendor rules</CardTitle>
-          <CardDescription>
-            These tell the filer which emails to save, and how a bill from that vendor is coded.
-          </CardDescription>
-        </div>
-        <Button type="button" size="sm" onClick={onAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add vendor
-        </Button>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Vendor</TableHead>
-              <TableHead>Capture</TableHead>
-              <TableHead>Xero</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rules.map((rule) => (
-              <TableRow key={rule.id}>
-                <TableCell>
-                  <div className="font-medium">{rule.vendor_name}</div>
-                  <div className="text-xs text-muted-foreground">{rule.vendor_key}</div>
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {rule.is_capture_active ? rule.mode : 'Paused'}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {rule.default_account_code || 'No account'}
-                  {rule.xero_contact_id ? '' : ' · no contact'}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button type="button" variant="outline" size="sm" onClick={() => onEdit(rule)}>
-                    Edit
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  )
-}
-
-function emptyRule(): VendorRuleInput {
-  return {
-    vendor_name: '',
-    sender_domains: [],
-    subject_keywords: [],
-    raw_query_override: null,
-    mode: 'attachment',
-    link_domain_hint: null,
-    link_fallback: false,
-    folder_name: null,
-    is_capture_active: true,
-    xero_contact_id: null,
-    default_account_code: null,
-    default_tracking_category_id: null,
-    default_tracking_option_id: null,
-  }
-}
-
-function VendorRuleDialog({
-  open,
-  rule,
-  accounts,
-  tracking,
-  onOpenChange,
-  onSaved,
-}: {
-  open: boolean
-  rule: VendorRule | null
-  accounts: XeroAccountOption[]
-  tracking: XeroTrackingCategory[]
-  onOpenChange: (open: boolean) => void
-  onSaved: () => void
-}) {
-  const [form, setForm] = useState<VendorRuleInput>(emptyRule())
-  const [domains, setDomains] = useState('')
-  const [keywords, setKeywords] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    if (!rule) {
-      setForm(emptyRule())
-      setDomains('')
-      setKeywords('')
-      return
-    }
-    setForm({
-      vendor_name: rule.vendor_name,
-      sender_domains: rule.sender_domains,
-      subject_keywords: rule.subject_keywords,
-      raw_query_override: rule.raw_query_override,
-      mode: rule.mode,
-      link_domain_hint: rule.link_domain_hint,
-      link_fallback: rule.link_fallback,
-      folder_name: rule.folder_name,
-      is_capture_active: rule.is_capture_active,
-      xero_contact_id: rule.xero_contact_id,
-      default_account_code: rule.default_account_code,
-      default_tracking_category_id: rule.default_tracking_category_id,
-      default_tracking_option_id: rule.default_tracking_option_id,
-    })
-    setDomains(rule.sender_domains.join(', '))
-    setKeywords(rule.subject_keywords.join(', '))
-  }, [open, rule])
-
-  function setTracking(optionId: string) {
-    if (!optionId) {
-      setForm((current) => ({
-        ...current,
-        default_tracking_option_id: null,
-        default_tracking_category_id: null,
-      }))
-      return
-    }
-    const category = tracking.find((item) => item.options.some((option) => option.id === optionId))
-    setForm((current) => ({
-      ...current,
-      default_tracking_option_id: optionId,
-      default_tracking_category_id: category?.id || null,
-    }))
-  }
-
-  async function save() {
-    setSaving(true)
-    try {
-      const result = await saveVendorRule({
-        ...form,
-        id: rule?.id,
-        sender_domains: splitList(domains),
-        subject_keywords: splitList(keywords),
-        mode: form.mode as VendorMode,
-      })
-      if (result.error) {
-        toast.error(result.error)
-      } else {
-        toast.success(rule ? 'Vendor updated' : 'Vendor added')
-        onOpenChange(false)
-        onSaved()
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{rule ? rule.vendor_name : 'Add vendor'}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="vendor-name">Vendor name</Label>
-            <Input
-              id="vendor-name"
-              value={form.vendor_name}
-              onChange={(event) => setForm((current) => ({ ...current, vendor_name: event.target.value }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="vendor-domains">Sender domains</Label>
-            <Input
-              id="vendor-domains"
-              value={domains}
-              placeholder="vercel.com, stripe.com"
-              onChange={(event) => setDomains(event.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="vendor-keywords">Subject keywords</Label>
-            <Input
-              id="vendor-keywords"
-              value={keywords}
-              placeholder="invoice, receipt"
-              onChange={(event) => setKeywords(event.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="vendor-query">Gmail search override</Label>
-            <Textarea
-              id="vendor-query"
-              value={form.raw_query_override || ''}
-              placeholder="Used instead of domains and keywords when set"
-              onChange={(event) =>
-                setForm((current) => ({ ...current, raw_query_override: event.target.value || null }))
-              }
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Mode</Label>
-              <Select
-                value={form.mode}
-                onValueChange={(value) => setForm((current) => ({ ...current, mode: value as VendorMode }))}
-              >
-                <SelectTrigger className="w-full" size="sm" aria-label="Capture mode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="attachment">Attachment</SelectItem>
-                  <SelectItem value="link">Link</SelectItem>
-                  <SelectItem value="snapshot">Snapshot</SelectItem>
-                  <SelectItem value="flag">Flag only</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="vendor-hint">Link hint</Label>
-              <Input
-                id="vendor-hint"
-                value={form.link_domain_hint || ''}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, link_domain_hint: event.target.value || null }))
-                }
-              />
-            </div>
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.link_fallback}
-              onChange={(event) => setForm((current) => ({ ...current, link_fallback: event.target.checked }))}
-            />
-            If there is no attachment, follow a link
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.is_capture_active}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, is_capture_active: event.target.checked }))
-              }
-            />
-            Actively scanned
-          </label>
-          <div className="space-y-2">
-            <Label htmlFor="vendor-contact">Xero contact ID</Label>
-            <Input
-              id="vendor-contact"
-              value={form.xero_contact_id || ''}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, xero_contact_id: event.target.value || null }))
-              }
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Default account</Label>
-            <Select
-              value={form.default_account_code || NONE}
-              onValueChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  default_account_code: value === NONE ? null : value,
-                }))
-              }
-            >
-              <SelectTrigger className="w-full" size="sm" aria-label="Default account">
-                <SelectValue placeholder="Account" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>No account</SelectItem>
-                {accounts.map((account) => (
-                  <SelectItem key={account.code} value={account.code}>
-                    {account.code} {account.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {tracking.length > 0 && (
-            <div className="space-y-2">
-              <Label>Default tracking</Label>
-              <Select
-                value={form.default_tracking_option_id || NONE}
-                onValueChange={(value) => setTracking(value === NONE ? '' : value)}
-              >
-                <SelectTrigger className="w-full" size="sm" aria-label="Default tracking">
-                  <SelectValue placeholder="Tracking" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>No tracking</SelectItem>
-                  {tracking.flatMap((category) =>
-                    category.options.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {category.name}: {option.name}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button type="button" onClick={() => void save()} disabled={saving}>
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

@@ -97,7 +97,6 @@ export const navigation: NavItem[] = [
     children: [
       { title: 'Invoices', href: '/billing' },
       { title: 'Forecast', href: '/forecast' },
-      { title: 'Reconcile', href: '/billing/reconcile' },
       { title: 'Expenses', href: '/billing/expenses' },
     ],
   },

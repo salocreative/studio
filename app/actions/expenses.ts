@@ -18,6 +18,7 @@ import {
   downloadCaptureFile,
   getXeroBillSetup,
   type XeroAccountOption,
+  type XeroContactOption,
   type XeroTrackingCategory,
 } from '@/lib/xero/bills'
 
@@ -77,6 +78,65 @@ function mapVendor(row: Record<string, unknown>): VendorRule {
   }
 }
 
+async function loadVendorRules(supabase: NonNullable<Awaited<ReturnType<typeof requireAdminClient>>['supabase']>) {
+  const { data: rules, error } = await supabase
+    .from('vendor_rules')
+    .select(
+      'vendor_key, default_account_code, default_tracking_option_id, xero_contact_id, vendor_name, id, sender_domains, subject_keywords, raw_query_override, mode, link_domain_hint, link_fallback, folder_name, is_capture_active, default_tracking_category_id'
+    )
+    .order('vendor_name')
+
+  if (error) {
+    if (isMissingTable(error)) return { error: MIGRATION_ERROR }
+    return { error: error.message }
+  }
+
+  const ruleByKey = new Map<string, RuleRow>()
+  const vendorRules = ((rules || []) as Record<string, unknown>[]).map((row) => {
+    const mapped = mapVendor(row)
+    ruleByKey.set(mapped.vendor_key, {
+      vendor_key: mapped.vendor_key,
+      default_account_code: mapped.default_account_code,
+      default_tracking_option_id: mapped.default_tracking_option_id,
+      xero_contact_id: mapped.xero_contact_id,
+    })
+    return mapped
+  })
+
+  return { vendorRules, ruleByKey }
+}
+
+async function loadXeroCoding() {
+  const setup = await getXeroBillSetup()
+  const xero: {
+    connected: boolean
+    accounts: XeroAccountOption[]
+    contacts: XeroContactOption[]
+    tracking: XeroTrackingCategory[]
+    error: string | null
+  } = 'error' in setup
+    ? { connected: false, accounts: [], contacts: [], tracking: [], error: setup.error }
+    : {
+        connected: setup.setup.connected,
+        accounts: setup.setup.accounts,
+        contacts: setup.setup.contacts,
+        tracking: setup.setup.tracking,
+        error: setup.setup.connected ? null : 'Xero is not connected. Connect it in Settings before pushing bills.',
+      }
+  return xero
+}
+
+export async function getVendorRulesPage() {
+  const auth = await requireAdminClient()
+  if (!auth.supabase) return { error: auth.error }
+
+  const loaded = await loadVendorRules(auth.supabase)
+  if (!loaded.vendorRules) return { error: loaded.error || MIGRATION_ERROR }
+
+  const xero = await loadXeroCoding()
+  return { success: true as const, vendorRules: loaded.vendorRules, xero }
+}
+
 export async function getExpensesPage() {
   const auth = await requireAdminClient()
   if (!auth.supabase) return { error: auth.error }
@@ -94,27 +154,9 @@ export async function getExpensesPage() {
     return { error: error.message }
   }
 
-  const { data: rules, error: rulesError } = await auth.supabase
-    .from('vendor_rules')
-    .select('vendor_key, default_account_code, default_tracking_option_id, xero_contact_id, vendor_name, id, sender_domains, subject_keywords, raw_query_override, mode, link_domain_hint, link_fallback, folder_name, is_capture_active, default_tracking_category_id')
-    .order('vendor_name')
-
-  if (rulesError) {
-    if (isMissingTable(rulesError)) return { error: MIGRATION_ERROR }
-    return { error: rulesError.message }
-  }
-
-  const ruleByKey = new Map<string, RuleRow>()
-  const vendorRules = ((rules || []) as Record<string, unknown>[]).map((row) => {
-    const mapped = mapVendor(row)
-    ruleByKey.set(mapped.vendor_key, {
-      vendor_key: mapped.vendor_key,
-      default_account_code: mapped.default_account_code,
-      default_tracking_option_id: mapped.default_tracking_option_id,
-      xero_contact_id: mapped.xero_contact_id,
-    })
-    return mapped
-  })
+  const loaded = await loadVendorRules(auth.supabase)
+  if (!loaded.vendorRules || !loaded.ruleByKey) return { error: loaded.error || MIGRATION_ERROR }
+  const { vendorRules, ruleByKey } = loaded
 
   const rows = (data || []) as Record<string, unknown>[]
   const failedIds = rows
@@ -179,20 +221,7 @@ export async function getExpensesPage() {
     }
   })
 
-  const setup = await getXeroBillSetup()
-  const xero: {
-    connected: boolean
-    accounts: XeroAccountOption[]
-    tracking: XeroTrackingCategory[]
-    error: string | null
-  } = 'error' in setup
-    ? { connected: false, accounts: [], tracking: [], error: setup.error }
-    : {
-        connected: setup.setup.connected,
-        accounts: setup.setup.accounts,
-        tracking: setup.setup.tracking,
-        error: setup.setup.connected ? null : 'Xero is not connected. Connect it in Settings before pushing bills.',
-      }
+  const xero = await loadXeroCoding()
 
   return { success: true as const, captures, vendorRules, xero }
 }

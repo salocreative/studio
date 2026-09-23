@@ -17,6 +17,11 @@ export interface XeroAccountOption {
   name: string
 }
 
+export interface XeroContactOption {
+  id: string
+  name: string
+}
+
 export interface XeroTrackingOption {
   id: string
   name: string
@@ -32,6 +37,7 @@ export interface XeroBillSetup {
   connected: boolean
   accounts: XeroAccountOption[]
   tracking: XeroTrackingCategory[]
+  contacts: XeroContactOption[]
   defaultTaxType: string | null
 }
 
@@ -80,6 +86,36 @@ function formatXeroError(data: Record<string, unknown>, status: number): string 
   return 'Xero request failed'
 }
 
+async function listXeroContacts(access: XeroAccess): Promise<XeroContactOption[]> {
+  const filters = ['ContactStatus=="ACTIVE"', null]
+  for (const where of filters) {
+    const contacts: XeroContactOption[] = []
+    let rejected = false
+    for (let page = 1; page <= 40; page += 1) {
+      const params = new URLSearchParams({ page: String(page) })
+      if (where) params.set('where', where)
+      const result = await xeroFetch(access, `/Contacts?${params.toString()}`)
+      if (!result.ok) {
+        rejected = page === 1 && Boolean(where)
+        break
+      }
+      const rows = (result.data.Contacts as Array<Record<string, unknown>>) || []
+      for (const row of rows) {
+        const status = String(row.ContactStatus || 'ACTIVE').toUpperCase()
+        const id = typeof row.ContactID === 'string' ? row.ContactID : ''
+        const name = typeof row.Name === 'string' ? row.Name.trim() : ''
+        if (!id || !name || status !== 'ACTIVE') continue
+        contacts.push({ id, name })
+      }
+      if (rows.length < 100) break
+    }
+    if (rejected) continue
+    contacts.sort((left, right) => left.name.localeCompare(right.name))
+    return contacts
+  }
+  return []
+}
+
 function pickExpenseTax(rates: Array<Record<string, unknown>>): string | null {
   const usable = rates.filter((rate) => {
     const status = String(rate.Status || '').toUpperCase()
@@ -101,15 +137,16 @@ export async function getXeroBillSetup(): Promise<{ error: string } | { success:
   if ('error' in access) {
     return {
       success: true,
-      setup: { connected: false, accounts: [], tracking: [], defaultTaxType: null },
+      setup: { connected: false, accounts: [], tracking: [], contacts: [], defaultTaxType: null },
     }
   }
 
   try {
-    const [accountsResult, taxResult, trackingResult] = await Promise.all([
+    const [accountsResult, taxResult, trackingResult, contacts] = await Promise.all([
       xeroFetch(access, '/Accounts'),
       xeroFetch(access, '/TaxRates'),
       xeroFetch(access, '/TrackingCategories'),
+      listXeroContacts(access),
     ])
     if (!accountsResult.ok) return { error: accountsResult.error }
     if (!taxResult.ok) return { error: taxResult.error }
@@ -149,6 +186,7 @@ export async function getXeroBillSetup(): Promise<{ error: string } | { success:
         connected: true,
         accounts,
         tracking,
+        contacts,
         defaultTaxType: pickExpenseTax((taxResult.data.TaxRates as Array<Record<string, unknown>>) || []),
       },
     }
