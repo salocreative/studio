@@ -68,12 +68,13 @@ Time tracking, projects, performance and Flexi views all filter by these sets, s
 - **Billing** (`app/actions/invoices.ts`, `app/actions/billing-reconcile.ts`, `lib/billing/`): admin-only Invoices at `/billing`, Reconcile at `/billing/reconcile`, Forecast at `/forecast`. Forecast is a client-by-month cashflow of invoices (paid only when linked to Xero) three months either side of this month. `project_invoices` tracks multiple invoices per Monday job; Reconcile suggests matches from Xero ACCREC invoices and stores `xero_invoice_id`. A Xero invoice can be linked as a new Studio row or attached to an existing `project_invoices` row. Unmatched Xero invoices are newest-first; historic ones can be dismissed into `xero_invoice_dismissals` without changing Xero. Fetching Xero on Reconcile also copies paid/awaiting-payment onto already-linked Studio rows (`lib/billing/xero-status-sync.ts`) and lists what changed. A separate daily cron at `/api/sync/xero-invoices` (07:00 UTC) does the same; the last run is shown on Reconcile. Not a Xero invoice writer.
 - **Xero** (`lib/xero/api.ts`, `app/api/xero/callback`): OAuth tokens stored in DB; used for invoice matching and creating sales invoices.
 - **Figma plugin API** (`app/api/figma/*`, `lib/api/figma-auth.ts`): Bearer auth accepting either the shared `FIGMA_PLUGIN_API_TOKEN` env secret or a `salo_…` Studio API token (hashed in `studio_api_tokens`, issued from Settings). Responses need the CORS helpers in that file.
+- **Product cards** (`app/actions/product-cards.ts`, `lib/product-cards/`): repeatable products at `/product-cards`, published to products.salo.uk. The public site calls `get_product_card`, `list_product_cards` and `log_product_card_view` with the anon key and has no table access.
 - **Cupboard**: internal documents in Supabase Storage with categories; formerly "documents" (migration 031 renamed it).
 - **Holidays**: Monday Annual Leave board synced to `holiday_requests`. Performance utilisation and timesheet status subtract approved leave (including bank holidays logged per person) via `lib/holidays/working-days.ts`. Link Studio users to Monday people ids on Settings → Team.
 
 ### Environment variables
 
-Required: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SITE_URL`, `MONDAY_API_TOKEN`. Optional: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `CRON_SECRET`, `FIGMA_PLUGIN_API_TOKEN`. Setup guides are in `docs/` (Monday, Xero, auth/invitations, Vercel).
+Required: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SITE_URL`, `MONDAY_API_TOKEN`. Optional: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `CRON_SECRET`, `FIGMA_PLUGIN_API_TOKEN`, `PRODUCTS_SITE_URL`, `PRODUCTS_REVALIDATE_URL`, `PRODUCTS_REVALIDATE_SECRET`. Setup guides are in `docs/` (Monday, Xero, auth/invitations, Vercel).
 
 ## Conventions
 

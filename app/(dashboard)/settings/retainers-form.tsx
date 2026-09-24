@@ -211,8 +211,8 @@ export function RetainersForm() {
       <CardHeader>
         <CardTitle>Retainer Clients</CardTitle>
         <CardDescription>
-          Manage which clients are tracked as retainers. Retainer clients will appear on the
-          Retainers page with monthly project breakdowns and time tracking.
+          Manage which clients are tracked as design retainers. They appear under Retainers → Design
+          with monthly project breakdowns and time tracking.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

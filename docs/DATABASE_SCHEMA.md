@@ -363,6 +363,29 @@ Audit log of credit deposits.
 
 **RLS:** Anon reads allowed when `is_active = true AND (expires_at IS NULL OR expires_at > now())`.
 
+### `hosting_sites`
+
+Websites tracked under Retainers → Hosting. Separate from design retainers.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `client_name` | `text` not null | |
+| `site_name` | `text` not null | |
+| `domain` | `text` | |
+| `platform` | `text` | Where it is hosted (Flywheel, Framer, or any other name) |
+| `started_on` | `date` | Billing anchor. Next renewal is calculated from this and the cycle |
+| `billing_cycle` | `text` not null default `'monthly'` | `monthly`, `quarterly`, `yearly` |
+| `amount` | `numeric(12,2)` not null default `0` | Charge per cycle |
+| `currency` | `text` not null default `'GBP'` | |
+| `payment_method` | `text` not null default `'invoice'` | `invoice`, `stripe`, `other` |
+| `stripe_reference` | `text` | Existing Stripe scheme id |
+| `status` | `text` not null default `'active'` | `active`, `paused`, `ended` |
+| `notes` | `text` | |
+| `created_at` / `updated_at` | `timestamptz` | |
+
+**RLS:** Authenticated read; admin manage.
+
 ---
 
 ## 9. Scorecard
@@ -596,7 +619,65 @@ Vendor invoices captured from Gmail for review, then pushed to Xero as ACCPAY bi
 
 ---
 
-## 13. Relationships (high level)
+## 13. Product cards
+
+Repeatable products edited in Studio and rendered at `products.salo.uk/[slug]`. The products site has no table access. It calls `get_product_card(slug)`, `list_product_cards()`, and `log_product_card_view(slug, token, referrer_host)` with the anon key.
+
+### `product_cards`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `slug` | `text` unique, not null | Lowercase URL segment |
+| `name` | `text` not null | |
+| `category` | `text` not null default `''` | |
+| `status` | `text` not null default `'draft'` | `draft`, `unlisted`, `published`, `retired` |
+| `decision_statement` | `text` not null default `''` | Required to publish |
+| `summary` | `text` not null default `''` | Listings and link previews |
+| `pricing_model` | `text` not null default `'fixed'` | `fixed` or `flexi`. One model per card |
+| `price_amount` | `numeric(12,2)` | Fixed price only |
+| `currency` | `text` not null default `'GBP'` | `GBP` or `USD` |
+| `price_basis` | `text` not null default `''` | For example `ex VAT` |
+| `payment_terms` | `text` not null default `''` | |
+| `price_note` | `text` | Optional, fixed price only |
+| `flexi_service_id` | `uuid` | FK → `flexi_design_services.id`. Flexi cards only |
+| `credit_override` | `numeric(10,2)` | Overrides the catalogue estimate |
+| `timeline_text` | `text` not null default `''` | |
+| `cta_kind` | `text` not null default `'book_call'` | `book_call`, `reply_email`, `flexi_brief` |
+| `cta_target` | `text` not null default `''` | |
+| `owner_user_id` | `uuid` | FK → `users.id` |
+| `indexable` | `boolean` not null default `false` | |
+| `meta_title` / `meta_description` / `og_image_path` | `text` | Link preview. Separate from the cover |
+| `cover_image_path` | `text` | Path in the public `product-cards` bucket. Optional |
+| `cover_image_alt` | `text` | Required when a cover is set |
+| `cover_image_source` | `text` | `client` or `sample`. Null when there is no cover |
+| `cover_image_signoff_by` | `uuid` | FK → `users.id`. Client covers only |
+| `cover_image_signoff_at` | `timestamptz` | Set with `cover_image_signoff_by` |
+| `published_at` | `timestamptz` | Set the first time the card is published or unlisted |
+| `sort_order` | `int` not null default `0` | |
+| `created_at` / `updated_at` | `timestamptz` | |
+
+### `product_card_items`
+
+`section` is `choose_when`, `approach`, `outcome`, `terms`, or `faq`. Lists are independent, not a grid.
+
+### `product_card_examples`
+
+`kind` is `image`, `video`, `logo`, `case_study`, or `quote`. Public reads only return a row with `signoff_by` and `signoff_at`. Logos and quotes also need `company_name`. Files live in the public `product-cards` storage bucket.
+
+### `product_card_related`
+
+`card_id`, `related_card_id`, `sort_order`. The public card only includes related cards whose status is `published`.
+
+### `product_card_links` / `product_card_views`
+
+Tracked links follow the share-link pattern (`token`, `expires_at`, `is_active`). `contact_name` and `contact_email` are stored on the link because Studio has no CRM contacts table yet. Views store `referrer_host` only, never an IP. `link_id` is null when the visit had no valid token.
+
+**RLS:** Team read. Admins manage cards, items, examples and related products. Any team member can manage links. Views are inserted only by `log_product_card_view`.
+
+---
+
+## 14. Relationships (high level)
 
 ```
 auth.users 1───1 users
@@ -609,6 +690,11 @@ auth.users 1───1 users
                 │                       │
                 │                       ├──< cupboard_files
                 │                       └──< cupboard_links
+                ├──< product_cards
+                │    ├──< product_card_items
+                │    ├──< product_card_examples
+                │    ├──< product_card_links ──< product_card_views
+                │    └──< product_card_related
                 ├──< retainer_share_links >── retainer_clients
                 ├──< flexi_design_share_links >── flexi_design_clients ──< flexi_design_credit_transactions
                 ├──< flexi_design_credit_transactions
@@ -627,7 +713,7 @@ xero_connection >── xero_financial_cache (by tenant_id, no FK)
 
 ---
 
-## 14. Recommended access patterns for an external platform
+## 15. Recommended access patterns for an external platform
 
 1. **Read-only consumption:** Use a Supabase **service-role key** server-side (bypasses RLS). Never ship the service-role key to a browser.
 2. **Per-user scoped reads:** Use the Supabase **anon key** with a signed-in JWT — RLS will enforce role-based filtering.

@@ -43,7 +43,7 @@ export default function RetainersPageClient() {
       <div className="border-b bg-background">
         <div className="flex h-16 items-center px-6">
           <div>
-            <h1 className="text-2xl font-semibold">Retainers</h1>
+            <h1 className="text-2xl font-semibold">Design</h1>
             <p className="text-sm text-muted-foreground">
               View monthly project breakdowns and time tracking for retainer clients
             </p>

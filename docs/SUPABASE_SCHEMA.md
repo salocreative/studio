@@ -21,9 +21,10 @@ Reference for external tools that read or write data in this app's Supabase inst
 11. [Project invoices (billing)](#project-invoices-billing)
 12. [Xero integration](#xero-integration)
 13. [Share links (time report, etc.)](#share-links-time-report-etc)
-14. [Legacy tables](#legacy-tables)
-15. [Monday.com sync — what is synced and how](#mondaycom-sync--what-is-synced-and-how)
-16. [Access patterns for an external tool](#access-patterns-for-an-external-tool)
+14. [Product cards](#product-cards)
+15. [Legacy tables](#legacy-tables)
+16. [Monday.com sync — what is synced and how](#mondaycom-sync--what-is-synced-and-how)
+17. [Access patterns for an external tool](#access-patterns-for-an-external-tool)
 
 ---
 
@@ -327,6 +328,30 @@ Indexes: `idx_retainer_share_links_token`, `idx_retainer_share_links_retainer_cl
 RLS:
 - Admin all.
 - "Public can read active retainer share links" — `SELECT` allowed when `is_active = true AND (expires_at IS NULL OR expires_at > now())`. **But** the public share endpoint uses the service role to bypass RLS regardless; it independently checks `is_active` and `expires_at`.
+
+### `public.hosting_sites`
+Websites Salo hosts, shown under Retainers → Hosting. Independent of `retainer_clients`. `amount` is the charge for one `billing_cycle` (`monthly`, `quarterly`, or `yearly`). The UI normalises that to a monthly and yearly figure, and calculates the next renewal from `started_on` and the cycle. `payment_method` is `invoice`, `stripe`, or `other`. `stripe_reference` is a Stripe subscription id (`sub_…`). Studio reads that subscription’s status with `STRIPE_SECRET_KEY` and does not charge or cancel from here.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `client_name` | `text` not null | Free-text client name. |
+| `site_name` | `text` not null | |
+| `domain` | `text` | |
+| `platform` | `text` | Where the site is hosted, such as Flywheel or Framer. Free text. |
+| `started_on` | `date` | Billing anchor. The next renewal is calculated from this date and `billing_cycle`. |
+| `billing_cycle` | `text` not null default `'monthly'` | `monthly` \| `quarterly` \| `yearly`. |
+| `amount` | `numeric(12,2)` not null default `0` | Charged once per cycle. Must be ≥ 0. |
+| `currency` | `text` not null default `'GBP'` | |
+| `payment_method` | `text` not null default `'invoice'` | `invoice` \| `stripe` \| `other`. |
+| `stripe_reference` | `text` | Stripe subscription id (`sub_…`), or a customer id (`cus_…`) when the subscription id is not known. |
+| `status` | `text` not null default `'active'` | `active` \| `paused` \| `ended`. Paused and ended sites are left out of income totals. |
+| `notes` | `text` | |
+| `created_at`, `updated_at` | `timestamptz` | Trigger maintained. |
+
+Indexes: `idx_hosting_sites_client_name`, `idx_hosting_sites_platform`, `idx_hosting_sites_status`.
+
+RLS: Auth read; Admin all.
 
 ---
 
@@ -680,6 +705,28 @@ RLS: Admin + manager can manage. **There is no anon `SELECT` policy** — public
 
 ---
 
+## Product cards
+
+Repeatable products edited in Studio and read by products.salo.uk. Migration `085_product_cards.sql`.
+
+The products site must not be given table access. With the anon key it calls:
+
+- `get_product_card(slug)` — one `published`, `unlisted`, or `retired` card, its items, signed-off examples, and related `published` cards. Drafts return null. Logos and quotes are omitted unless they have a `company_name`.
+- `list_product_cards()` — `published` cards only.
+- `log_product_card_view(slug, token, referrer_host)` — records a view and returns nothing. A missing or expired token is stored as an untracked visit (`link_id` null). No IP address is stored.
+
+`pricing_model` is `fixed` (pound price, basis, payment terms) or `flexi` (`flexi_service_id` plus optional `credit_override`). A card is one or the other. Files live in the public `product-cards` bucket.
+
+`og_image_path` is the link-preview image. `cover_image_path` is the page image, with `cover_image_alt` and `cover_image_source` (`client` or `sample`). The public functions return `cover_image_url`, `cover_image_alt` and `cover_image_source` only for a sample, or for client work once `cover_image_signoff_by` and `cover_image_signoff_at` are both set. Otherwise those three values are null. Migration `086_product_card_cover.sql`.
+
+`product_card_links.contact_name` and `contact_email` stand in for a CRM contact until that table exists. Studio link stats use `product_card_view_counts` and `product_card_link_stats`, which are not granted to `anon`.
+
+Optional env: `PRODUCTS_SITE_URL` (default `https://products.salo.uk`, used when copying a tracked link), `PRODUCTS_REVALIDATE_URL` (POST `{ slug }` after a public card changes), `PRODUCTS_REVALIDATE_SECRET` (bearer token for that request).
+
+RLS: team read; admins manage cards, items, examples and related rows; any team member manages links.
+
+---
+
 ## Legacy tables
 
 These still exist in the database but the active app reads from newer tables.
@@ -905,3 +952,8 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | 079 | `xero_invoice_status_sync_runs` | Log of Studio invoices updated from Xero status refresh. |
 | 080 | `expense_captures` | Vendor invoice captures, vendor rules, Xero bill push log. |
 | 081 | `expense_capture_file_name` | `expense_captures.file_name` and `email_subject`. |
+| 082 | `hosting_sites` | `hosting_sites` for Retainers → Hosting (cycle, amount, Stripe reference). |
+| 083 | `hosting_renewal_from_start` | Drop `hosting_sites.renewal_on`. Next renewal is calculated from `started_on`. |
+| 084 | `hosting_platform` | `hosting_sites.platform` for where the site is hosted. |
+| 085 | `product_cards` | Product cards, sections, examples, tracked links, and the anon read/view functions for products.salo.uk. |
+| 086 | `product_card_cover` | Optional cover image on `product_cards`. Public functions return it only when it is a sample, or client work that has been signed off. |

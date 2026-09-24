@@ -17,7 +17,8 @@ import {
   FileText,
   ScrollText,
   Layers,
-  Receipt
+  Receipt,
+  IdCard
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -84,6 +85,12 @@ export const navigation: NavItem[] = [
     roles: ['admin', 'designer', 'manager'],
   },
   {
+    title: 'Product Cards',
+    href: '/product-cards',
+    icon: IdCard,
+    roles: ['admin', 'designer', 'manager'],
+  },
+  {
     title: 'Performance',
     href: '/performance',
     icon: TrendingUp,
@@ -111,6 +118,10 @@ export const navigation: NavItem[] = [
     href: '/retainers',
     icon: CalendarHeart,
     roles: ['admin'], // Admin only
+    children: [
+      { title: 'Design', href: '/retainers' },
+      { title: 'Hosting', href: '/retainers/hosting' },
+    ],
   },
   {
     title: 'Time Reports',
