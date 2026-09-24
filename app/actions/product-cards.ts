@@ -385,7 +385,7 @@ export async function listProductCards(): Promise<
   return {
     success: true,
     cards,
-    canManage: auth.role === 'admin',
+    canManage: true,
     siteOrigin: productsSiteOrigin(),
   }
 }
@@ -395,8 +395,6 @@ export async function createProductCard(
 ): Promise<ActionError | { success: true; id: string }> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can add a product card.' }
-
   const trimmed = name.trim()
   if (!trimmed) return { error: 'Add a name.' }
   const slug = await uniqueSlug(auth.supabase, slugifyProductName(trimmed))
@@ -612,7 +610,7 @@ export async function getProductCard(id: string): Promise<
     team,
     views_30d: recentResult.count ?? 0,
     views_total: totalResult.count ?? 0,
-    canManage: auth.role === 'admin',
+    canManage: true,
     siteOrigin: productsSiteOrigin(),
   }
 }
@@ -622,7 +620,6 @@ export async function saveProductCard(
 ): Promise<ActionError | { success: true; revalidateWarning: string | null }> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can edit a product card.' }
   if (!UUID_RE.test(input.id)) return { error: 'Product card not found.' }
   if (!isProductCardStatus(input.status)) return { error: 'Choose a status.' }
   if (!isPricingModel(input.pricing_model)) return { error: 'Choose a pricing model.' }
@@ -818,8 +815,6 @@ export async function saveProductCard(
 export async function deleteProductCard(id: string): Promise<ActionError | { success: true }> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can delete a product card.' }
-
   const { data: existing, error: existingError } = await auth.supabase
     .from('product_cards')
     .select('status')
@@ -843,8 +838,6 @@ export async function setProductCardOgImage(
 ): Promise<ActionError | { success: true; og_image_path: string | null; revalidateWarning: string | null }> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can change the share image.' }
-
   const { data: existing, error: existingError } = await auth.supabase
     .from('product_cards')
     .select('slug, status, og_image_path')
@@ -895,8 +888,6 @@ export async function setProductCardCover(input: {
 }): Promise<ActionError | ({ success: true } & ProductCardCoverResult)> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can change the cover image.' }
-
   const path = blankToNull(input.cover_image_path)
   const alt = blankToNull(input.cover_image_alt)
   const source = input.cover_image_source
@@ -960,8 +951,6 @@ export async function signOffProductCardCover(
 ): Promise<ActionError | ({ success: true } & ProductCardCoverResult)> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase || !auth.user) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can sign off a cover image.' }
-
   const { data: existing, error: existingError } = await auth.supabase
     .from('product_cards')
     .select('slug, status, cover_image_path, cover_image_alt, cover_image_source')
@@ -1015,7 +1004,6 @@ export async function saveProductCardExample(
 ): Promise<ActionError | { success: true; revalidateWarning: string | null }> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can edit examples.' }
   if (!isExampleKind(input.kind)) return { error: 'Choose what kind of proof this is.' }
 
   const title = input.title.trim()
@@ -1106,8 +1094,6 @@ export async function deleteProductCardExample(
 ): Promise<ActionError | { success: true; revalidateWarning: string | null }> {
   const auth = await requireTeam()
   if (auth.error || !auth.supabase) return { error: auth.error || 'Not authenticated' }
-  if (auth.role !== 'admin') return { error: 'Only an admin can delete an example.' }
-
   const { data: existing, error: existingError } = await auth.supabase
     .from('product_card_examples')
     .select('card_id, storage_path')

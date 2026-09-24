@@ -673,7 +673,7 @@ Repeatable products edited in Studio and rendered at `products.salo.uk/[slug]`. 
 
 Tracked links follow the share-link pattern (`token`, `expires_at`, `is_active`). `contact_name` and `contact_email` are stored on the link because Studio has no CRM contacts table yet. Views store `referrer_host` only, never an IP. `link_id` is null when the visit had no valid token.
 
-**RLS:** Team read. Admins manage cards, items, examples and related products. Any team member can manage links. Views are inserted only by `log_product_card_view`.
+**RLS:** Any team member (admin, designer, or manager) can read and manage cards, items, examples, related products, links, and files in the `product-cards` bucket. Views are inserted only by `log_product_card_view`.
 
 ---
 

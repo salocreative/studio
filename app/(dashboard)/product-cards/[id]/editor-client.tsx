@@ -719,12 +719,6 @@ export default function ProductCardEditorClient({ id }: { id: string }) {
             </TabsList>
 
             <TabsContent value="write" className="space-y-4">
-              {!canManage && (
-                <p className="text-sm text-muted-foreground">
-                  You can create links from the Share tab. An admin edits the card.
-                </p>
-              )}
-
               <Card>
                 <CardHeader>
                   <CardTitle>Cover image</CardTitle>

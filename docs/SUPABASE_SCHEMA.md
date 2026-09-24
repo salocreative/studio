@@ -723,7 +723,7 @@ The products site must not be given table access. With the anon key it calls:
 
 Optional env: `PRODUCTS_SITE_URL` (default `https://products.salo.uk`, used when copying a tracked link), `PRODUCTS_REVALIDATE_URL` (POST `{ slug }` after a public card changes), `PRODUCTS_REVALIDATE_SECRET` (bearer token for that request).
 
-RLS: team read; admins manage cards, items, examples and related rows; any team member manages links.
+RLS: any team member manages cards, items, examples, related rows, links, and files in the `product-cards` bucket. Migration `087_product_cards_team_manage.sql`.
 
 ---
 
@@ -957,3 +957,4 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | 084 | `hosting_platform` | `hosting_sites.platform` for where the site is hosted. |
 | 085 | `product_cards` | Product cards, sections, examples, tracked links, and the anon read/view functions for products.salo.uk. |
 | 086 | `product_card_cover` | Optional cover image on `product_cards`. Public functions return it only when it is a sample, or client work that has been signed off. |
+| 087 | `product_cards_team_manage` | Designers and managers can add and edit product cards and their files. |
