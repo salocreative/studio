@@ -100,6 +100,7 @@ export interface InvoiceAmounts {
 export interface ProjectBillingRollup {
   invoicedTotal: number
   unbilled: number
+  unallocated: number
   paidTotal: number
   outstandingTotal: number
   byStatus: Record<InvoiceStatus, number>
@@ -111,9 +112,9 @@ export function projectBillingRollup(
   invoices: InvoiceAmounts[],
   today: string = londonToday()
 ): ProjectBillingRollup {
-  const invoicedTotal = roundGbp(invoices.reduce((sum, invoice) => sum + invoice.amount, 0))
-  const unbilled =
-    quoteValue != null ? roundGbp(Math.max(0, quoteValue - invoicedTotal)) : 0
+  const allocatedTotal = roundGbp(invoices.reduce((sum, invoice) => sum + invoice.amount, 0))
+  const unallocated =
+    quoteValue != null ? roundGbp(Math.max(0, quoteValue - allocatedTotal)) : 0
 
   const byStatus: Record<InvoiceStatus, number> = {
     need_invoicing: 0,
@@ -127,10 +128,13 @@ export function projectBillingRollup(
     byStatus[status] = roundGbp(byStatus[status] + invoice.amount)
   }
 
+  const invoicedTotal = roundGbp(Math.max(0, allocatedTotal - byStatus.need_invoicing))
+  const unbilled = roundGbp(unallocated + byStatus.need_invoicing)
+
   let billingStatus: InvoiceStatus
   if (byStatus.overdue > 0) {
     billingStatus = 'overdue'
-  } else if (byStatus.need_invoicing > 0 || unbilled > 0.009 || invoices.length === 0) {
+  } else if (byStatus.need_invoicing > 0 || unallocated > 0.009 || invoices.length === 0) {
     billingStatus = 'need_invoicing'
   } else if (byStatus.waiting_payment > 0) {
     billingStatus = 'waiting_payment'
@@ -139,12 +143,13 @@ export function projectBillingRollup(
   }
 
   const outstandingTotal = roundGbp(
-    byStatus.need_invoicing + byStatus.waiting_payment + byStatus.overdue + unbilled
+    byStatus.waiting_payment + byStatus.overdue + unbilled
   )
 
   return {
     invoicedTotal,
     unbilled,
+    unallocated,
     paidTotal: byStatus.paid,
     outstandingTotal,
     byStatus,

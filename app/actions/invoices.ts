@@ -50,6 +50,7 @@ export interface BillingJob {
   invoice_count: number
   invoiced_total: number
   unbilled: number
+  unallocated: number
   paid_total: number
   outstanding_total: number
   billing_status: InvoiceStatus
@@ -357,6 +358,7 @@ export async function getBillingJobs() {
         invoice_count: invoices.length,
         invoiced_total: rollup.invoicedTotal,
         unbilled: rollup.unbilled,
+        unallocated: rollup.unallocated,
         paid_total: rollup.paidTotal,
         outstanding_total: rollup.outstandingTotal,
         billing_status: rollup.billingStatus,
@@ -460,6 +462,7 @@ export async function getProjectInvoices(projectId: string) {
         invoice_count: invoices.length,
         invoiced_total: rollup.invoicedTotal,
         unbilled: rollup.unbilled,
+        unallocated: rollup.unallocated,
         paid_total: rollup.paidTotal,
         outstanding_total: rollup.outstandingTotal,
         billing_status: rollup.billingStatus,
@@ -692,7 +695,7 @@ export async function splitRemainingFiftyFifty(projectId: string) {
     return { error: result.error || 'Project not found' }
   }
 
-  const remaining = result.job.unbilled
+  const remaining = result.job.unallocated
   if (remaining <= 0) {
     return { error: 'Nothing left to split. Add a quote value, or invoices that do not cover it yet.' }
   }
@@ -745,7 +748,7 @@ export async function markQuoteAsPaid(projectId: string, paidDate?: string | nul
     return { error: result.error || 'Project not found' }
   }
 
-  const remaining = result.job.unbilled
+  const remaining = result.job.unallocated
   if (remaining <= 0) {
     return { error: 'Nothing left to mark as paid. Add a quote value first if this job has none.' }
   }

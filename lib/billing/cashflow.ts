@@ -47,7 +47,7 @@ export interface CashflowJobInput {
   client_name: string | null
   due_date: string | null
   completed_date: string | null
-  unbilled: number
+  unallocated: number
   invoices: Array<{
     id: string
     label: string
@@ -138,7 +138,7 @@ export function buildCashflowGrid(
         source: 'invoice',
       })
     }
-    if (job.unbilled > 0.009) {
+    if (job.unallocated > 0.009) {
       const date = job.due_date || job.completed_date
       items.push({
         id: `unbilled:${job.id}`,
@@ -146,7 +146,7 @@ export function buildCashflowGrid(
         clientName,
         projectName: job.name,
         label: 'Unbilled remainder',
-        amount: roundGbp(job.unbilled),
+        amount: roundGbp(job.unallocated),
         status: 'need_invoicing',
         monthKey: monthKeyFromIsoDate(date),
         date,

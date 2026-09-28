@@ -90,7 +90,7 @@ export interface ReconcileResult {
 }
 
 function jobsStillOpen(jobs: BillingJob[]) {
-  return jobs.filter((job) => job.unbilled > 0.009)
+  return jobs.filter((job) => job.unallocated > 0.009)
 }
 
 function unlinkedStudioInvoices(job: BillingJob) {
@@ -107,7 +107,7 @@ function unlinkedStudioInvoices(job: BillingJob) {
 
 function jobsForLinking(jobs: BillingJob[]) {
   return jobs.filter(
-    (job) => job.unbilled > 0.009 || job.invoices.some((invoice) => !invoice.xero_invoice_id)
+    (job) => job.unallocated > 0.009 || job.invoices.some((invoice) => !invoice.xero_invoice_id)
   )
 }
 
@@ -221,7 +221,7 @@ export async function getXeroReconcileSuggestions() {
       name: job.name,
       client_name: job.client_name,
       quote_value: job.quote_value,
-      unbilled: job.unbilled,
+      unbilled: job.unallocated,
       status: job.status,
     }))
 
@@ -242,7 +242,7 @@ export async function getXeroReconcileSuggestions() {
         id: job.id,
         name: job.name,
         client_name: job.client_name,
-        unbilled: job.unbilled,
+        unbilled: job.unallocated,
         status: job.status,
         invoices: unlinkedStudioInvoices(job),
       })),

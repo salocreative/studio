@@ -78,10 +78,10 @@ export function JobInvoiceSummarySheet({
   }
 
   async function handleMarkPaid() {
-    if (!job || job.unbilled <= 0) return
+    if (!job || job.unallocated <= 0) return
     if (
       !confirm(
-        `Mark the remaining ${formatGbp(job.unbilled)} as paid in Studio? Use this when the job was already billed in Xero.`
+        `Mark the remaining ${formatGbp(job.unallocated)} as paid in Studio? Use this when the job was already billed in Xero.`
       )
     ) {
       return
@@ -101,7 +101,7 @@ export function JobInvoiceSummarySheet({
   }
 
   async function handleSplit() {
-    if (!job || job.unbilled <= 0) return
+    if (!job || job.unallocated <= 0) return
     setSplitting(true)
     try {
       const result = await splitRemainingFiftyFifty(job.id)
@@ -133,7 +133,7 @@ export function JobInvoiceSummarySheet({
   }
 
   const unbilledHighlighted = highlightedInvoiceId === `unbilled:${job?.id}`
-  const hasQuickActions = Boolean(job && job.unbilled > 0.009)
+  const hasQuickActions = Boolean(job && job.unallocated > 0.009)
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -216,7 +216,7 @@ export function JobInvoiceSummarySheet({
 
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">Invoices</h3>
-                {job.invoices.length === 0 && job.unbilled <= 0.009 ? (
+                {job.invoices.length === 0 && job.unallocated <= 0.009 ? (
                   <p className="text-sm text-muted-foreground">
                     No invoices yet. Open full details to add a deposit, monthly amount, or the full job value.
                   </p>
@@ -283,7 +283,7 @@ export function JobInvoiceSummarySheet({
                         </li>
                       )
                     })}
-                    {job.unbilled > 0.009 ? (
+                    {job.unallocated > 0.009 ? (
                       <li
                         ref={unbilledHighlighted ? highlightRef : undefined}
                         className={cn(
@@ -298,7 +298,7 @@ export function JobInvoiceSummarySheet({
                               Quote value not yet covered by an invoice
                             </p>
                           </div>
-                          <p className="shrink-0 font-medium tabular-nums">{formatGbp(job.unbilled)}</p>
+                          <p className="shrink-0 font-medium tabular-nums">{formatGbp(job.unallocated)}</p>
                         </div>
                       </li>
                     ) : null}

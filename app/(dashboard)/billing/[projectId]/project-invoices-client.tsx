@@ -204,7 +204,7 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
     setCreateInXero(connected)
     setForm({
       ...emptyForm,
-      amount: job && job.unbilled > 0 ? String(job.unbilled) : '',
+      amount: job && job.unallocated > 0 ? String(job.unallocated) : '',
       status: connected ? 'waiting_payment' : 'need_invoicing',
       invoice_date: invoiceDate,
       due_terms: '30',
@@ -274,10 +274,10 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
   }
 
   async function handleMarkPaid() {
-    if (!job || job.unbilled <= 0) return
+    if (!job || job.unallocated <= 0) return
     if (
       !confirm(
-        `Mark the remaining ${formatGbp(job.unbilled)} as paid in Studio? Use this when the job was already billed in Xero.`
+        `Mark the remaining ${formatGbp(job.unallocated)} as paid in Studio? Use this when the job was already billed in Xero.`
       )
     ) {
       return
@@ -409,7 +409,7 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
                     variant="outline"
                     size="sm"
                     onClick={() => void handleMarkPaid()}
-                    disabled={markingPaid || job.unbilled <= 0}
+                    disabled={markingPaid || job.unallocated <= 0}
                   >
                     {markingPaid ? (
                       <Loader2 className="mr-1 h-4 w-4 animate-spin" />
@@ -423,7 +423,7 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
                     variant="outline"
                     size="sm"
                     onClick={() => void handleSplit()}
-                    disabled={splitting || job.unbilled <= 0}
+                    disabled={splitting || job.unallocated <= 0}
                   >
                     {splitting ? (
                       <Loader2 className="mr-1 h-4 w-4 animate-spin" />

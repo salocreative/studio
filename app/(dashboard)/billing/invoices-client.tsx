@@ -134,9 +134,6 @@ export function InvoicesPageClient() {
       byStatus[job.billing_status].jobs += 1
       unbilled += job.unbilled
       outstanding += job.outstanding_total
-      byStatus.need_invoicing.amount += job.invoices
-        .filter((invoice) => invoice.effective_status === 'need_invoicing')
-        .reduce((sum, invoice) => sum + invoice.amount, 0)
       byStatus.need_invoicing.amount += job.unbilled
       byStatus.waiting_payment.amount += job.invoices
         .filter((invoice) => invoice.effective_status === 'waiting_payment')
