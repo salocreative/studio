@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getLeadsBoard } from './leads-board'
+import { netSubtotalGbp } from '@/lib/sow/calculations'
 import type { SowDocument, SowLineItem } from './sow'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
@@ -374,7 +375,10 @@ export async function pushSowToMonday(sowId: string) {
     const mainItemColumnValues: Record<string, unknown> = {}
 
     if (quoteValueColumnId) {
-      mainItemColumnValues[quoteValueColumnId] = Number(document.subtotal_gbp).toFixed(2)
+      mainItemColumnValues[quoteValueColumnId] = netSubtotalGbp(
+        Number(document.subtotal_gbp),
+        document.discount_percent
+      ).toFixed(2)
     }
     if (dueDateColumnId && document.end_date) {
       mainItemColumnValues[dueDateColumnId] = { date: document.end_date }
@@ -513,7 +517,10 @@ export async function updateSowOnMonday(sowId: string) {
       name: document.title,
     }
     if (quoteValueColumnId) {
-      columnValues[quoteValueColumnId] = Number(document.subtotal_gbp).toFixed(2)
+      columnValues[quoteValueColumnId] = netSubtotalGbp(
+        Number(document.subtotal_gbp),
+        document.discount_percent
+      ).toFixed(2)
     }
     if (dueDateColumnId) {
       columnValues[dueDateColumnId] = document.end_date

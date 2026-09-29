@@ -30,6 +30,9 @@ import {
   formatSowDate,
   lineTotalAtDayRate,
   computeSowTotalsAtDayRate,
+  applySowDiscount,
+  discountAmountGbp,
+  parseDiscountPercent,
 } from '@/lib/sow/calculations'
 import { cn } from '@/lib/utils'
 
@@ -147,11 +150,24 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
         (sum, item) => sum + scaleForQuote(Number(item.hours), rateMultiplier),
         0
       )
-  const displaySubtotal = whiteLabelTotals
+  const grossSubtotal = whiteLabelTotals
     ? whiteLabelTotals.subtotal_gbp
     : Number(document.subtotal_gbp)
-  const displayVat = whiteLabelTotals ? whiteLabelTotals.vat_amount_gbp : Number(document.vat_amount_gbp)
-  const displayTotal = whiteLabelTotals ? whiteLabelTotals.total_gbp : Number(document.total_gbp)
+  const discountPercent = parseDiscountPercent(document.discount_percent).percent
+  const priced = applySowDiscount(
+    {
+      subtotal_gbp: grossSubtotal,
+      vat_amount_gbp: 0,
+      total_gbp: 0,
+      total_hours: displayTotalHours,
+    },
+    discountPercent,
+    document.include_vat
+  )
+  const displaySubtotal = priced.subtotal_gbp
+  const displayDiscount = discountAmountGbp(displaySubtotal, discountPercent)
+  const displayVat = priced.vat_amount_gbp
+  const displayTotal = priced.total_gbp
 
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">
@@ -346,6 +362,12 @@ export default function SowShareClient({ shareToken }: SowShareClientProps) {
                 <span className="text-muted-foreground">Subtotal</span>
                 <span>{money(displaySubtotal)}</span>
               </div>
+              {displayDiscount > 0 && discountPercent != null && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Discount ({discountPercent}%)</span>
+                  <span>−{money(displayDiscount)}</span>
+                </div>
+              )}
               {document.include_vat && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">VAT (20%)</span>

@@ -958,3 +958,4 @@ For posterity. The file names in `supabase/migrations/` always map 1:1 to the ch
 | 085 | `product_cards` | Product cards, sections, examples, tracked links, and the anon read/view functions for products.salo.uk. |
 | 086 | `product_card_cover` | Optional cover image on `product_cards`. Public functions return it only when it is a sample, or client work that has been signed off. |
 | 087 | `product_cards_team_manage` | Designers and managers can add and edit product cards and their files. |
+| 088 | `sow_discount` | `sow_documents.discount_percent`. Percentage off the subtotal, before VAT. |

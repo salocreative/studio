@@ -87,9 +87,12 @@ import { getSowPartyRates, type SowPartyRate } from '@/app/actions/sow-party-rat
 import { pushSowToMonday, updateSowOnMonday } from '@/app/actions/sow-to-monday'
 import { getGbpFxRate } from '@/app/actions/sow-fx'
 import {
-  VAT_RATE,
   DEFAULT_PAYMENT_SCHEDULE,
+  applySowDiscount,
+  computeSowTotals,
+  discountAmountGbp,
   getRateMultiplier,
+  parseDiscountPercent,
   scaleForQuote,
   resolvePartyRate,
   formatSowMoney,
@@ -183,6 +186,8 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
   const [notes, setNotes] = useState('')
   /** Empty string = use standard rate (no override) */
   const [dayRateOverrideInput, setDayRateOverrideInput] = useState('')
+  /** Empty string = no discount */
+  const [discountPercentInput, setDiscountPercentInput] = useState('')
   const [hoursPerDayInput, setHoursPerDayInput] = useState('6')
   const [currency, setCurrency] = useState<SowCurrency>('GBP')
   const [fxRateInput, setFxRateInput] = useState('1')
@@ -406,6 +411,11 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         setDayRateOverrideInput(
           doc.day_rate_override_gbp != null ? String(doc.day_rate_override_gbp) : ''
         )
+        setDiscountPercentInput(
+          doc.discount_percent != null && Number(doc.discount_percent) > 0
+            ? String(Number(doc.discount_percent))
+            : ''
+        )
         setHoursPerDayInput(
           doc.hours_per_day != null ? String(Number(doc.hours_per_day)) : '6'
         )
@@ -470,18 +480,31 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
     return Number(currentRate.day_rate_gbp) / hoursPerDay
   }, [currentRate, hoursPerDay])
 
+  const discountParsed = useMemo(
+    () => parseDiscountPercent(discountPercentInput),
+    [discountPercentInput]
+  )
+  const discountPercent = discountParsed.percent
+
   const preview = useMemo(() => {
-    if (!currentRate) return { subtotal: 0, vat: 0, total: 0, hours: 0 }
-    let subtotal = 0
-    let hours = 0
-    for (const item of lineItems) {
+    if (!currentRate) return { subtotal: 0, discount: 0, vat: 0, total: 0, hours: 0 }
+    const pricedItems = lineItems.map((item) => {
       const itemHours = item.is_days ? item.quantity * hoursPerDay : item.quantity
-      subtotal += itemHours * hourlyRate
-      hours += itemHours
+      return {
+        hours: itemHours,
+        line_total_gbp: itemHours * hourlyRate,
+      }
+    })
+    const gross = computeSowTotals(pricedItems, includeVat)
+    const priced = applySowDiscount(gross, discountPercent, includeVat)
+    return {
+      subtotal: priced.subtotal_gbp,
+      discount: discountAmountGbp(priced.subtotal_gbp, discountPercent),
+      vat: priced.vat_amount_gbp,
+      total: priced.total_gbp,
+      hours: priced.total_hours,
     }
-    const vat = includeVat ? subtotal * VAT_RATE : 0
-    return { subtotal, vat, total: subtotal + vat, hours }
-  }, [lineItems, currentRate, hourlyRate, hoursPerDay, includeVat])
+  }, [lineItems, currentRate, hourlyRate, hoursPerDay, includeVat, discountPercent])
 
   const baseDayRate = currentRate ? Number(currentRate.day_rate_gbp) : 0
   const dayRateOverride = useMemo(() => {
@@ -818,6 +841,10 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
       toast.error('Quoted day rate must be greater than 0')
       return
     }
+    if (discountParsed.invalid) {
+      toast.error('Discount must be between 0 and 100%')
+      return
+    }
     if (!(parseFloat(hoursPerDayInput) > 0)) {
       toast.error('Hours per day must be greater than 0')
       return
@@ -841,6 +868,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
         start_date: startDate || null,
         end_date: endDate || null,
         day_rate_override_gbp: dayRateOverride,
+        discount_percent: discountPercent,
         hours_per_day: hoursPerDay,
         currency,
         fx_rate: fxRate,
@@ -921,6 +949,7 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
           start_date: startDate || null,
           end_date: endDate || null,
           day_rate_override_gbp: dayRateOverride,
+          discount_percent: discountPercent,
           hours_per_day: hoursPerDay,
           currency,
           fx_rate: fxRate,
@@ -1866,9 +1895,11 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                 <CardHeader>
                   <CardTitle>Rates</CardTitle>
                   <CardDescription>
-                    Override the quoted day rate for this SoW. Deliverables stay as true effort;
-                    the client share view scales hours when enabled. Monday always gets true hours.
-                    Pricing stays in GBP; choose USD to convert share-view money via FX.
+                    Override the quoted day rate for this SoW, or take a percentage off the price.
+                    Deliverables stay as true effort; the client share view scales hours when a
+                    quoted rate is set. A discount reduces the total and does not change hours.
+                    Monday always gets true hours. Pricing stays in GBP; choose USD to convert
+                    share-view money via FX.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1950,6 +1981,27 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
 
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
+                      <Label htmlFor="sow-discount">Discount (%)</Label>
+                      <Input
+                        id="sow-discount"
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.01}
+                        placeholder="0"
+                        value={discountPercentInput}
+                        onChange={(e) => setDiscountPercentInput(e.target.value)}
+                        disabled={isReadOnly}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Taken off the subtotal before VAT. Leave blank for no discount.
+                        {preview.discount > 0 ? ` · ${formatMoney(preview.discount)} off` : ''}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
                       <Label>Share currency</Label>
                       <Select
                         value={currency}
@@ -2017,8 +2069,26 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                       <span>{quotedHours.toFixed(1)}h</span>
                     </div>
                     <div className="flex justify-between gap-4 pt-2 border-t">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span>{formatMoney(preview.subtotal)}</span>
+                    </div>
+                    {preview.discount > 0 && discountPercent != null && (
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">
+                          Discount ({discountPercent}%)
+                        </span>
+                        <span>−{formatMoney(preview.discount)}</span>
+                      </div>
+                    )}
+                    {includeVat && (
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">VAT (20%)</span>
+                        <span>{formatMoney(preview.vat)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">Total (GBP)</span>
-                      <span>{formatMoney(preview.total)}</span>
+                      <span className="font-medium">{formatMoney(preview.total)}</span>
                     </div>
                     {currency !== 'GBP' && (
                       <div className="flex justify-between gap-4">
@@ -2030,8 +2100,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                     )}
                     {dayRateOverride != null && rateMultiplier !== 1 && (
                       <p className="text-xs text-muted-foreground pt-1 border-t">
-                        Totals stay based on true effort × standard rate, which matches quoted hours
-                        × {formatMoney(dayRateOverride)}/day.
+                        {preview.discount > 0 ? 'Before discount, totals match' : 'Totals stay based on'}{' '}
+                        true effort × standard rate, which matches quoted hours ×{' '}
+                        {formatMoney(dayRateOverride)}/day.
                       </p>
                     )}
                   </div>
@@ -2059,6 +2130,9 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                   {dayRateOverrideInput.trim() && dayRateOverride == null && (
                     <p className="text-sm text-destructive">Enter a day rate greater than 0</p>
                   )}
+                  {discountParsed.invalid && (
+                    <p className="text-sm text-destructive">Enter a discount between 0 and 100%</p>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -2075,6 +2149,12 @@ export function SowDetailClient({ sowId }: SowDetailClientProps) {
                 <span className="text-muted-foreground">Subtotal</span>
                 <span>{formatMoney(preview.subtotal)}</span>
               </div>
+              {preview.discount > 0 && discountPercent != null && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Discount ({discountPercent}%)</span>
+                  <span>−{formatMoney(preview.discount)}</span>
+                </div>
+              )}
               {includeVat && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">VAT (20%)</span>

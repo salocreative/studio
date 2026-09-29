@@ -4,9 +4,11 @@ import { createClient } from '@/lib/supabase/server'
 import { getQuoteRateByType } from '@/app/actions/quote-rates'
 import { getSowPartyRates } from '@/app/actions/sow-party-rates'
 import {
+  applySowDiscount,
   computeLineItem,
   computeSowTotals,
   hourlyRateFromQuoteRate,
+  parseDiscountPercent,
   resolvePartyRate,
   validateLineItemTimeline,
   validatePaymentSchedule,
@@ -65,6 +67,8 @@ export interface SowDocument {
   start_date: string | null
   end_date: string | null
   day_rate_override_gbp: number | null
+  /** Percentage off the subtotal before VAT. Null means no discount. */
+  discount_percent: number | null
   base_day_rate_gbp: number
   hours_per_day: number
   currency: 'GBP' | 'USD'
@@ -324,6 +328,9 @@ function validateSowInput(input: SowDocumentInput): string | null {
   if (input.hours_per_day != null && !(Number(input.hours_per_day) > 0)) {
     return 'Hours per day must be greater than 0'
   }
+  if (parseDiscountPercent(input.discount_percent ?? null).invalid) {
+    return 'Discount must be between 0 and 100%'
+  }
   const currency = input.currency === 'USD' ? 'USD' : 'GBP'
   const fxRate = Number(input.fx_rate ?? 1)
   if (!(fxRate > 0)) return 'Exchange rate must be greater than 0'
@@ -489,6 +496,7 @@ export type SowDocumentInput = {
   start_date?: string | null
   end_date?: string | null
   day_rate_override_gbp?: number | null
+  discount_percent?: number | null
   hours_per_day?: number
   currency?: 'GBP' | 'USD'
   fx_rate?: number
@@ -513,7 +521,12 @@ export async function createSowDocument(input: SowDocumentInput) {
   const hoursPerDay = normalizeHoursPerDay(input.hours_per_day, rates.hoursPerDay)
   const hourlyRate = hourlyRateFromQuoteRate(rates.dayRateGbp, hoursPerDay)
   const mappedItems = mapLineItems(input.line_items, hoursPerDay, hourlyRate)
-  const totals = computeSowTotals(mappedItems, input.include_vat)
+  const discountPercent = parseDiscountPercent(input.discount_percent ?? null).percent
+  const totals = applySowDiscount(
+    computeSowTotals(mappedItems, input.include_vat),
+    discountPercent,
+    input.include_vat
+  )
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
   const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
@@ -559,6 +572,7 @@ export async function createSowDocument(input: SowDocumentInput) {
         start_date: input.start_date || null,
         end_date: input.end_date || null,
         day_rate_override_gbp: dayRateOverride,
+        discount_percent: discountPercent,
         base_day_rate_gbp: rates.dayRateGbp,
         hours_per_day: hoursPerDay,
         currency,
@@ -627,7 +641,12 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
   const hoursPerDay = normalizeHoursPerDay(input.hours_per_day, rates.hoursPerDay)
   const hourlyRate = hourlyRateFromQuoteRate(rates.dayRateGbp, hoursPerDay)
   const mappedItems = mapLineItems(input.line_items, hoursPerDay, hourlyRate)
-  const totals = computeSowTotals(mappedItems, input.include_vat)
+  const discountPercent = parseDiscountPercent(input.discount_percent ?? null).percent
+  const totals = applySowDiscount(
+    computeSowTotals(mappedItems, input.include_vat),
+    discountPercent,
+    input.include_vat
+  )
   const agencyName =
     input.customer_type === 'partner' ? input.agency_name?.trim() || null : null
   const dayRateOverride = normalizeDayRateOverride(input.day_rate_override_gbp)
@@ -650,6 +669,7 @@ export async function updateSowDocument(id: string, input: SowDocumentInput) {
         start_date: input.start_date || null,
         end_date: input.end_date || null,
         day_rate_override_gbp: dayRateOverride,
+        discount_percent: discountPercent,
         base_day_rate_gbp: rates.dayRateGbp,
         hours_per_day: hoursPerDay,
         currency,
@@ -778,6 +798,7 @@ export async function duplicateSowDocument(id: string) {
         start_date: source.start_date,
         end_date: source.end_date,
         day_rate_override_gbp: source.day_rate_override_gbp,
+        discount_percent: source.discount_percent ?? null,
         base_day_rate_gbp: source.base_day_rate_gbp,
         hours_per_day: source.hours_per_day,
         currency: source.currency,

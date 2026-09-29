@@ -89,6 +89,55 @@ export function computeSowTotals(
   }
 }
 
+/**
+ * Percentage off the subtotal, applied before VAT.
+ * Blank or 0 means no discount. Values outside 0–100 are invalid.
+ */
+export function parseDiscountPercent(
+  value: number | string | null | undefined
+): { percent: number | null; invalid: boolean } {
+  if (value == null) return { percent: null, invalid: false }
+  if (typeof value === 'string' && !value.trim()) return { percent: null, invalid: false }
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n) || n < 0 || n > 100) return { percent: null, invalid: true }
+  if (n === 0) return { percent: null, invalid: false }
+  return { percent: Math.round(n * 100) / 100, invalid: false }
+}
+
+export function discountAmountGbp(
+  subtotalGbp: number,
+  discountPercent: number | null | undefined
+): number {
+  const { percent } = parseDiscountPercent(discountPercent ?? null)
+  if (percent == null) return 0
+  return Math.round((Number(subtotalGbp) || 0) * (percent / 100) * 100) / 100
+}
+
+/** Subtotal after discount, before VAT. */
+export function netSubtotalGbp(
+  subtotalGbp: number,
+  discountPercent: number | null | undefined
+): number {
+  const discount = discountAmountGbp(subtotalGbp, discountPercent)
+  return Math.round(((Number(subtotalGbp) || 0) - discount) * 100) / 100
+}
+
+/** Recompute VAT and total after a percentage discount. Subtotal stays the pre-discount sum of line items. */
+export function applySowDiscount(
+  totals: SowTotals,
+  discountPercent: number | null | undefined,
+  includeVat: boolean
+): SowTotals {
+  const net = netSubtotalGbp(totals.subtotal_gbp, discountPercent)
+  const vatAmount = includeVat ? net * VAT_RATE : 0
+  return {
+    subtotal_gbp: totals.subtotal_gbp,
+    vat_amount_gbp: Math.round(vatAmount * 100) / 100,
+    total_gbp: Math.round((net + vatAmount) * 100) / 100,
+    total_hours: totals.total_hours,
+  }
+}
+
 export function hourlyRateFromQuoteRate(dayRateGbp: number, hoursPerDay: number): number {
   if (!hoursPerDay) return 0
   return dayRateGbp / hoursPerDay
