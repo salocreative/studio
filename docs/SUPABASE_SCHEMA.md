@@ -578,7 +578,7 @@ Studio-side billing tracker for Monday jobs. One project can have many invoices 
 | `project_id` | `uuid` not null | FK → `monday_projects.id` (`on delete cascade`). |
 | `label` | `text` not null | e.g. `50% deposit`, `April 2026`, `Final delivery`. |
 | `amount` | `numeric(10,2)` not null | `check (> 0)`. GBP. |
-| `status` | `text` not null default `'need_invoicing'` | `need_invoicing`, `waiting_payment`, `overdue`, `paid`. Waiting-payment invoices past `due_date` display as overdue. |
+| `status` | `text` not null default `'need_invoicing'` | `need_invoicing` (shown as Ready to bill), `held`, `waiting_payment`, `overdue`, `paid`. Held invoices are planned but not ready to raise. Waiting-payment invoices past `due_date` display as overdue. Job billing status is derived, not stored. |
 | `invoice_number` | `text` | Optional Xero/reference number. |
 | `invoice_date` | `date` | When the invoice was raised. |
 | `due_date` | `date` | |

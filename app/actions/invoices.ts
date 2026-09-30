@@ -9,8 +9,9 @@ import {
   projectBillingRollup,
   roundGbp,
   toGbpNumber,
-  INVOICE_STATUS_PRIORITY,
+  JOB_BILLING_STATUS_PRIORITY,
   type InvoiceStatus,
+  type JobBillingStatus,
 } from '@/lib/billing/invoices'
 import { getMondayAccountSlug } from '@/lib/monday/account'
 import { mondayPulseUrl } from '@/lib/monday/urls'
@@ -53,7 +54,7 @@ export interface BillingJob {
   unallocated: number
   paid_total: number
   outstanding_total: number
-  billing_status: InvoiceStatus
+  billing_status: JobBillingStatus
   invoices: ProjectInvoice[]
 }
 
@@ -367,7 +368,8 @@ export async function getBillingJobs() {
     })
 
     jobs.sort((a, b) => {
-      const statusDelta = INVOICE_STATUS_PRIORITY[a.billing_status] - INVOICE_STATUS_PRIORITY[b.billing_status]
+      const statusDelta =
+        JOB_BILLING_STATUS_PRIORITY[a.billing_status] - JOB_BILLING_STATUS_PRIORITY[b.billing_status]
       if (statusDelta !== 0) return statusDelta
       return a.name.localeCompare(b.name)
     })
@@ -541,7 +543,7 @@ export async function createProjectInvoice(
 
       xeroInvoiceId = created.xeroInvoiceId
       invoiceNumber = created.invoiceNumber || invoiceNumber
-      if (status === 'need_invoicing') status = 'waiting_payment'
+      if (status === 'need_invoicing' || status === 'held') status = 'waiting_payment'
     }
 
     const { data: last } = await auth.supabase
@@ -715,7 +717,7 @@ export async function splitRemainingFiftyFifty(projectId: string) {
         { project_id: projectId, created_by: auth.userId ?? undefined, sort_order: nextOrder }
       ),
       invoiceWritePayload(
-        { label: '50% on delivery', amount: second, status: 'need_invoicing' },
+        { label: '50% on delivery', amount: second, status: 'held' },
         { project_id: projectId, created_by: auth.userId ?? undefined, sort_order: nextOrder + 1 }
       ),
     ])

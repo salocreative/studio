@@ -12,7 +12,7 @@ import {
   type BillingJob,
   type ProjectInvoice,
 } from '@/app/actions/invoices'
-import { InvoiceStatusBadge } from '@/components/billing/invoice-status-badge'
+import { InvoiceStatusBadge, JobBillingStatusBadge } from '@/components/billing/invoice-status-badge'
 import { ProjectSourceLinks } from '@/components/billing/project-source-links'
 import { XeroInvoiceLink } from '@/components/billing/xero-invoice-link'
 import { isStuckMondayStatus } from '@/lib/monday/status'
@@ -108,7 +108,7 @@ export function JobInvoiceSummarySheet({
       if (result.error) {
         toast.error('Could not split remaining amount', { description: result.error })
       } else {
-        toast.success('Added 50% deposit and 50% on delivery')
+        toast.success('Added 50% deposit (ready to bill) and 50% on delivery (held)')
         await refresh()
       }
     } finally {
@@ -157,7 +157,7 @@ export function JobInvoiceSummarySheet({
                 ) : (
                   <Badge variant="outline">{job.status === 'locked' ? 'Completed' : 'Active'}</Badge>
                 )}
-                <InvoiceStatusBadge status={job.billing_status} />
+                <JobBillingStatusBadge status={job.billing_status} />
               </div>
               <SheetDescription>
                 {job.client_name || 'No client'}

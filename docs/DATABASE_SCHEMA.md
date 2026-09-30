@@ -557,7 +557,7 @@ Studio-side tracker for raising and collecting payment against Monday jobs. Mult
 | `project_id` | `uuid` not null | FK → `monday_projects.id` (cascade) |
 | `label` | `text` not null | e.g. 50% deposit, April 2026 |
 | `amount` | `numeric(10,2)` not null | `check (> 0)` |
-| `status` | `text` not null default `'need_invoicing'` | `need_invoicing`, `waiting_payment`, `overdue`, `paid` |
+| `status` | `text` not null default `'need_invoicing'` | `need_invoicing` (shown as Ready to bill), `held`, `waiting_payment`, `overdue`, `paid`. Held is planned but not ready to raise. Job billing status is derived. |
 | `invoice_number` | `text` | Optional reference |
 | `invoice_date` / `due_date` / `paid_date` | `date` | |
 | `notes` | `text` | |

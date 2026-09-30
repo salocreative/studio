@@ -25,6 +25,8 @@ import { cn } from '@/lib/utils'
 const STATUS_CHIP_CLASS: Record<InvoiceStatus, string> = {
   need_invoicing:
     'border-amber-200 bg-amber-50/90 text-amber-950 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-100',
+  held:
+    'border-violet-200 bg-violet-50/90 text-violet-950 dark:border-violet-900 dark:bg-violet-950/50 dark:text-violet-100',
   waiting_payment:
     'border-sky-200 bg-sky-50/90 text-sky-950 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-100',
   overdue:
@@ -55,6 +57,8 @@ function InvoiceChip({
           <span className="text-[10px] font-medium uppercase tracking-wide opacity-70">Unbilled</span>
         ) : item.status === 'paid' ? (
           <span className="text-[10px] font-medium uppercase tracking-wide opacity-70">Paid</span>
+        ) : item.status === 'held' ? (
+          <span className="text-[10px] font-medium uppercase tracking-wide opacity-70">Held</span>
         ) : null}
       </div>
       <div className="mt-0.5 truncate text-xs opacity-80">{item.projectName}</div>
@@ -177,7 +181,7 @@ export default function ForecastPageClient() {
             <SummaryCard
               title="Late to send"
               amount={pastToSend}
-              hint="Need invoicing in the past three months"
+              hint="Ready to bill in the past three months"
             />
             <SummaryCard
               title="This month"
@@ -199,8 +203,8 @@ export default function ForecastPageClient() {
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
             {(
               (showPaid
-                ? ['need_invoicing', 'waiting_payment', 'overdue', 'paid']
-                : ['need_invoicing', 'waiting_payment', 'overdue']) as InvoiceStatus[]
+                ? ['need_invoicing', 'held', 'waiting_payment', 'overdue', 'paid']
+                : ['need_invoicing', 'held', 'waiting_payment', 'overdue']) as InvoiceStatus[]
             ).map((status) => (
               <span key={status} className="inline-flex items-center gap-1.5">
                 <span
@@ -392,7 +396,7 @@ export default function ForecastPageClient() {
               <CardHeader>
                 <CardTitle>Unscheduled</CardTitle>
                 <CardDescription>
-                  Need invoicing, but no invoice date or due date to place on the grid.
+                  No invoice date or due date to place on the grid. Held invoices stay here until they are ready to bill.
                 </CardDescription>
               </CardHeader>
               <CardContent>

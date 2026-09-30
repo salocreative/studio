@@ -25,12 +25,13 @@ import { Badge } from '@/components/ui/badge'
 import { Loader2, Receipt, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { getBillingJobs, type BillingJob } from '@/app/actions/invoices'
-import { InvoiceStatusBadge } from '@/components/billing/invoice-status-badge'
+import { JobBillingStatusBadge } from '@/components/billing/invoice-status-badge'
 import { JobInvoiceSummarySheet } from '@/components/billing/job-invoice-summary-sheet'
 import {
-  INVOICE_STATUS_LABELS,
+  JOB_BILLING_STATUSES,
+  JOB_BILLING_STATUS_LABELS,
   formatGbp,
-  type InvoiceStatus,
+  type JobBillingStatus,
 } from '@/lib/billing/invoices'
 import { isStuckMondayStatus } from '@/lib/monday/status'
 import { cn } from '@/lib/utils'
@@ -38,7 +39,7 @@ import { cn } from '@/lib/utils'
 const ALL_FILTER = '__all__'
 
 type JobLifecycleFilter = 'all' | 'active' | 'completed' | 'stuck'
-type BillingStatusFilter = 'outstanding' | 'all' | InvoiceStatus
+type BillingStatusFilter = 'outstanding' | 'all' | JobBillingStatus
 
 function uniqueSortedNames(values: (string | null | undefined)[]): string[] {
   return Array.from(
@@ -122,28 +123,36 @@ export function InvoicesPageClient() {
   const clients = useMemo(() => uniqueSortedNames(jobs.map((job) => job.client_name)), [jobs])
 
   const summary = useMemo(() => {
-    const byStatus: Record<InvoiceStatus, { jobs: number; amount: number }> = {
-      need_invoicing: { jobs: 0, amount: 0 },
-      waiting_payment: { jobs: 0, amount: 0 },
+    const byStatus: Record<JobBillingStatus, { jobs: number; amount: number }> = {
       overdue: { jobs: 0, amount: 0 },
+      ready_to_bill: { jobs: 0, amount: 0 },
+      unknown: { jobs: 0, amount: 0 },
+      waiting_payment: { jobs: 0, amount: 0 },
+      held: { jobs: 0, amount: 0 },
       paid: { jobs: 0, amount: 0 },
     }
-    let unbilled = 0
     let outstanding = 0
     for (const job of jobs) {
       byStatus[job.billing_status].jobs += 1
-      unbilled += job.unbilled
       outstanding += job.outstanding_total
-      byStatus.need_invoicing.amount += job.unbilled
+      if (job.billing_status === 'unknown') {
+        byStatus.unknown.amount += job.unallocated
+      }
+      byStatus.ready_to_bill.amount += job.invoices
+        .filter((invoice) => invoice.effective_status === 'need_invoicing')
+        .reduce((sum, invoice) => sum + invoice.amount, 0)
       byStatus.waiting_payment.amount += job.invoices
         .filter((invoice) => invoice.effective_status === 'waiting_payment')
         .reduce((sum, invoice) => sum + invoice.amount, 0)
       byStatus.overdue.amount += job.invoices
         .filter((invoice) => invoice.effective_status === 'overdue')
         .reduce((sum, invoice) => sum + invoice.amount, 0)
+      byStatus.held.amount += job.invoices
+        .filter((invoice) => invoice.effective_status === 'held')
+        .reduce((sum, invoice) => sum + invoice.amount, 0)
       byStatus.paid.amount += job.paid_total
     }
-    return { byStatus, unbilled, outstanding, jobCount: jobs.length }
+    return { byStatus, outstanding, jobCount: jobs.length }
   }, [jobs])
 
   return (
@@ -174,25 +183,23 @@ export function InvoicesPageClient() {
                 title="Overdue"
                 jobs={summary.byStatus.overdue.jobs}
                 amount={summary.byStatus.overdue.amount}
-                tone="overdue"
               />
               <SummaryCard
-                title="Need invoicing"
-                jobs={summary.byStatus.need_invoicing.jobs}
-                amount={summary.byStatus.need_invoicing.amount}
-                tone="need_invoicing"
+                title="Ready to bill"
+                jobs={summary.byStatus.ready_to_bill.jobs}
+                amount={summary.byStatus.ready_to_bill.amount}
+                hint="invoices ready to raise"
+              />
+              <SummaryCard
+                title="Unknown"
+                jobs={summary.byStatus.unknown.jobs}
+                amount={summary.byStatus.unknown.amount}
+                hint="quote not yet planned"
               />
               <SummaryCard
                 title="Waiting payment"
                 jobs={summary.byStatus.waiting_payment.jobs}
                 amount={summary.byStatus.waiting_payment.amount}
-                tone="waiting_payment"
-              />
-              <SummaryCard
-                title="Outstanding"
-                jobs={jobs.filter((job) => job.billing_status !== 'paid').length}
-                amount={summary.outstanding}
-                tone="outstanding"
               />
             </div>
 
@@ -238,9 +245,9 @@ export function InvoicesPageClient() {
                     <SelectContent>
                       <SelectItem value="outstanding">Outstanding</SelectItem>
                       <SelectItem value="all">All statuses</SelectItem>
-                      {(Object.keys(INVOICE_STATUS_LABELS) as InvoiceStatus[]).map((status) => (
+                      {JOB_BILLING_STATUSES.map((status) => (
                         <SelectItem key={status} value={status}>
-                          {INVOICE_STATUS_LABELS[status]}
+                          {JOB_BILLING_STATUS_LABELS[status]}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -351,7 +358,7 @@ export function InvoicesPageClient() {
                               {formatGbp(job.unbilled)}
                             </TableCell>
                             <TableCell>
-                              <InvoiceStatusBadge status={job.billing_status} />
+                              <JobBillingStatusBadge status={job.billing_status} />
                             </TableCell>
                           </TableRow>
                       ))}
@@ -380,12 +387,12 @@ function SummaryCard({
   title,
   jobs,
   amount,
-  tone,
+  hint,
 }: {
   title: string
   jobs: number
   amount: number
-  tone: InvoiceStatus | 'outstanding'
+  hint?: string
 }) {
   return (
     <Card>
@@ -396,7 +403,7 @@ function SummaryCard({
       <CardContent>
         <p className="text-sm text-muted-foreground">
           {jobs} job{jobs === 1 ? '' : 's'}
-          {tone === 'need_invoicing' ? ' · includes unbilled quote value' : ''}
+          {hint ? ` · ${hint}` : ''}
         </p>
       </CardContent>
     </Card>

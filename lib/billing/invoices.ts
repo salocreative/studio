@@ -1,5 +1,6 @@
 export const INVOICE_STATUSES = [
   'need_invoicing',
+  'held',
   'waiting_payment',
   'overdue',
   'paid',
@@ -8,7 +9,8 @@ export const INVOICE_STATUSES = [
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number]
 
 export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
-  need_invoicing: 'Need invoicing',
+  need_invoicing: 'Ready to bill',
+  held: 'Held',
   waiting_payment: 'Waiting payment',
   overdue: 'Overdue',
   paid: 'Paid',
@@ -18,7 +20,37 @@ export const INVOICE_STATUS_PRIORITY: Record<InvoiceStatus, number> = {
   overdue: 0,
   need_invoicing: 1,
   waiting_payment: 2,
-  paid: 3,
+  held: 3,
+  paid: 4,
+}
+
+export const JOB_BILLING_STATUSES = [
+  'overdue',
+  'ready_to_bill',
+  'unknown',
+  'waiting_payment',
+  'held',
+  'paid',
+] as const
+
+export type JobBillingStatus = (typeof JOB_BILLING_STATUSES)[number]
+
+export const JOB_BILLING_STATUS_LABELS: Record<JobBillingStatus, string> = {
+  overdue: 'Overdue',
+  ready_to_bill: 'Ready to bill',
+  unknown: 'Unknown',
+  waiting_payment: 'Waiting payment',
+  held: 'Held',
+  paid: 'Paid',
+}
+
+export const JOB_BILLING_STATUS_PRIORITY: Record<JobBillingStatus, number> = {
+  overdue: 0,
+  ready_to_bill: 1,
+  unknown: 2,
+  waiting_payment: 3,
+  held: 4,
+  paid: 5,
 }
 
 export function londonToday(): string {
@@ -84,10 +116,29 @@ export function invoiceStatusBadgeClass(status: InvoiceStatus): string {
       return 'border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
     case 'need_invoicing':
       return 'border-transparent bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300'
+    case 'held':
+      return 'border-transparent bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-300'
     case 'waiting_payment':
       return 'border-transparent bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-300'
     case 'paid':
       return 'border-transparent bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+  }
+}
+
+export function jobBillingStatusBadgeClass(status: JobBillingStatus): string {
+  switch (status) {
+    case 'overdue':
+      return invoiceStatusBadgeClass('overdue')
+    case 'ready_to_bill':
+      return invoiceStatusBadgeClass('need_invoicing')
+    case 'unknown':
+      return 'border-transparent bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
+    case 'waiting_payment':
+      return invoiceStatusBadgeClass('waiting_payment')
+    case 'held':
+      return invoiceStatusBadgeClass('held')
+    case 'paid':
+      return invoiceStatusBadgeClass('paid')
   }
 }
 
@@ -104,7 +155,7 @@ export interface ProjectBillingRollup {
   paidTotal: number
   outstandingTotal: number
   byStatus: Record<InvoiceStatus, number>
-  billingStatus: InvoiceStatus
+  billingStatus: JobBillingStatus
 }
 
 export function projectBillingRollup(
@@ -118,6 +169,7 @@ export function projectBillingRollup(
 
   const byStatus: Record<InvoiceStatus, number> = {
     need_invoicing: 0,
+    held: 0,
     waiting_payment: 0,
     overdue: 0,
     paid: 0,
@@ -128,16 +180,21 @@ export function projectBillingRollup(
     byStatus[status] = roundGbp(byStatus[status] + invoice.amount)
   }
 
-  const invoicedTotal = roundGbp(Math.max(0, allocatedTotal - byStatus.need_invoicing))
-  const unbilled = roundGbp(unallocated + byStatus.need_invoicing)
+  const notYetRaised = roundGbp(byStatus.need_invoicing + byStatus.held)
+  const invoicedTotal = roundGbp(Math.max(0, allocatedTotal - notYetRaised))
+  const unbilled = roundGbp(unallocated + notYetRaised)
 
-  let billingStatus: InvoiceStatus
+  let billingStatus: JobBillingStatus
   if (byStatus.overdue > 0) {
     billingStatus = 'overdue'
-  } else if (byStatus.need_invoicing > 0 || unallocated > 0.009 || invoices.length === 0) {
-    billingStatus = 'need_invoicing'
+  } else if (byStatus.need_invoicing > 0) {
+    billingStatus = 'ready_to_bill'
+  } else if (invoices.length === 0 || unallocated > 0.009) {
+    billingStatus = 'unknown'
   } else if (byStatus.waiting_payment > 0) {
     billingStatus = 'waiting_payment'
+  } else if (byStatus.held > 0) {
+    billingStatus = 'held'
   } else {
     billingStatus = 'paid'
   }
