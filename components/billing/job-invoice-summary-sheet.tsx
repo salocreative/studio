@@ -216,7 +216,7 @@ export function JobInvoiceSummarySheet({
                 </div>
               ) : null}
 
-              {shouldShowJobWorkProgress(job.status, job.unallocated) ? (
+              {shouldShowJobWorkProgress(job.status) ? (
                 <JobWorkProgress
                   projectId={job.id}
                   enabled={open}

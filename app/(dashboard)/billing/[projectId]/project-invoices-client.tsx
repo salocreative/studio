@@ -403,7 +403,7 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
             <StatCard label="Paid" value={formatGbp(job.paid_total)} />
           </div>
 
-          {shouldShowJobWorkProgress(job.status, job.unallocated) ? (
+          {shouldShowJobWorkProgress(job.status) ? (
             <Card>
               <CardHeader>
                 <CardTitle>Work</CardTitle>
