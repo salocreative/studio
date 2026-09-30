@@ -13,6 +13,7 @@ import {
   type ProjectInvoice,
 } from '@/app/actions/invoices'
 import { InvoiceStatusBadge, JobBillingStatusBadge } from '@/components/billing/invoice-status-badge'
+import { JobWorkProgress } from '@/components/billing/job-work-progress'
 import { ProjectSourceLinks } from '@/components/billing/project-source-links'
 import { XeroInvoiceLink } from '@/components/billing/xero-invoice-link'
 import { isStuckMondayStatus } from '@/lib/monday/status'
@@ -214,6 +215,13 @@ export function JobInvoiceSummarySheet({
                 </div>
               ) : null}
 
+              <JobWorkProgress
+                projectId={job.id}
+                enabled={open}
+                refreshKey={`${job.invoiced_total}-${job.unallocated}`}
+                onAdded={() => refresh()}
+              />
+
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">Invoices</h3>
                 {job.invoices.length === 0 && job.unallocated <= 0.009 ? (
@@ -236,6 +244,11 @@ export function JobInvoiceSummarySheet({
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="font-medium">{invoice.label}</p>
+                              {invoice.notes ? (
+                                <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
+                                  {invoice.notes}
+                                </p>
+                              ) : null}
                               <p className="text-xs text-muted-foreground">
                                 {invoice.invoice_number ? `#${invoice.invoice_number}` : 'No invoice number'}
                                 {invoice.invoice_date ? ` · ${formatDate(invoice.invoice_date)}` : ''}

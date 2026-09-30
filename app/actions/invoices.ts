@@ -15,7 +15,20 @@ import {
 } from '@/lib/billing/invoices'
 import { getMondayAccountSlug } from '@/lib/monday/account'
 import { mondayPulseUrl } from '@/lib/monday/urls'
+import { getTaskCompletionFromStatus } from '@/lib/monday/task-completion'
 import { createXeroSalesInvoice, getXeroInvoiceSetup } from '@/lib/xero/invoicing'
+import {
+  formatInvoiceSubitemNotes,
+  listedSubitemNames,
+  londonMonthRange,
+  parseInvoiceSubitemNotes,
+  progressInvoiceLabel,
+  progressSubitemsForInvoice,
+  projectBillingProgress,
+  splitAmountByWeights,
+  type BillingProgress,
+  type BillingProgressTask,
+} from '@/lib/billing/progress'
 
 export interface ProjectInvoice {
   id: string
@@ -213,6 +226,18 @@ function invoiceWritePayload(
     paid_date: paidDate,
     notes: emptyDate(input.notes),
   }
+}
+
+function isMissingColumnError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  const code = error.code ?? ''
+  const msg = error.message ?? ''
+  return code === '42703' || msg.includes('does not exist') || msg.includes('schema cache')
+}
+
+function toHours(value: unknown): number {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''))
+  return Number.isFinite(n) && n > 0 ? n : 0
 }
 
 function isSaloCreativeClient(clientName: string | null | undefined) {
@@ -479,6 +504,123 @@ export async function getProjectInvoices(projectId: string) {
   }
 }
 
+export interface ProjectBillingProgressResult extends BillingProgress {
+  monthLabel: string
+  suggestedNotes: string
+}
+
+async function loadProjectTasks(
+  supabase: NonNullable<Awaited<ReturnType<typeof requireAdmin>>['supabase']>,
+  projectId: string
+): Promise<Array<{ id: string; name: string; quotedHours: number; isCompleted: boolean | null }>> {
+  const query = (columns: string) =>
+    supabase.from('monday_tasks').select(columns).eq('project_id', projectId).eq('is_subtask', true)
+
+  type TaskRow = {
+    id: string
+    name: string
+    quoted_hours: number | string | null
+    is_completed?: boolean | null
+    monday_data?: Record<string, unknown> | null
+  }
+
+  const { data, error } = await query('id, name, quoted_hours, is_completed')
+  if (!error) {
+    return ((data ?? []) as unknown as TaskRow[]).map((task) => ({
+      id: task.id,
+      name: task.name,
+      quotedHours: toHours(task.quoted_hours),
+      isCompleted: typeof task.is_completed === 'boolean' ? task.is_completed : null,
+    }))
+  }
+  if (!isMissingColumnError(error)) throw error
+
+  const { data: legacy, error: legacyError } = await query('id, name, quoted_hours, monday_data')
+  if (legacyError) throw legacyError
+
+  return ((legacy ?? []) as unknown as TaskRow[]).map((task) => ({
+    id: task.id,
+    name: task.name,
+    quotedHours: toHours(task.quoted_hours),
+    isCompleted: getTaskCompletionFromStatus(task.monday_data),
+  }))
+}
+
+export async function getProjectBillingProgress(projectId: string) {
+  const result = await getProjectInvoices(projectId)
+  if (result.error || !result.job) {
+    return { error: result.error || 'Project not found' }
+  }
+
+  const auth = await requireAdmin()
+  if (auth.error || !auth.supabase) {
+    return { error: auth.error }
+  }
+
+  const today = londonToday()
+  const month = londonMonthRange(today)
+
+  try {
+    const { data: project, error: projectError } = await auth.supabase
+      .from('monday_projects')
+      .select('quoted_hours')
+      .eq('id', projectId)
+      .maybeSingle()
+
+    if (projectError) throw projectError
+
+    const taskRows = await loadProjectTasks(auth.supabase, projectId)
+    const { data: timeRows, error: timeError } = await auth.supabase
+      .from('time_entries')
+      .select('task_id, hours, date')
+      .eq('project_id', projectId)
+
+    if (timeError) throw timeError
+
+    const loggedByTask: Record<string, { all: number; month: number }> = {}
+    for (const entry of timeRows ?? []) {
+      const taskId = String(entry.task_id ?? '')
+      if (!taskId) continue
+      const hours = toHours(entry.hours)
+      const bucket = loggedByTask[taskId] ?? { all: 0, month: 0 }
+      bucket.all += hours
+      const date = typeof entry.date === 'string' ? entry.date.slice(0, 10) : ''
+      if (date >= month.start && date <= month.end) bucket.month += hours
+      loggedByTask[taskId] = bucket
+    }
+
+    const tasks: BillingProgressTask[] = taskRows.map((task) => ({
+      ...task,
+      loggedHours: Math.round((loggedByTask[task.id]?.all ?? 0) * 100) / 100,
+      loggedHoursThisMonth: Math.round((loggedByTask[task.id]?.month ?? 0) * 100) / 100,
+    }))
+
+    const progress = projectBillingProgress({
+      quoteValue: result.job.quote_value,
+      projectQuotedHours: toHours(project?.quoted_hours),
+      invoicedTotal: result.job.invoiced_total,
+      unallocated: result.job.unallocated,
+      tasks,
+    })
+    const suggestedSubitems = progressSubitemsForInvoice(
+      progress.tasks,
+      listedSubitemNames(result.job.invoices.map((invoice) => invoice.notes))
+    )
+
+    return {
+      success: true as const,
+      monthLabel: progressInvoiceLabel(today),
+      suggestedNotes: formatInvoiceSubitemNotes(suggestedSubitems),
+      ...progress,
+    } satisfies ProjectBillingProgressResult & { success: true }
+  } catch (err) {
+    console.error('Error fetching billing progress:', err)
+    return {
+      error: err instanceof Error ? err.message : 'Failed to fetch billing progress',
+    }
+  }
+}
+
 export async function getXeroInvoiceOptions() {
   const auth = await requireAdmin()
   if (auth.error) {
@@ -526,15 +668,34 @@ export async function createProjectInvoice(
         (name): name is string => Boolean(name?.trim())
       )
 
+      const subitemNames = parseInvoiceSubitemNotes(input.notes)
+      let lineItems: Array<{ description: string; amount: number }> | undefined
+      if (subitemNames.length > 0) {
+        const tasks = await loadProjectTasks(auth.supabase, projectId)
+        lineItems = splitAmountByWeights(
+          input.amount,
+          subitemNames.map((name) => {
+            const match = tasks.find(
+              (task) => task.name.trim().toLowerCase() === name.toLowerCase()
+            )
+            return { description: name, weight: match?.quotedHours ?? 1 }
+          })
+        )
+      }
+
       const created = await createXeroSalesInvoice({
         contactNames,
         reference: project.name,
-        description: `${input.label.trim()} - ${project.name}`,
+        description:
+          subitemNames.length > 0
+            ? `${input.label.trim()} - ${project.name}\n\n${subitemNames.join('\n')}`
+            : `${input.label.trim()} - ${project.name}`,
         amount: input.amount,
         invoiceDate,
         dueDate: xeroDueDate,
         accountCode: xero.accountCode.trim(),
         taxType: xero.taxType.trim(),
+        lineItems,
       })
 
       if ('error' in created) {

@@ -39,6 +39,7 @@ import { Switch } from '@/components/ui/switch'
 import {
   createProjectInvoice,
   deleteProjectInvoice,
+  getProjectBillingProgress,
   getProjectInvoices,
   getXeroInvoiceOptions,
   markQuoteAsPaid,
@@ -50,6 +51,7 @@ import {
   type ProjectInvoiceInput,
 } from '@/app/actions/invoices'
 import { InvoiceStatusBadge, JobBillingStatusBadge } from '@/components/billing/invoice-status-badge'
+import { JobWorkProgress } from '@/components/billing/job-work-progress'
 import { ProjectSourceLinks } from '@/components/billing/project-source-links'
 import { XeroInvoiceLink } from '@/components/billing/xero-invoice-link'
 import { isStuckMondayStatus } from '@/lib/monday/status'
@@ -202,6 +204,11 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
     const setup = await loadXeroSetup()
     const connected = Boolean(setup?.connected)
     setCreateInXero(connected)
+    let notes = ''
+    const progress = await getProjectBillingProgress(projectId)
+    if (!progress.error && 'suggestedNotes' in progress) {
+      notes = progress.suggestedNotes
+    }
     setForm({
       ...emptyForm,
       amount: job && job.unallocated > 0 ? String(job.unallocated) : '',
@@ -209,6 +216,7 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
       invoice_date: invoiceDate,
       due_terms: '30',
       due_date: applyDueTerms(invoiceDate, '30'),
+      notes,
     })
     setDialogOpen(true)
   }
@@ -396,6 +404,26 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
 
           <Card>
             <CardHeader>
+              <CardTitle>Work</CardTitle>
+              <CardDescription>
+                Sub-items from Monday. The suggested invoice uses completed quoted hours against the
+                quote, minus what is already invoiced. Completed sub-items are listed on the invoice
+                and sent to Xero as line items.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <JobWorkProgress
+                projectId={projectId}
+                enabled
+                hideIntro
+                refreshKey={`${job.invoiced_total}-${job.unallocated}`}
+                onAdded={() => load()}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle>Invoices</CardTitle>
@@ -463,6 +491,11 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
                       <TableRow key={invoice.id}>
                         <TableCell>
                           <div className="font-medium">{invoice.label}</div>
+                          {invoice.notes ? (
+                            <div className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
+                              {invoice.notes}
+                            </div>
+                          ) : null}
                           <div className="text-xs text-muted-foreground">
                             {invoice.invoice_number ? `#${invoice.invoice_number}` : 'No invoice number'}
                             {invoice.invoice_date ? ` · ${formatDate(invoice.invoice_date)}` : ''}
@@ -764,13 +797,13 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
               </div>
             )}
             <div className="grid gap-2">
-              <Label htmlFor="invoice-notes">Notes</Label>
+              <Label htmlFor="invoice-notes">Sub-items (Xero line items)</Label>
               <Textarea
                 id="invoice-notes"
                 value={form.notes}
                 onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
-                placeholder="Optional"
-                rows={3}
+                placeholder="One completed sub-item per line. These become Xero line items."
+                rows={5}
               />
             </div>
           </div>

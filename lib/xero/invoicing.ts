@@ -223,6 +223,7 @@ export async function createXeroSalesInvoice(input: {
   dueDate: string
   accountCode: string
   taxType: string
+  lineItems?: Array<{ description: string; amount: number }>
 }): Promise<
   | { error: string }
   | { success: true; xeroInvoiceId: string; invoiceNumber: string | null }
@@ -234,6 +235,11 @@ export async function createXeroSalesInvoice(input: {
 
   const contact = await findOrCreateContact(access, input.contactNames)
   if ('error' in contact) return contact
+
+  const lines =
+    input.lineItems && input.lineItems.length > 0
+      ? input.lineItems
+      : [{ description: input.description, amount: input.amount }]
 
   const created = await xeroJson(access, '/Invoices', {
     method: 'POST',
@@ -247,15 +253,13 @@ export async function createXeroSalesInvoice(input: {
           LineAmountTypes: 'Exclusive',
           Reference: input.reference.slice(0, 255),
           Status: 'AUTHORISED',
-          LineItems: [
-            {
-              Description: input.description.slice(0, 4000),
-              Quantity: 1,
-              UnitAmount: roundGbp(input.amount),
-              AccountCode: input.accountCode,
-              TaxType: input.taxType,
-            },
-          ],
+          LineItems: lines.map((line) => ({
+            Description: line.description.slice(0, 4000),
+            Quantity: 1,
+            UnitAmount: roundGbp(line.amount),
+            AccountCode: input.accountCode,
+            TaxType: input.taxType,
+          })),
         },
       ],
     }),
