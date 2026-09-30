@@ -203,13 +203,23 @@ export async function mondayRequest<T>(
  * Get projects (items) from Monday.com boards.
  * When syncAllBoards is true, all boards (active + completed) are scanned fully; use for full resync.
  */
+type MondayProjectsFetch = {
+  projects: MondayProject[]
+  /** Item IDs Monday returned with `state: deleted` from `items(ids:)` lookups. */
+  deletedItemIds: string[]
+}
+
+function emptyMondayProjectsFetch(): MondayProjectsFetch {
+  return { projects: [], deletedItemIds: [] }
+}
+
 export async function getMondayProjects(
   accessToken: string,
   includeCompletedBoards: boolean = false,
   syncAllBoards: boolean = false,
   /** Service-role client for sync (bypasses RLS); defaults to user-scoped client */
   dbClient?: SupabaseClient
-): Promise<MondayProject[]> {
+): Promise<MondayProjectsFetch> {
   // Get column mappings from Supabase to determine which boards to sync
   const supabase = dbClient ?? (await createClient())
   const { data: allMappings } = await supabase
@@ -218,7 +228,7 @@ export async function getMondayProjects(
   
   if (!allMappings || allMappings.length === 0) {
     // No mappings configured, return empty array
-    return []
+    return emptyMondayProjectsFetch()
   }
   
   // Get unique board IDs and workspace IDs from mappings (only boards with mappings)
@@ -290,7 +300,7 @@ export async function getMondayProjects(
   
   // If no board-specific mappings, we can't sync (need at least one board mapped)
   if (mappedBoardIds.size === 0) {
-    return []
+    return emptyMondayProjectsFetch()
   }
 
   const allBoardIds = Array.from(mappedBoardIds)
@@ -735,16 +745,20 @@ export async function getMondayProjects(
     possiblyMovedIds.forEach(id => itemsToFetchById.add(id))
   }
 
+  const deletedItemIds: string[] = []
   if (itemsToFetchById.size > 0) {
     const idsToFetch = Array.from(itemsToFetchById)
     for (let i = 0; i < idsToFetch.length; i += MONDAY_ITEMS_BY_ID_LIMIT) {
       const batch = idsToFetch.slice(i, i + MONDAY_ITEMS_BY_ID_LIMIT)
-      const itemsData = await mondayRequest<{ items: Array<BoardItem & { board: { id: string; name?: string } }> }>(
+      const itemsData = await mondayRequest<{
+        items: Array<BoardItem & { state?: string | null; board: { id: string; name?: string } }>
+      }>(
         accessToken,
         `query($itemIds: [ID!], $limit: Int!) {
           items(ids: $itemIds, limit: $limit) {
             id
             name
+            state
             column_values { id text value type }
             board { id name }
             group { id title }
@@ -753,6 +767,10 @@ export async function getMondayProjects(
         { itemIds: batch, limit: MONDAY_ITEMS_BY_ID_LIMIT }
       )
       for (const item of itemsData.items || []) {
+        if (item.state === 'deleted') {
+          deletedItemIds.push(String(item.id))
+          continue
+        }
         const boardId = item.board?.id != null ? String(item.board.id) : ''
         const boardName = item.board?.name || ''
         if (!boardId || !allCompletedBoardIds.has(boardId)) continue
@@ -850,7 +868,7 @@ export async function getMondayProjects(
     }
   }
 
-  return projects
+  return { projects, deletedItemIds }
 }
 
 type MondaySubitemsItem = {
@@ -1188,7 +1206,13 @@ export async function syncMondayData(
     })
 
     // 1. Fetch projects from Monday.com (active + completed; syncAllBoards = full scan of all boards)
-    const mondayProjects = await getMondayProjects(accessToken, true, syncAllBoards, admin)
+    const { projects: mondayProjects, deletedItemIds } = await getMondayProjects(
+      accessToken,
+      true,
+      syncAllBoards,
+      admin
+    )
+    const deletedMondayItemIds = new Set(deletedItemIds)
 
     report({ phase: 'checking', message: 'Checking for removed projects...', progress: 0.05 })
 
@@ -1266,11 +1290,17 @@ export async function syncMondayData(
     let archived = 0
     let deleted = 0
 
-    // 2. Check existing projects - archive or delete if not found in Monday (unless avoidDeletion is set)
-    if (existingProjects && !avoidDeletion) {
+    // 2. Check existing projects - archive or delete if not found in Monday (unless avoidDeletion
+    // is set). Confirmed `state: deleted` items are pruned even in safe mode: that is Monday
+    // saying the pulse is gone, not a fetch miss. Locked/completed rows still stay put.
+    if (existingProjects) {
       for (const existingProject of existingProjects) {
         // Skip if project still exists in Monday
         if (mondayProjectIds.has(existingProject.monday_item_id)) {
+          continue
+        }
+        const confirmedDeleted = deletedMondayItemIds.has(existingProject.monday_item_id)
+        if (avoidDeletion && !confirmedDeleted) {
           continue
         }
         

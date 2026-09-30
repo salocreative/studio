@@ -216,7 +216,7 @@ Single fixed-id row (`id = '00000000-0000-0000-0000-000000000000'`).
 | `enabled` | `boolean` not null default `false` | Master switch for periodic auto-sync. |
 | `interval_minutes` | `integer` not null default `60` | `check (> 0)`. |
 | `last_sync_at`, `next_sync_at` | `timestamptz` | |
-| `avoid_deletion` | `boolean` not null default `true` | Safety mode: never archive/delete projects during sync. |
+| `avoid_deletion` | `boolean` not null default `true` | Safety mode: do not archive/delete projects just because a fetch missed them. Active items Monday returns as `state: deleted` are still pruned. |
 | `created_at`, `updated_at` | `timestamptz` | Trigger maintained. |
 
 RLS: Auth read; Admin all.
@@ -822,11 +822,11 @@ The status is then:
 | On the leads board | `lead` |
 | On an active mapped board | `active` |
 | On any completed board | `locked` |
-| In DB but no longer found on any board, and project has time entries | `archived` (only when `monday_sync_settings.avoid_deletion = false`) |
-| In DB but no longer found anywhere and has no time entries | row is deleted (only when `avoid_deletion = false`) |
+| In DB but no longer found on any board, and project has time entries | `archived` (when `avoid_deletion = false`, or when Monday returns `state: deleted` for an active job) |
+| In DB but no longer found anywhere and has no time entries | row is deleted (when `avoid_deletion = false`, or when Monday returns `state: deleted` for an active job) |
 | Was previously `locked` | stays `locked` (never demoted) |
 
-`avoid_deletion` defaults to `true`, so by default no rows are archived/deleted automatically.
+`avoid_deletion` defaults to `true`, so a missed fetch will not archive/delete rows. Active jobs that Monday itself marks `deleted` are still pruned; locked/completed leftovers stay for the completed-board review.
 
 ### Locked-project preservation
 For projects on completed/locked boards, the sync **preserves** these historical fields when Monday wouldn't return them:
@@ -882,7 +882,7 @@ These are the practical patterns you'll likely want when building a separate con
 - **`time_entries.date` is a `date`** (no timezone). All retainer/reporting code compares it as a plain `YYYY-MM-DD` string.
 - **Project status `'lead'` is real** — leads flow through the same `monday_projects` table. Filter on `status` if you want only billable work.
 - **`monday_projects.quoted_hours` is denormalised** from the child tasks' `quoted_hours`, not from Monday itself. For locked projects it's preserved on purpose, so older historical projects can show a sum that no longer matches the current Monday data.
-- **`avoid_deletion`** in `monday_sync_settings` is on by default, so syncing won't prune **projects**. Locked-project tasks are frozen even if Monday dropped the subitems; active-project tasks still follow Monday (except tasks with time logged). If your tool expects "this project no longer exists in Monday → it should be gone here", you'll either have to detect this yourself (e.g. by `updated_at` going stale) or wait for an admin to disable safe mode.
+- **`avoid_deletion`** in `monday_sync_settings` is on by default, so a missed fetch will not prune **projects**. Active jobs that Monday returns as `state: deleted` are still archived (if they have time) or deleted (if they do not). Locked/completed leftovers stay for the completed-board review. Locked-project tasks remain frozen even if Monday dropped the subitems; active-project tasks still follow Monday (except tasks with time logged).
 - **`monday_data`** is JSONB and contains every column value with the raw type. It's the safety net for fields not yet promoted to typed columns.
 - **Share-link tables** (`retainer_share_links`, `flexi_design_share_links`, `time_report_share_links`) are not intended for direct anon reads — the app reads them with the service role and enforces `is_active` and `expires_at` in application code.
 - **`public.users.deleted_at`** is soft delete. Most RLS predicates filter it, and any reporting query should `where deleted_at is null` unless explicitly looking at history.

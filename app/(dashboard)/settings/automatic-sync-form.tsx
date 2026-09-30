@@ -153,7 +153,7 @@ export function AutomaticSyncForm() {
         <div className="space-y-0.5">
           <Label htmlFor="avoid-deletion" className="text-base">Avoid deleting or archiving projects</Label>
           <p className="text-sm text-muted-foreground">
-            When on, sync only adds and updates projects; it never archives or deletes. Turn off to allow removal of projects that no longer exist in Monday.com.
+            When on, sync will not archive or delete a job just because a fetch missed it. Jobs Monday itself has deleted are still removed from Studio if they are still marked active. Turn off to also prune jobs that are simply no longer on a synced board.
           </p>
         </div>
         <Switch

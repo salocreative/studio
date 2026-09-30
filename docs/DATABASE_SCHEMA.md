@@ -176,7 +176,7 @@ Single-row table (id always `00000000-0000-0000-0000-000000000000`) holding sync
 | `id` | `uuid` PK | Fixed UUID |
 | `enabled` | `boolean` not null default `false` | |
 | `interval_minutes` | `int` not null default `60` (>0) | |
-| `avoid_deletion` | `boolean` not null default `true` | If true, sync never archives/deletes |
+| `avoid_deletion` | `boolean` not null default `true` | If true, sync does not prune items merely missing from a fetch. Items Monday returns as `state: deleted` are still archived/deleted when they are active (not locked / not on a completed board). |
 | `last_sync_at` | `timestamptz` | |
 | `next_sync_at` | `timestamptz` | |
 | `created_at` / `updated_at` | `timestamptz` | |

@@ -113,6 +113,7 @@ export async function fetchMondayItemsById(
       items: Array<{
         id: string
         name: string
+        state?: string | null
         board?: { id: string; name?: string } | null
       }>
     }>(
@@ -121,6 +122,7 @@ export async function fetchMondayItemsById(
         items(ids: $itemIds, limit: $limit) {
           id
           name
+          state
           board { id name }
         }
       }`,
@@ -128,6 +130,7 @@ export async function fetchMondayItemsById(
     )
 
     for (const item of data.items || []) {
+      if (item.state === 'deleted') continue
       found.push({
         id: String(item.id),
         name: item.name || '',

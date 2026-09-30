@@ -16,6 +16,7 @@ import { InvoiceStatusBadge, JobBillingStatusBadge } from '@/components/billing/
 import { JobWorkProgress } from '@/components/billing/job-work-progress'
 import { ProjectSourceLinks } from '@/components/billing/project-source-links'
 import { XeroInvoiceLink } from '@/components/billing/xero-invoice-link'
+import { shouldShowJobWorkProgress } from '@/lib/billing/progress'
 import { isStuckMondayStatus } from '@/lib/monday/status'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -215,12 +216,14 @@ export function JobInvoiceSummarySheet({
                 </div>
               ) : null}
 
-              <JobWorkProgress
-                projectId={job.id}
-                enabled={open}
-                refreshKey={`${job.invoiced_total}-${job.unallocated}`}
-                onAdded={() => refresh()}
-              />
+              {shouldShowJobWorkProgress(job.status, job.unallocated) ? (
+                <JobWorkProgress
+                  projectId={job.id}
+                  enabled={open}
+                  refreshKey={`${job.invoiced_total}-${job.unallocated}`}
+                  onAdded={() => refresh()}
+                />
+              ) : null}
 
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">Invoices</h3>

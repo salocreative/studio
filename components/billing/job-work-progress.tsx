@@ -6,11 +6,14 @@ import { toast } from 'sonner'
 import {
   createProjectInvoice,
   getProjectBillingProgress,
+  getXeroInvoiceOptions,
   type ProjectBillingProgressResult,
 } from '@/app/actions/invoices'
+import { InvoiceXeroCreateFields } from '@/components/billing/invoice-xero-create-fields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { formatGbp } from '@/lib/billing/invoices'
+import { dueDateFromTerms, formatGbp, londonToday } from '@/lib/billing/invoices'
+import type { XeroInvoiceSetup } from '@/lib/xero/invoicing'
 
 function formatHours(hours: number): string {
   const rounded = Math.round(hours * 10) / 10
@@ -41,6 +44,11 @@ export function JobWorkProgress({
   const [progress, setProgress] = useState<ProjectBillingProgressResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [xeroSetup, setXeroSetup] = useState<XeroInvoiceSetup | null>(null)
+  const [xeroLoading, setXeroLoading] = useState(false)
+  const [createInXero, setCreateInXero] = useState(true)
+  const [accountCode, setAccountCode] = useState('')
+  const [taxType, setTaxType] = useState('')
 
   useEffect(() => {
     if (!enabled) return
@@ -70,25 +78,83 @@ export function JobWorkProgress({
     }
   }, [enabled, projectId, refreshKey])
 
+  const suggestedAmount = progress?.suggestedAmount ?? 0
+
+  useEffect(() => {
+    if (!enabled || suggestedAmount <= 0.009) return
+    let cancelled = false
+    setXeroLoading(true)
+    void getXeroInvoiceOptions()
+      .then((result) => {
+        if (cancelled) return
+        if ('error' in result) {
+          toast.error('Could not load Xero accounts', { description: result.error })
+          return
+        }
+        if (!('setup' in result) || !result.setup) return
+        setXeroSetup(result.setup)
+        setCreateInXero(Boolean(result.setup.connected))
+        if (result.setup.defaultAccountCode) setAccountCode(result.setup.defaultAccountCode)
+        if (result.setup.defaultTaxType) setTaxType(result.setup.defaultTaxType)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error('Error loading Xero invoice options:', error)
+        toast.error('Could not load Xero accounts')
+      })
+      .finally(() => {
+        if (!cancelled) setXeroLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, projectId, suggestedAmount])
+
   const completedCount = useMemo(
     () => progress?.tasks.filter((task) => task.isCompleted === true).length ?? 0,
     [progress]
   )
 
+  const raiseInXero = Boolean(createInXero && xeroSetup?.connected)
+  const canAddSuggested =
+    Boolean(progress && progress.suggestedAmount > 0.009) &&
+    !adding &&
+    !xeroLoading &&
+    (!raiseInXero || (Boolean(accountCode) && Boolean(taxType)))
+
   async function handleAddSuggested() {
     if (!progress || progress.suggestedAmount <= 0.009) return
+    if (raiseInXero && (!accountCode.trim() || !taxType.trim())) {
+      toast.error('Choose a Xero account and tax rate')
+      return
+    }
     setAdding(true)
     try {
-      const result = await createProjectInvoice(projectId, {
-        label: progress.monthLabel,
-        amount: progress.suggestedAmount,
-        status: 'need_invoicing',
-        notes: progress.suggestedNotes || null,
-      })
+      const invoiceDate = londonToday()
+      const result = await createProjectInvoice(
+        projectId,
+        {
+          label: progress.monthLabel,
+          amount: progress.suggestedAmount,
+          status: raiseInXero ? 'waiting_payment' : 'need_invoicing',
+          invoice_date: invoiceDate,
+          due_date: dueDateFromTerms(invoiceDate, '30'),
+          notes: progress.suggestedNotes || null,
+        },
+        raiseInXero ? { accountCode, taxType } : null
+      )
       if (result.error) {
         toast.error('Could not add invoice', { description: result.error })
       } else {
-        toast.success(`Added ${progress.monthLabel} for ${formatGbp(progress.suggestedAmount)}`)
+        const xeroNumber =
+          'xeroInvoiceNumber' in result && result.xeroInvoiceNumber ? result.xeroInvoiceNumber : null
+        toast.success(
+          xeroNumber
+            ? `Raised ${progress.monthLabel} in Xero as ${xeroNumber}`
+            : raiseInXero
+              ? `Added ${progress.monthLabel} and raised it in Xero`
+              : `Added ${progress.monthLabel} in Studio only`
+        )
         await onAdded?.()
       }
     } finally {
@@ -105,7 +171,8 @@ export function JobWorkProgress({
           <h3 className="text-sm font-semibold">Work</h3>
           <p className="text-xs text-muted-foreground">
             Suggested invoice is completed quoted hours as a share of the quote, minus what is already
-            invoiced. Completed sub-items are listed on the invoice and sent to Xero as line items.
+            invoiced. Leave Create in Xero on when you add it so it is raised in Xero, with completed
+            sub-items as line items.
           </p>
         </div>
       )}
@@ -154,20 +221,34 @@ export function JobWorkProgress({
               Add a quote value and quoted hours on sub-items to recommend an amount.
             </p>
           ) : progress.suggestedAmount > 0.009 ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
+              <InvoiceXeroCreateFields
+                idPrefix="progress-create-in-xero"
+                setup={xeroSetup}
+                loading={xeroLoading}
+                createInXero={createInXero}
+                onCreateInXeroChange={setCreateInXero}
+                accountCode={accountCode}
+                onAccountCodeChange={setAccountCode}
+                taxType={taxType}
+                onTaxTypeChange={setTaxType}
+                selectContentClassName="z-[70]"
+              />
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => void handleAddSuggested()}
-                disabled={adding}
+                disabled={!canAddSuggested}
               >
                 {adding ? (
                   <Loader2 className="mr-1 h-4 w-4 animate-spin" />
                 ) : (
                   <Plus className="mr-1 h-4 w-4" />
                 )}
-                Add invoice for {formatGbp(progress.suggestedAmount)}
+                {raiseInXero
+                  ? `Add in Xero for ${formatGbp(progress.suggestedAmount)}`
+                  : `Add invoice for ${formatGbp(progress.suggestedAmount)}`}
               </Button>
               {progress.suggestedNotes ? (
                 <p className="whitespace-pre-line text-xs text-muted-foreground">

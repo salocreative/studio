@@ -35,7 +35,6 @@ import {
 } from '@/components/ui/table'
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Pencil, Plus, Split, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Switch } from '@/components/ui/switch'
 import {
   createProjectInvoice,
   deleteProjectInvoice,
@@ -51,9 +50,11 @@ import {
   type ProjectInvoiceInput,
 } from '@/app/actions/invoices'
 import { InvoiceStatusBadge, JobBillingStatusBadge } from '@/components/billing/invoice-status-badge'
+import { InvoiceXeroCreateFields } from '@/components/billing/invoice-xero-create-fields'
 import { JobWorkProgress } from '@/components/billing/job-work-progress'
 import { ProjectSourceLinks } from '@/components/billing/project-source-links'
 import { XeroInvoiceLink } from '@/components/billing/xero-invoice-link'
+import { shouldShowJobWorkProgress } from '@/lib/billing/progress'
 import { isStuckMondayStatus } from '@/lib/monday/status'
 import {
   DUE_TERMS,
@@ -402,25 +403,27 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
             <StatCard label="Paid" value={formatGbp(job.paid_total)} />
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Work</CardTitle>
-              <CardDescription>
-                Sub-items from Monday. The suggested invoice uses completed quoted hours against the
-                quote, minus what is already invoiced. Completed sub-items are listed on the invoice
-                and sent to Xero as line items.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <JobWorkProgress
-                projectId={projectId}
-                enabled
-                hideIntro
-                refreshKey={`${job.invoiced_total}-${job.unallocated}`}
-                onAdded={() => load()}
-              />
-            </CardContent>
-          </Card>
+          {shouldShowJobWorkProgress(job.status, job.unallocated) ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Work</CardTitle>
+                <CardDescription>
+                  Sub-items from Monday. The suggested invoice uses completed quoted hours against the
+                  quote, minus what is already invoiced. Leave Create in Xero on when you add it so
+                  Studio raises it in Xero, with those sub-items as line items.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <JobWorkProgress
+                  projectId={projectId}
+                  enabled
+                  hideIntro
+                  refreshKey={`${job.invoiced_total}-${job.unallocated}`}
+                  onAdded={() => load()}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card>
             <CardHeader>
@@ -603,7 +606,7 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
             <DialogDescription>
               {editing
                 ? 'Update this Studio invoice. Changes are not pushed back to Xero.'
-                : 'Use this for a deposit, a monthly amount, or a final invoice against this job.'}
+                : 'Use this for a deposit, a monthly amount, or a final invoice. Leave Create in Xero on to raise it in Xero in the same step.'}
             </DialogDescription>
             {editing?.xero_invoice_id ? (
               <XeroInvoiceLink xeroInvoiceId={editing.xero_invoice_id} className="text-sm" />
@@ -733,68 +736,25 @@ export function ProjectInvoicesClient({ projectId }: { projectId: string }) {
               </div>
             )}
             {!editing && (
-              <div className="space-y-3 rounded-lg border p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <Label htmlFor="create-in-xero">Create in Xero</Label>
-                    <p className="text-xs text-muted-foreground">
-                      {xeroSetup?.connected
-                        ? `Raises an authorised invoice in ${xeroSetup.tenantName || 'Xero'}.`
-                        : 'Connect Xero in Settings to raise invoices there.'}
-                    </p>
-                  </div>
-                  <Switch
-                    id="create-in-xero"
-                    checked={createInXero && Boolean(xeroSetup?.connected)}
-                    disabled={!xeroSetup?.connected || xeroLoading}
-                    onCheckedChange={(checked) => {
-                      setCreateInXero(checked)
-                      if (checked) {
-                        setForm((current) =>
-                          current.status === 'need_invoicing' || current.status === 'held'
-                            ? { ...current, status: 'waiting_payment' }
-                            : current
-                        )
-                      }
-                    }}
-                  />
-                </div>
-                {createInXero && xeroSetup?.connected && (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-2">
-                      <Label>Account</Label>
-                      <Select value={accountCode} onValueChange={setAccountCode}>
-                        <SelectTrigger aria-label="Xero account">
-                          <SelectValue placeholder={xeroLoading ? 'Loading…' : 'Choose account'} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {xeroSetup.accounts.map((account) => (
-                            <SelectItem key={account.code} value={account.code}>
-                              {account.code} - {account.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label>Tax rate</Label>
-                      <Select value={taxType} onValueChange={setTaxType}>
-                        <SelectTrigger aria-label="Tax rate">
-                          <SelectValue placeholder={xeroLoading ? 'Loading…' : 'Choose tax rate'} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {xeroSetup.taxRates.map((rate) => (
-                            <SelectItem key={rate.taxType} value={rate.taxType}>
-                              {rate.name}
-                              {rate.rate ? ` (${rate.rate}%)` : ''}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <InvoiceXeroCreateFields
+                setup={xeroSetup}
+                loading={xeroLoading}
+                createInXero={createInXero}
+                onCreateInXeroChange={(checked) => {
+                  setCreateInXero(checked)
+                  if (checked) {
+                    setForm((current) =>
+                      current.status === 'need_invoicing' || current.status === 'held'
+                        ? { ...current, status: 'waiting_payment' }
+                        : current
+                    )
+                  }
+                }}
+                accountCode={accountCode}
+                onAccountCodeChange={setAccountCode}
+                taxType={taxType}
+                onTaxTypeChange={setTaxType}
+              />
             )}
             <div className="grid gap-2">
               <Label htmlFor="invoice-notes">Sub-items (Xero line items)</Label>

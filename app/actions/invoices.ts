@@ -250,6 +250,16 @@ function hasZeroQuoteValue(quoteValue: unknown): boolean {
   return Number.isFinite(amount) && amount === 0
 }
 
+function hasBillableQuote(quoteValue: unknown): boolean {
+  if (quoteValue == null || quoteValue === '') return false
+  const amount = typeof quoteValue === 'number' ? quoteValue : parseFloat(String(quoteValue))
+  return Number.isFinite(amount) && amount > 0
+}
+
+function billingJobNameKey(clientName: string | null | undefined, name: string) {
+  return `${(clientName || '').trim().toLowerCase()}|${name.trim().toLowerCase()}`
+}
+
 async function billingBoardIds() {
   const {
     mainBoardIds,
@@ -306,9 +316,19 @@ export async function getBillingJobs() {
         .range(from, to)
     )
 
-    const billableProjects = projects.filter(
-      (project) => !isSaloCreativeClient(project.client_name) && !hasZeroQuoteValue(project.quote_value)
+    const quotedNameKeys = new Set(
+      projects
+        .filter((project) => hasBillableQuote(project.quote_value))
+        .map((project) => billingJobNameKey(project.client_name, project.name))
     )
+
+    const billableProjects = projects.filter((project) => {
+      if (isSaloCreativeClient(project.client_name) || hasZeroQuoteValue(project.quote_value)) {
+        return false
+      }
+      if (hasBillableQuote(project.quote_value)) return true
+      return !quotedNameKeys.has(billingJobNameKey(project.client_name, project.name))
+    })
 
     if (billableProjects.length === 0) {
       return { success: true as const, jobs: [] as BillingJob[] }

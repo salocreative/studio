@@ -33,6 +33,14 @@ export interface BillingProgress {
   tasks: BillingProgressTask[]
 }
 
+/** Completed-sub-item invoices are only useful on live jobs with quote still to allocate. */
+export function shouldShowJobWorkProgress(
+  status: 'active' | 'archived' | 'locked',
+  unallocated: number
+): boolean {
+  return status === 'active' && unallocated > 0.009
+}
+
 function roundHours(value: number): number {
   return Math.round(value * 100) / 100
 }
